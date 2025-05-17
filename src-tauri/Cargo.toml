@@ -22,4 +22,11 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.5.0", features = [] }
-tauri-plugin-log = "2.0.0-rc"
+tauri-plugin-log = { version = "2.0.0-rc", features = ["colored"] }
+tauri-plugin-shell = "2.0.0-rc"
+
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "fs"] }
+regex = "1.10"
+futures = "0.3"
+thiserror = "1.0"

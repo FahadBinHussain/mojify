@@ -5,16 +5,28 @@
   let error = null;
   let searchTerm = '';
 
+  let channelIdsInput = ''; // For the download section input
+  let downloadLogs = [];    // To store download log messages
+  let downloadSectionOpen = false; // To control the <details> open state if needed, though browser handles it by default
+
   onMount(async () => {
     try {
       const response = await fetch('/emote_mapping.json');
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        // If the local mapping fails, it might be the first run or an error.
+        // We could initialize allEmotes to an empty object and proceed,
+        // relying on the download functionality to populate it.
+        console.warn(`HTTP error! status: ${response.status} when fetching emote_mapping.json. This might be normal on first run.`);
+        allEmotes = {}; // Initialize to empty if not found, allowing download to populate
+        // error = `Failed to load local emote map: ${response.statusText}. Try downloading emotes.`;
+      } else {
+        allEmotes = await response.json();
       }
-      allEmotes = await response.json();
     } catch (e) {
       console.error("Failed to load emotes:", e);
-      error = e.message;
+      // Similar to above, allow app to function for downloading if local map fails
+      allEmotes = {};
+      error = e.message + ". Try downloading emotes if the list is empty.";
     }
   });
 
@@ -30,6 +42,23 @@
   $: filteredEmotes = Object.entries(allEmotes).filter(([name]) =>
     name.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  async function handleDownloadEmotes() {
+    downloadLogs = [`Starting download for channel IDs: ${channelIdsInput}`];
+    // TODO: Implement actual call to Tauri backend
+    downloadLogs = [...downloadLogs, "(Frontend-only simulation: Download logic not yet connected to backend)"];
+    // Simulate some logs
+    setTimeout(() => {
+        downloadLogs = [...downloadLogs, "Fetching emotes for channel XYZ...", "30 emotes found.", "Downloading 1/30..."];
+    }, 1000);
+    setTimeout(() => {
+        downloadLogs = [...downloadLogs, "Downloading 15/30...", "Finished channel XYZ."];
+    }, 2500);
+    setTimeout(() => {
+        downloadLogs = [...downloadLogs, "Download process complete (simulated)."];
+    }, 4000);
+  }
+
 </script>
 
 <main>
@@ -44,14 +73,37 @@
     />
   </div>
 
+  <details class="download-section-details" bind:open={downloadSectionOpen}>
+    <summary>Download Emotes</summary>
+    <section class="download-section-content">
+      <div class="download-controls">
+        <input
+          type="text"
+          bind:value={channelIdsInput}
+          placeholder="Enter comma-separated 7TV User IDs"
+          class="channel-id-input"
+        />
+        <button on:click={handleDownloadEmotes} class="download-button">
+          Download
+        </button>
+      </div>
+      {#if downloadLogs.length > 0}
+        <div class="logs-container">
+          <h3>Logs:</h3>
+          <pre>{downloadLogs.join('\n')}</pre>
+        </div>
+      {/if}
+    </section>
+  </details>
+
   {#if error}
-    <p style="color: red;">Error loading emotes: {error}</p>
+    <p style="color: red;" class="status-message">Error: {error}</p>
   {/if}
 
-  {#if filteredEmotes.length === 0 && !error && searchTerm}
-    <p>No emotes found for "{searchTerm}"</p>
-  {:else if Object.keys(allEmotes).length === 0 && !error}
-    <p>Loading emotes...</p>
+  {#if filteredEmotes.length === 0 && !error && searchTerm && Object.keys(allEmotes).length > 0}
+    <p class="status-message">No emotes found for "{searchTerm}"</p>
+  {:else if Object.keys(allEmotes).length === 0 && !error && !searchTerm}
+    <p class="status-message">No emotes loaded. Try the download section below.</p>
   {/if}
 
   <div class="emote-grid">
@@ -62,6 +114,7 @@
       </div>
     {/each}
   </div>
+
 </main>
 
 <style>
@@ -90,7 +143,7 @@
   }
 
   .search-container {
-    margin-bottom: 2em;
+    margin-bottom: 1em; /* Reduced margin as download section is now here */
   }
 
   .search-bar {
@@ -115,11 +168,121 @@
     color: rgba(255, 255, 255, 0.5);
   }
 
+  .download-section-details {
+    margin-bottom: 2em; /* Space below the download section before emote grid */
+    background-color: #2c2c2c; /* Slightly different background for the details block */
+    border-radius: 8px;
+    border: 1px solid #444;
+    max-width: 600px; /* Constrain width of download section */
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .download-section-details summary {
+    padding: 0.75em 1.25em;
+    font-size: 1.2em;
+    font-weight: bold;
+    color: #ff3e00;
+    cursor: pointer;
+    outline: none;
+    list-style-position: inside; /* Better marker positioning */
+    border-bottom: 1px solid #444; /* Separator when closed */
+  }
+  
+  .download-section-details[open] summary {
+    border-bottom: 1px solid #444; /* Keep separator when open */
+  }
+
+  .download-section-details summary::-webkit-details-marker {
+    color: #ff3e00;
+  }
+
+  .download-section-content { /* Renamed from download-section */
+    padding: 1.5em; /* Padding inside the collapsible content */
+    /* border-top: none; Removed as summary has border */
+  }
+
+  .download-controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 1.5em;
+    flex-wrap: wrap; /* Allow wrapping on smaller screens */
+  }
+
+  .channel-id-input {
+    flex-grow: 1;
+    max-width: 400px;
+    padding: 0.75em 1em;
+    font-size: 1em;
+    border-radius: 20px;
+    border: 1px solid #444;
+    background-color: #333;
+    color: rgba(255, 255, 255, 0.87);
+    outline: none;
+  }
+
+  .channel-id-input::placeholder {
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .download-button {
+    padding: 0.75em 1.5em;
+    font-size: 1em;
+    font-weight: bold;
+    border-radius: 20px;
+    border: none;
+    background-color: #ff3e00;
+    color: white;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out;
+  }
+
+  .download-button:hover {
+    background-color: #e03600; /* Darker Svelte orange on hover */
+  }
+
+  .logs-container {
+    margin-top: 1.5em;
+    text-align: left;
+    background-color: #1a1a1a; /* Very dark background for logs */
+    padding: 1em;
+    border-radius: 8px;
+    max-height: 200px; /* Reduced height a bit */
+    overflow-y: auto; /* Add scrollbar if content overflows */
+    border: 1px solid #444;
+  }
+
+  .logs-container h3 {
+    margin-top: 0;
+    margin-bottom: 0.5em;
+    font-size: 1.2em;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.87);
+  }
+
+  .logs-container pre {
+    white-space: pre-wrap; /* Wrap long log lines */
+    word-wrap: break-word; /* Ensure words break correctly */
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 0.9em;
+    color: rgba(255, 255, 255, 0.7);
+    margin: 0;
+  }
+
+  .status-message {
+    margin: 1em 0;
+    font-style: italic;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
   .emote-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); /* Slightly larger items */
     gap: 15px; /* Increased gap */
     justify-content: center;
+    /* margin-bottom: 3em; /* Removed as download section is now above */
   }
 
   .emote-item {
