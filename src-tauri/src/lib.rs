@@ -3,10 +3,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tauri::{AppHandle, Manager, Window, Wry, Emitter};
 use regex::Regex;
-use thiserror::Error;
 
 #[derive(Debug, Deserialize, Serialize)]
 struct SevenTvEmoteFile {
@@ -120,10 +119,6 @@ enum CommandError {
     Json(#[from] serde_json::Error),
     #[error("Tauri path error: {0}")]
     TauriPath(String),
-    #[error("Missing emote set for user: {0}")]
-    MissingEmoteSet(String),
-    #[error("API returned no emotes for user: {0}")]
-    NoEmotesInSet(String),
     #[error("Invalid channel ID list")]
     InvalidChannelIds,
 }
