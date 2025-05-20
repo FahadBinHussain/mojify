@@ -270,7 +270,7 @@ async fn download_emotes_command(
                                                         emit_log(&window, format!("Backend: Failed to download {}: HTTP {}", emote_data_item.name, emote_response.status()));
                                                     }
                                                 }
-                                                Err(e) => emit_log(&window, format!("Backend: HTTP Error downloading emote {}: {}", emote_data_item.name, e)),
+                                                Err(e) => emit_log(&window, format!("Backend: HTTP Error downloading emote {}: {:#?}", emote_data_item.name, e)),
                                             }
                                         }
                                     } else {
