@@ -222,55 +222,60 @@ async fn download_emotes_command(
                                         emit_log(&window, format!("Backend: Found {} emotes for {}. Emote set ID: {}", emote_set.emotes.len(), channel_id, emote_set.id));
                                         
                                         let channel_emote_dir = emotes_base_dir.join(channel_id);
-                                        // emit_log(&window, format!("Backend: Channel emote dir for {}: {}", channel_id, channel_emote_dir.display()));
-                                        // emit_log(&window, "Backend: Attempting to create channel emote directory...".to_string());
                                         fs::create_dir_all(&channel_emote_dir)?;
-                                        // emit_log(&window, "Backend: Channel emote directory created/ensured.".to_string());
 
-                                        for emote_data_item in emote_set.emotes {
-                                            emit_log(&window, format!("Backend: Processing emote: {} (ID: {})", emote_data_item.name, emote_data_item.id));
+                                        for emote in emote_set.emotes {
+                                            emit_log(&window, format!("Backend: Processing emote: {} (ID: {})", emote.name, emote.id));
                                             
-                                            // Simplified logic: Construct URL directly using emote ID and fixed format
-                                            let emote_id = &emote_data_item.id;
-                                            let download_url = format!("https://cdn.7tv.app/emote/{}/4x.gif", emote_id);
-                                            emit_log(&window, format!("Backend: Constructed download URL: {}", download_url));
+                                            // Check if emote has GIF format available by examining the files array
+                                            let emote_id = &emote.id;
+                                            let emote_data = &emote.data;
+                                            
+                                            // Check if 4x.gif exists in the files array
+                                            let has_gif = emote_data.host.files.iter().any(|file| file.name == "4x.gif");
+                                            
+                                            // Choose format based on availability
+                                            let (file_extension, format_name) = if has_gif {
+                                                ("gif", "GIF")
+                                            } else {
+                                                ("png", "PNG")
+                                            };
+                                            
+                                            let download_url = format!("https://cdn.7tv.app/emote/{}/4x.{}", emote_id, file_extension);
+                                            emit_log(&window, format!("Backend: Using {} format. Constructed download URL: {}", format_name, download_url));
 
-                                            let sanitized_emote_name = sanitize_filename(&emote_data_item.name);
-                                            let file_extension_str = "gif".to_string(); // Extension is now fixed to gif
-                                            let emote_filename = format!("{}.{}", sanitized_emote_name, file_extension_str);
+                                            let sanitized_emote_name = sanitize_filename(&emote.name);
+                                            let emote_filename = format!("{}.{}", sanitized_emote_name, file_extension);
                                             let output_path = channel_emote_dir.join(&emote_filename);
-                                            // emit_log(&window, format!("Backend: Emote output path: {}", output_path.display())); // Kept for debugging if needed
 
                                             if output_path.exists() {
-                                                emit_log(&window, format!("Backend: Skipping existing emote: {} at {}", emote_data_item.name, output_path.display()));
+                                                emit_log(&window, format!("Backend: Skipping existing emote: {} at {}", emote.name, output_path.display()));
                                                 let mapping_key = format!(":{}:", sanitized_emote_name);
                                                 if !global_emote_mapping.contains_key(&mapping_key) {
                                                     let relative_path = Path::new("7tv_emotes").join(channel_id).join(&emote_filename);
                                                     global_emote_mapping.insert(mapping_key, relative_path.to_string_lossy().replace("\\", "/"));
-                                                    emit_log(&window, format!("Backend: Added skipped existing emote {} to map.", emote_data_item.name));
+                                                    emit_log(&window, format!("Backend: Added skipped existing emote {} to map.", emote.name));
                                                 }
                                                 continue;
                                             }
 
-                                            emit_log(&window, format!("Backend: Attempting to download {}: {} to {}", emote_data_item.name, download_url, output_path.display()));
+                                            emit_log(&window, format!("Backend: Attempting to download {}: {} to {}", emote.name, download_url, output_path.display()));
                                             match client.get(&download_url).send().await {
                                                 Ok(emote_response) => {
-                                                    // emit_log(&window, format!("Backend: Emote download response status for {}: {}", emote_data_item.name, emote_response.status()));
                                                     if emote_response.status().is_success() {
                                                         let emote_bytes = emote_response.bytes().await?;
-                                                        // emit_log(&window, format!("Backend: Emote {} bytes received ({} bytes). Attempting to write to file...", emote_data_item.name, emote_bytes.len()));
                                                         let mut file = File::create(&output_path)?;
                                                         file.write_all(&emote_bytes)?;
-                                                        emit_log(&window, format!("Backend: Saved {} ({} bytes) to {}", emote_data_item.name, emote_bytes.len(), output_path.display()));
+                                                        emit_log(&window, format!("Backend: Saved {} ({} bytes) to {}", emote.name, emote_bytes.len(), output_path.display()));
                                                         
                                                         let relative_path = Path::new("7tv_emotes").join(channel_id).join(&emote_filename);
                                                         global_emote_mapping.insert(format!(":{}:", sanitized_emote_name), relative_path.to_string_lossy().replace("\\", "/"));
-                                                        emit_log(&window, format!("Backend: Added {} to map.", emote_data_item.name));
+                                                        emit_log(&window, format!("Backend: Added {} to map.", emote.name));
                                                     } else {
-                                                        emit_log(&window, format!("Backend: Failed to download {}: HTTP {}", emote_data_item.name, emote_response.status()));
+                                                        emit_log(&window, format!("Backend: Failed to download {}: HTTP {}", emote.name, emote_response.status()));
                                                     }
                                                 }
-                                                Err(e) => emit_log(&window, format!("Backend: HTTP Error downloading emote {}: {:#?}", emote_data_item.name, e)),
+                                                Err(e) => emit_log(&window, format!("Backend: HTTP Error downloading emote {}: {:#?}", emote.name, e)),
                                             }
                                         }
                                     } else {
