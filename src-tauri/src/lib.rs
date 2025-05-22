@@ -197,10 +197,24 @@ async fn download_emotes_command(
         };
     emit_log(&window, format!("Backend: Initial global mapping loaded with {} entries.", global_emote_mapping.len()));
 
+    // Stats tracking variables
+    let mut total_emotes_processed = 0;
+    let mut total_emotes_downloaded = 0;
+    let mut total_emotes_skipped = 0;
+    let mut total_emotes_failed = 0;
+    let mut failed_emotes = Vec::new();
+
     for channel_id in channel_ids {
         emit_log(&window, format!("Backend: Processing channel ID: {}", channel_id));
         let api_url = format!("https://7tv.io/v3/users/twitch/{}", channel_id);
         emit_log(&window, format!("Backend: Fetching from API URL: {}", api_url));
+        
+        // Channel-specific stats
+        let mut channel_emotes_processed = 0;
+        let mut channel_emotes_downloaded = 0;
+        let mut channel_emotes_skipped = 0;
+        let mut channel_emotes_failed = 0;
+        let mut channel_failed_emotes = Vec::new();
         
         match client.get(&api_url).send().await {
             Ok(response) => {
@@ -225,6 +239,9 @@ async fn download_emotes_command(
                                         fs::create_dir_all(&channel_emote_dir)?;
 
                                         for emote in emote_set.emotes {
+                                            channel_emotes_processed += 1;
+                                            total_emotes_processed += 1;
+                                            
                                             emit_log(&window, format!("Backend: Processing emote: {} (ID: {})", emote.name, emote.id));
                                             
                                             // Check if emote has GIF format available by examining the files array
@@ -256,6 +273,8 @@ async fn download_emotes_command(
                                                     global_emote_mapping.insert(mapping_key, relative_path.to_string_lossy().replace("\\", "/"));
                                                     emit_log(&window, format!("Backend: Added skipped existing emote {} to map.", emote.name));
                                                 }
+                                                channel_emotes_skipped += 1;
+                                                total_emotes_skipped += 1;
                                                 continue;
                                             }
 
@@ -263,19 +282,67 @@ async fn download_emotes_command(
                                             match client.get(&download_url).send().await {
                                                 Ok(emote_response) => {
                                                     if emote_response.status().is_success() {
-                                                        let emote_bytes = emote_response.bytes().await?;
-                                                        let mut file = File::create(&output_path)?;
-                                                        file.write_all(&emote_bytes)?;
-                                                        emit_log(&window, format!("Backend: Saved {} ({} bytes) to {}", emote.name, emote_bytes.len(), output_path.display()));
-                                                        
-                                                        let relative_path = Path::new("7tv_emotes").join(channel_id).join(&emote_filename);
-                                                        global_emote_mapping.insert(format!(":{}:", sanitized_emote_name), relative_path.to_string_lossy().replace("\\", "/"));
-                                                        emit_log(&window, format!("Backend: Added {} to map.", emote.name));
+                                                        match emote_response.bytes().await {
+                                                            Ok(emote_bytes) => {
+                                                                match File::create(&output_path) {
+                                                                    Ok(mut file) => {
+                                                                        match file.write_all(&emote_bytes) {
+                                                                            Ok(_) => {
+                                                                                emit_log(&window, format!("Backend: Saved {} ({} bytes) to {}", emote.name, emote_bytes.len(), output_path.display()));
+                                                                                
+                                                                                let relative_path = Path::new("7tv_emotes").join(channel_id).join(&emote_filename);
+                                                                                global_emote_mapping.insert(format!(":{}:", sanitized_emote_name), relative_path.to_string_lossy().replace("\\", "/"));
+                                                                                emit_log(&window, format!("Backend: Added {} to map.", emote.name));
+                                                                                
+                                                                                channel_emotes_downloaded += 1;
+                                                                                total_emotes_downloaded += 1;
+                                                                            },
+                                                                            Err(e) => {
+                                                                                let error_msg = format!("Failed to write emote {} to file: {}", emote.name, e);
+                                                                                emit_log(&window, format!("Backend: {}", error_msg));
+                                                                                channel_emotes_failed += 1;
+                                                                                total_emotes_failed += 1;
+                                                                                channel_failed_emotes.push(format!("{}: {}", emote.name, error_msg));
+                                                                                failed_emotes.push(format!("{}: {} ({})", channel_id, emote.name, error_msg));
+                                                                            }
+                                                                        }
+                                                                    },
+                                                                    Err(e) => {
+                                                                        let error_msg = format!("Failed to create file for emote {}: {}", emote.name, e);
+                                                                        emit_log(&window, format!("Backend: {}", error_msg));
+                                                                        channel_emotes_failed += 1;
+                                                                        total_emotes_failed += 1;
+                                                                        channel_failed_emotes.push(format!("{}: {}", emote.name, error_msg));
+                                                                        failed_emotes.push(format!("{}: {} ({})", channel_id, emote.name, error_msg));
+                                                                    }
+                                                                }
+                                                            },
+                                                            Err(e) => {
+                                                                let error_msg = format!("Failed to get bytes for emote {}: {}", emote.name, e);
+                                                                emit_log(&window, format!("Backend: {}", error_msg));
+                                                                channel_emotes_failed += 1;
+                                                                total_emotes_failed += 1;
+                                                                channel_failed_emotes.push(format!("{}: {}", emote.name, error_msg));
+                                                                failed_emotes.push(format!("{}: {} ({})", channel_id, emote.name, error_msg));
+                                                            }
+                                                        }
                                                     } else {
-                                                        emit_log(&window, format!("Backend: Failed to download {}: HTTP {}", emote.name, emote_response.status()));
+                                                        let error_msg = format!("HTTP {} response", emote_response.status());
+                                                        emit_log(&window, format!("Backend: Failed to download {}: {}", emote.name, error_msg));
+                                                        channel_emotes_failed += 1;
+                                                        total_emotes_failed += 1;
+                                                        channel_failed_emotes.push(format!("{}: {}", emote.name, error_msg));
+                                                        failed_emotes.push(format!("{}: {} ({})", channel_id, emote.name, error_msg));
                                                     }
                                                 }
-                                                Err(e) => emit_log(&window, format!("Backend: HTTP Error downloading emote {}: {:#?}", emote.name, e)),
+                                                Err(e) => {
+                                                    let error_msg = format!("HTTP request error: {:#?}", e);
+                                                    emit_log(&window, format!("Backend: HTTP Error downloading emote {}: {}", emote.name, error_msg));
+                                                    channel_emotes_failed += 1;
+                                                    total_emotes_failed += 1;
+                                                    channel_failed_emotes.push(format!("{}: {}", emote.name, error_msg));
+                                                    failed_emotes.push(format!("{}: {} ({})", channel_id, emote.name, error_msg));
+                                                }
                                             }
                                         }
                                     } else {
@@ -297,6 +364,21 @@ async fn download_emotes_command(
             }
             Err(e) => emit_log(&window, format!("Backend: HTTP Error fetching data for channel {}: {}", channel_id, e)),
         }
+        
+        // Log channel summary
+        emit_log(&window, format!("Backend: === CHANNEL {} SUMMARY ===", channel_id));
+        emit_log(&window, format!("Backend: Total emotes processed: {}", channel_emotes_processed));
+        emit_log(&window, format!("Backend: Successfully downloaded: {} emotes", channel_emotes_downloaded));
+        emit_log(&window, format!("Backend: Skipped (already existed): {} emotes", channel_emotes_skipped));
+        emit_log(&window, format!("Backend: Failed to download: {} emotes", channel_emotes_failed));
+        
+        // If any failures, log them in a summarized way
+        if !channel_failed_emotes.is_empty() {
+            emit_log(&window, "Backend: Failed emotes for this channel:".to_string());
+            for (index, failed_emote) in channel_failed_emotes.iter().enumerate() {
+                emit_log(&window, format!("Backend:   {}. {}", index + 1, failed_emote));
+            }
+        }
     }
 
     emit_log(&window, "Backend: Attempting to serialize final mapping...".to_string());
@@ -304,9 +386,29 @@ async fn download_emotes_command(
     emit_log(&window, "Backend: Attempting to write final mapping to file...".to_string());
     fs::write(&mapping_file_path, mapping_json)?;
     emit_log(&window, format!("Backend: Emote mapping saved to {}", mapping_file_path.display()));
+    
+    // Log overall summary
+    emit_log(&window, "Backend: ======= OVERALL SUMMARY =======".to_string());
+    emit_log(&window, format!("Backend: Total emotes processed: {}", total_emotes_processed));
+    emit_log(&window, format!("Backend: Successfully downloaded: {} emotes", total_emotes_downloaded));
+    emit_log(&window, format!("Backend: Skipped (already existed): {} emotes", total_emotes_skipped));
+    emit_log(&window, format!("Backend: Failed to download: {} emotes", total_emotes_failed));
+    
+    // If any failures, log them in a summarized way
+    if !failed_emotes.is_empty() {
+        emit_log(&window, "Backend: Failed emotes (limited to first 50):".to_string());
+        for (index, failed_emote) in failed_emotes.iter().take(50).enumerate() {
+            emit_log(&window, format!("Backend:   {}. {}", index + 1, failed_emote));
+        }
+        
+        if failed_emotes.len() > 50 {
+            emit_log(&window, format!("Backend: ... and {} more failed emotes", failed_emotes.len() - 50));
+        }
+    }
 
     emit_log(&window, "Backend: Download command finished successfully.".to_string());
-    Ok("Download process finished. Check logs for details.".to_string())
+    Ok(format!("Download process finished. Summary: {} processed, {} downloaded, {} skipped, {} failed. Check logs for details.", 
+        total_emotes_processed, total_emotes_downloaded, total_emotes_skipped, total_emotes_failed))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -326,3 +428,4 @@ pub fn run() {
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
+
