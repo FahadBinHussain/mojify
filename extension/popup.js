@@ -56,6 +56,122 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 3000);
   }
   
+  // Insert emote into active text field on messenger.com
+  function insertEmoteIntoActiveTab(emoteTrigger) {
+    // Find active tab
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs.length === 0) {
+        showToast('No active tab found', 'error');
+        return;
+      }
+      
+      const currentTab = tabs[0];
+      
+      // Check if the current tab is messenger.com
+      if (!currentTab.url.includes('messenger.com')) {
+        showToast('This feature only works on messenger.com', 'error');
+        
+        // Add diagnostic info
+        const diagInfo = document.createElement('div');
+        diagInfo.className = 'diagnostic-info';
+        diagInfo.innerHTML = `
+          <div class="diagnostic-header">
+            <h3>Diagnostic Information</h3>
+            <p>You tried to insert an emote on: <code>${new URL(currentTab.url).hostname}</code></p>
+            <p>This feature only works on <code>messenger.com</code></p>
+          </div>
+        `;
+        
+        // Show diagnostics in a modal
+        const modal = document.createElement('div');
+        modal.className = 'modal';
+        modal.appendChild(diagInfo);
+        
+        const closeBtn = document.createElement('button');
+        closeBtn.className = 'close-btn';
+        closeBtn.innerHTML = 'Close';
+        closeBtn.addEventListener('click', () => {
+          document.body.removeChild(modal);
+        });
+        
+        diagInfo.appendChild(closeBtn);
+        document.body.appendChild(modal);
+        
+        return;
+      }
+
+      // Get emote URL from storage
+      chrome.storage.local.get(['emoteMapping'], (result) => {
+        if (!result.emoteMapping || !result.emoteMapping[emoteTrigger]) {
+          showToast('Emote not found in mapping', 'error');
+          return;
+        }
+
+        const emoteUrl = result.emoteMapping[emoteTrigger];
+        
+        // Show loading indicator
+        showToast('Inserting emote...', 'loading');
+        
+        // Send message to background script to handle the insertion
+        chrome.runtime.sendMessage({
+          type: 'insertEmote',
+          tabId: currentTab.id,
+          emoteUrl,
+          emoteTrigger
+        }, (response) => {
+          if (response && response.success) {
+            showToast('Emote inserted!');
+            // Close popup after successful insertion
+            setTimeout(() => window.close(), 800);
+          } else {
+            const error = response && response.error ? response.error : 'Unknown error';
+            showToast(`Error: ${error}`, 'error');
+            
+            // Add diagnostic info for insertion error
+            const diagInfo = document.createElement('div');
+            diagInfo.className = 'diagnostic-info';
+            diagInfo.innerHTML = `
+              <div class="diagnostic-header">
+                <h3>Diagnostic Information</h3>
+                <p>Failed to insert emote</p>
+                <p>Error: <code>${error}</code></p>
+                <p>You can try reloading the page and trying again</p>
+              </div>
+            `;
+            
+            // Show diagnostics in a modal
+            const modal = document.createElement('div');
+            modal.className = 'modal';
+            modal.appendChild(diagInfo);
+            
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'close-btn';
+            closeBtn.innerHTML = 'Close';
+            closeBtn.addEventListener('click', () => {
+              document.body.removeChild(modal);
+            });
+            
+            const reloadBtn = document.createElement('button');
+            reloadBtn.className = 'reload-btn';
+            reloadBtn.innerHTML = 'Reload Page';
+            reloadBtn.addEventListener('click', () => {
+              chrome.tabs.reload(currentTab.id);
+              window.close();
+            });
+            
+            const buttonContainer = document.createElement('div');
+            buttonContainer.className = 'button-container';
+            buttonContainer.appendChild(closeBtn);
+            buttonContainer.appendChild(reloadBtn);
+            
+            diagInfo.appendChild(buttonContainer);
+            document.body.appendChild(modal);
+          }
+        });
+      });
+    });
+  }
+  
   // Load emotes from storage
   function loadEmotes() {
     chrome.storage.local.get(['emoteMapping'], (result) => {
@@ -129,6 +245,7 @@ document.addEventListener('DOMContentLoaded', () => {
       
       const emoteItem = document.createElement('div');
       emoteItem.className = 'emote-item';
+      emoteItem.setAttribute('data-emote-key', key);
       emoteItem.innerHTML = `
         <div class="emote-img-container">
           <img src="${emoteUrl}" alt="${emoteName}" class="emote-img">
@@ -138,6 +255,11 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="emote-trigger">${key}</div>
         </div>
       `;
+      
+      // Add click event to insert emote
+      emoteItem.addEventListener('click', () => {
+        insertEmoteIntoActiveTab(key);
+      });
       
       emoteGrid.appendChild(emoteItem);
     });
@@ -248,12 +370,340 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
   
+  // Add to the document ready event after initialization code
+  function initDebugSection() {
+    const toggleDebugBtn = document.getElementById('toggle-debug');
+    const debugContent = document.getElementById('debug-content');
+    const findFieldBtn = document.getElementById('debug-find-field');
+    const insertTextBtn = document.getElementById('debug-insert-text');
+    const detectPageBtn = document.getElementById('debug-detect-page');
+    const debugResultContent = document.querySelector('.debug-result-content');
+    
+    // Toggle debug section visibility
+    toggleDebugBtn.addEventListener('click', () => {
+      if (debugContent.style.display === 'none') {
+        debugContent.style.display = 'block';
+        toggleDebugBtn.textContent = 'Hide';
+      } else {
+        debugContent.style.display = 'none';
+        toggleDebugBtn.textContent = 'Show';
+      }
+    });
+    
+    // Find text field debug
+    findFieldBtn.addEventListener('click', () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs.length === 0) {
+          setDebugResult('No active tab found', 'error');
+          return;
+        }
+        
+        const currentTab = tabs[0];
+        
+        setDebugResult('Finding text field...', 'loading');
+        
+        chrome.scripting.executeScript({
+          target: { tabId: currentTab.id },
+          func: debugFindTextField
+        }).then((results) => {
+          if (results && results[0] && results[0].result) {
+            setDebugResult(results[0].result, results[0].result.includes('Found') ? 'success' : 'error');
+          } else {
+            setDebugResult('No result returned', 'error');
+          }
+        }).catch((error) => {
+          setDebugResult(`Error: ${error.message}`, 'error');
+        });
+      });
+    });
+    
+    // Insert test text
+    insertTextBtn.addEventListener('click', () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs.length === 0) {
+          setDebugResult('No active tab found', 'error');
+          return;
+        }
+        
+        const currentTab = tabs[0];
+        
+        setDebugResult('Inserting test text...', 'loading');
+        
+        chrome.scripting.executeScript({
+          target: { tabId: currentTab.id },
+          func: debugInsertTestText
+        }).then((results) => {
+          if (results && results[0] && results[0].result) {
+            setDebugResult(results[0].result, results[0].result.includes('Success') ? 'success' : 'error');
+          } else {
+            setDebugResult('No result returned', 'error');
+          }
+        }).catch((error) => {
+          setDebugResult(`Error: ${error.message}`, 'error');
+        });
+      });
+    });
+    
+    // Detect page structure
+    detectPageBtn.addEventListener('click', () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs.length === 0) {
+          setDebugResult('No active tab found', 'error');
+          return;
+        }
+        
+        const currentTab = tabs[0];
+        
+        setDebugResult('Analyzing page...', 'loading');
+        
+        chrome.scripting.executeScript({
+          target: { tabId: currentTab.id },
+          func: debugAnalyzePage
+        }).then((results) => {
+          if (results && results[0] && results[0].result) {
+            setDebugResult(results[0].result);
+          } else {
+            setDebugResult('No result returned', 'error');
+          }
+        }).catch((error) => {
+          setDebugResult(`Error: ${error.message}`, 'error');
+        });
+      });
+    });
+    
+    function setDebugResult(text, type) {
+      debugResultContent.textContent = text;
+      debugResultContent.className = 'debug-result-content';
+      if (type) {
+        debugResultContent.classList.add(type);
+      }
+    }
+  }
+
+  // Debug functions that will be executed in the page context
+  function debugFindTextField() {
+    try {
+      let log = "DEBUG: Finding Text Field\n";
+      log += "-----------------------\n";
+      
+      // Target messenger.com input fields with various selectors
+      const selectors = [
+        '.x78zum5.x13a6bvl',
+        '[contenteditable="true"][role="textbox"]',
+        'div[contenteditable="true"]',
+        '[aria-label*="message" i]',
+        '[placeholder*="message" i]',
+        '[data-testid="messenger_composer_text"]',
+        '[role="textbox"]'
+      ];
+      
+      log += `Page URL: ${window.location.href}\n`;
+      log += `Document Ready: ${document.readyState}\n\n`;
+      
+      let foundAny = false;
+      for (const selector of selectors) {
+        const elements = document.querySelectorAll(selector);
+        log += `Selector: ${selector}\n`;
+        log += `Found: ${elements.length} elements\n`;
+        
+        if (elements.length > 0) {
+          foundAny = true;
+          for (let i = 0; i < Math.min(elements.length, 3); i++) {
+            const el = elements[i];
+            log += `- Element ${i + 1}: ${el.tagName}\n`;
+            log += `  Visible: ${el.offsetParent !== null}\n`;
+            log += `  ContentEditable: ${el.isContentEditable}\n`;
+            
+            // Try to focus
+            try {
+              el.focus();
+              log += `  Focus: Success\n`;
+              // Check if active
+              log += `  Active: ${document.activeElement === el}\n`;
+            } catch (e) {
+              log += `  Focus: Failed (${e.message})\n`;
+            }
+            log += '\n';
+          }
+        } else {
+          log += '\n';
+        }
+      }
+      
+      if (foundAny) {
+        log += "Found potential text fields";
+      } else {
+        log += "No text fields found";
+      }
+      
+      return log;
+    } catch (error) {
+      return `Error: ${error.message}`;
+    }
+  }
+
+  function debugInsertTestText() {
+    try {
+      let log = "DEBUG: Insert Test Text\n";
+      log += "---------------------\n";
+      
+      const activeElement = document.activeElement;
+      log += `Active Element: ${activeElement ? activeElement.tagName : 'None'}\n`;
+      
+      if (!activeElement) {
+        log += "No active element found. Finding text field...\n";
+        
+        // Try to find and focus the text field
+        const selector = '.x78zum5.x13a6bvl, [contenteditable="true"], [role="textbox"]';
+        const elements = document.querySelectorAll(selector);
+        
+        if (elements.length > 0) {
+          for (const el of elements) {
+            if (el.offsetParent !== null) {
+              el.focus();
+              log += `Found and focused: ${el.tagName}\n`;
+              break;
+            }
+          }
+        } else {
+          log += "No input fields found\n";
+          return log + "Failed to insert test text";
+        }
+      }
+      
+      // Now try to insert text into the active element
+      const testText = "🧪 Mojify Test Text 🧪";
+      
+      if (document.activeElement.isContentEditable) {
+        log += "Using contentEditable method\n";
+        
+        // Try execCommand
+        if (document.queryCommandSupported('insertText')) {
+          document.execCommand('insertText', false, testText);
+          log += "Used execCommand\n";
+        }
+        // Fallback to Selection API
+        else {
+          const selection = window.getSelection();
+          if (selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            const textNode = document.createTextNode(testText);
+            range.insertNode(textNode);
+            range.collapse(false);
+            log += "Used Selection API\n";
+          } else {
+            log += "No selection range\n";
+          }
+        }
+        
+        document.activeElement.dispatchEvent(new Event('input', { bubbles: true }));
+        return log + "Success: Text inserted into contentEditable element";
+      }
+      // For input or textarea
+      else if (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT') {
+        log += "Using input/textarea method\n";
+        
+        const pos = document.activeElement.selectionStart || 0;
+        const value = document.activeElement.value || '';
+        document.activeElement.value = value.slice(0, pos) + testText + value.slice(pos);
+        document.activeElement.dispatchEvent(new Event('input', { bubbles: true }));
+        
+        return log + "Success: Text inserted into input/textarea";
+      }
+      else {
+        return log + "Failed: Element is not editable";
+      }
+    } catch (error) {
+      return `Error: ${error.message}`;
+    }
+  }
+
+  function debugAnalyzePage() {
+    try {
+      let log = "DEBUG: Page Analysis\n";
+      log += "-------------------\n";
+      
+      log += `URL: ${window.location.href}\n`;
+      log += `Is Messenger: ${window.location.href.includes('messenger.com')}\n\n`;
+      
+      // Check for various Messenger elements
+      const containers = [
+        { name: "Main content", selector: '[role="main"]' },
+        { name: "Complementary section", selector: '[role="complementary"]' },
+        { name: "Form", selector: '[role="form"]' },
+        { name: "Navigation", selector: '[role="navigation"]' }
+      ];
+      
+      log += "Page Structure:\n";
+      containers.forEach(container => {
+        const elements = document.querySelectorAll(container.selector);
+        log += `${container.name}: ${elements.length} found\n`;
+      });
+      
+      // Check for editable elements
+      const editables = document.querySelectorAll('[contenteditable="true"]');
+      log += `\nEditable elements: ${editables.length}\n`;
+      
+      // Check for focus handling
+      log += "\nFocus Test:\n";
+      const activeBeforeTest = document.activeElement;
+      log += `Active element before test: ${activeBeforeTest ? activeBeforeTest.tagName : 'None'}\n`;
+      
+      try {
+        // Try to create a temporary input
+        const tempInput = document.createElement('input');
+        tempInput.style.position = 'absolute';
+        tempInput.style.opacity = '0';
+        document.body.appendChild(tempInput);
+        tempInput.focus();
+        log += `Focus test result: ${document.activeElement === tempInput ? 'Success' : 'Failed'}\n`;
+        document.body.removeChild(tempInput);
+      } catch (e) {
+        log += `Focus test error: ${e.message}\n`;
+      }
+      
+      // List potential text entry fields
+      log += "\nPotential Message Fields:\n";
+      const messageSelectors = [
+        '[placeholder*="message" i]',
+        '[aria-label*="message" i]',
+        '[aria-label*="type" i]',
+        '.x78zum5.x13a6bvl'
+      ];
+      
+      let found = false;
+      for (const selector of messageSelectors) {
+        const fields = document.querySelectorAll(selector);
+        if (fields.length > 0) {
+          found = true;
+          log += `${selector}: ${fields.length} found\n`;
+          // Detail the first found field
+          const field = fields[0];
+          log += `  Tag: ${field.tagName}\n`;
+          log += `  Classes: ${field.className}\n`;
+          log += `  Content Editable: ${field.isContentEditable}\n`;
+          log += `  Visible: ${field.offsetParent !== null}\n`;
+          break;
+        }
+      }
+      
+      if (!found) {
+        log += "No message fields found with common selectors\n";
+      }
+      
+      return log;
+    } catch (error) {
+      return `Error: ${error.message}`;
+    }
+  }
+  
   // Initialize
   function init() {
     initTabs();
     loadEmotes();
     loadChannelIds();
     addButtonEffects();
+    initDebugSection(); // Add this line
   }
   
   init();
