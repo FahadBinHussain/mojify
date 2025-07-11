@@ -1,0 +1,106 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Mojify</title>
+  <link rel="stylesheet" type="text/css" href="popup.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+</head>
+<body>
+  <div class="app-container">
+    <div class="header">
+      <div class="logo">
+        <div class="logo-icon">
+          <i class="fas fa-laugh-beam"></i>
+        </div>
+        <div class="logo-text">
+          <h1>Mojify</h1>
+          <span class="version">v1.0</span>
+        </div>
+      </div>
+    </div>
+    
+    <div class="tab-container">
+      <div class="tab-header">
+        <button class="tab-btn active" data-tab="emotes">
+          <i class="fas fa-grin"></i>
+          <span>Emotes</span>
+        </button>
+        <button class="tab-btn" data-tab="settings">
+          <i class="fas fa-cog"></i>
+          <span>Settings</span>
+        </button>
+        <div class="tab-indicator"></div>
+      </div>
+      
+      <div class="tab-content">
+        <!-- Emotes Tab -->
+        <div class="tab-pane active" id="emotes-tab">
+          <div class="search-container">
+            <div class="search-input-wrapper">
+              <i class="fas fa-search"></i>
+              <input type="text" id="search-emotes" placeholder="Search emotes">
+            </div>
+          </div>
+          
+          <div class="emote-stats">
+            <div class="stat">
+              <span class="stat-number" id="emote-count">0</span>
+              <span class="stat-label">Emotes</span>
+            </div>
+            <button id="download-button" class="action-button">
+              <i class="fas fa-sync-alt"></i>
+              <span>Refresh Emotes</span>
+            </button>
+          </div>
+          
+          <div class="emotes-container">
+            <div class="no-emotes-message" id="no-emotes-message">
+              <i class="fas fa-ghost empty-icon"></i>
+              <p>No emotes loaded</p>
+              <p class="empty-subtitle">Add channel IDs in Settings tab and click Refresh Emotes</p>
+            </div>
+            
+            <div class="emote-grid" id="emote-grid"></div>
+            
+            <div class="load-more hidden" id="load-more">
+              <button id="load-more-btn">Load More</button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Settings Tab -->
+        <div class="tab-pane" id="settings-tab">
+          <div class="settings-section">
+            <h2 class="section-title">Channel Configuration</h2>
+            <p class="section-description">Enter Twitch channel IDs to load their 7TV emotes</p>
+            
+            <div class="form-group">
+              <label for="channel-ids">Twitch Channel IDs</label>
+              <textarea id="channel-ids" placeholder="Enter channel IDs, one per line or comma-separated"></textarea>
+              <div class="helper-text">Example: xqc, forsen, sodapoppin</div>
+            </div>
+            
+            <button id="save-button" class="primary-button">
+              <i class="fas fa-save"></i>
+              <span>Save Channel IDs</span>
+            </button>
+          </div>
+          
+          <div class="settings-section">
+            <h2 class="section-title">About Mojify</h2>
+            <p class="about-text">Mojify lets you use Twitch emotes anywhere on the web by typing their name surrounded by colons.</p>
+            <p class="about-text">Example: typing <code>:pepelaugh:</code> will insert the PepeLaugh emote.</p>
+            <p class="powered-by">Powered by 7TV</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <div id="toast" class="toast hidden"></div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html> 
