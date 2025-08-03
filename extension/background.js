@@ -41,7 +41,7 @@ async function downloadEmotes() {
 
 // Function to insert emote into messenger.com
 async function insertEmoteIntoMessenger(tabId, emoteUrl, emoteTrigger) {
-  console.log(`Attempting to insert emote ${emoteTrigger} into tab ${tabId}`);
+  console.log(`[Mojify] Attempting to insert emote ${emoteTrigger} into tab ${tabId}`);
 
   try {
     // First attempt to get the emote as a blob
@@ -51,8 +51,7 @@ async function insertEmoteIntoMessenger(tabId, emoteUrl, emoteTrigger) {
     }
 
     const blob = await response.blob();
-    const dataUrl = await blobToDataUrl(blob);
-
+    
     // Execute a script to find and prepare the input field
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -62,16 +61,33 @@ async function insertEmoteIntoMessenger(tabId, emoteUrl, emoteTrigger) {
     // Wait a moment for the field to be focused
     await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Insert the image using clipboard API
+    // Set up clipboard data in the page context
     await chrome.scripting.executeScript({
       target: { tabId },
-      func: insertImageFromDataUrl,
-      args: [dataUrl, emoteTrigger]
+      func: () => {
+        // Create a dummy element to hold the image URL temporarily
+        const tempInput = document.createElement('input');
+        tempInput.setAttribute('id', 'mojify-temp-input');
+        tempInput.style.position = 'absolute';
+        tempInput.style.left = '-9999px';
+        document.body.appendChild(tempInput);
+        
+        // Focus on the input field we found earlier
+        const activeElement = document.activeElement;
+        if (activeElement) {
+          activeElement.focus();
+        }
+        
+        return true;
+      }
     });
-
+    
+    // Use the debugger to simulate Ctrl+V
+    await simulatePasteWithDebugger(tabId);
+    
     return { success: true };
   } catch (error) {
-    console.error("Error inserting emote:", error);
+    console.error("[Mojify] Error inserting emote:", error);
     return { success: false, error: error.message };
   }
 }
@@ -446,6 +462,62 @@ function insertImageFromDataUrl(dataUrl, altText) {
   }
 }
 
+// Function to simulate paste operation using Chrome debugger API
+async function simulatePasteWithDebugger(tabId) {
+  return new Promise((resolve, reject) => {
+    if (!tabId) {
+      console.error("[Mojify] Paste action failed: No tab ID provided");
+      reject(new Error("No tab ID provided"));
+      return;
+    }
+
+    const debuggee = { tabId: tabId };
+    const protocolVersion = "1.3";
+
+    // Attach the debugger to the tab
+    chrome.debugger.attach(debuggee, protocolVersion, () => {
+      if (chrome.runtime.lastError) {
+        console.error(`[Mojify] Debugger attach error: ${chrome.runtime.lastError.message}`);
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+
+      // This function sends a single key event and returns a promise
+      const sendKeyEvent = (type) => {
+        return new Promise(resolve => {
+          chrome.debugger.sendCommand(debuggee, "Input.dispatchKeyEvent", type, resolve);
+        });
+      };
+
+      // This async function sequences the key presses to simulate Ctrl+V
+      const performPaste = async () => {
+        try {
+          console.log("[Mojify] Simulating Ctrl+V paste operation");
+          // Modifiers: 2 = Control key pressed
+          await sendKeyEvent({ type: 'keyDown', modifiers: 2, windowsVirtualKeyCode: 17, key: 'Control' });
+          await sendKeyEvent({ type: 'keyDown', modifiers: 2, windowsVirtualKeyCode: 86, text: 'v' });
+          await sendKeyEvent({ type: 'keyUp', modifiers: 2, windowsVirtualKeyCode: 86, text: 'v' });
+          await sendKeyEvent({ type: 'keyUp', windowsVirtualKeyCode: 17, key: 'Control' });
+
+          // Detach the debugger after the action is complete
+          chrome.debugger.detach(debuggee, () => {
+            console.log("[Mojify] Debugger detached successfully");
+            resolve(true);
+          });
+        } catch (e) {
+          console.error("[Mojify] Error during key event dispatch:", e);
+          // Ensure we always try to detach
+          chrome.debugger.detach(debuggee, () => {
+            reject(new Error("Key dispatch failed: " + e.message));
+          });
+        }
+      };
+
+      performPaste();
+    });
+  });
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
     id: "downloadEmotes",
@@ -460,6 +532,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   }
 });
 
+// Add a listener for paste action requests
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Handle downloading emotes
   if (request.type === 'downloadEmotes') {
@@ -479,6 +552,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         success: false, 
         error: error.message || 'Unknown error' 
       }));
+    
+    return true; // Indicates that the response is sent asynchronously
+  }
+
+  // Handle paste action
+  if (request.action === "paste") {
+    const tabId = sender.tab.id;
+    if (!tabId) {
+      console.error("[Mojify] Paste action failed: Could not get sender tab ID.");
+      sendResponse({ success: false, error: "No tab ID" });
+      return true;
+    }
+
+    simulatePasteWithDebugger(tabId)
+      .then(() => {
+        sendResponse({ success: true });
+      })
+      .catch((error) => {
+        sendResponse({ success: false, error: error.message });
+      });
     
     return true; // Indicates that the response is sent asynchronously
   }
