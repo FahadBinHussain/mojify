@@ -10,15 +10,23 @@ async function get7TVEmotes(channelId) {
     }
     const data = await response.json();
     const emoteList = data.emote_set?.emotes || [];
-    return emoteList.reduce((acc, emote) => {
+    const username = data.user?.username || channelId;
+    
+    const emotes = {};
+    emoteList.forEach(emote => {
       if (emote.name && emote.data) {
-        acc[`:${emote.name}:`] = `https://${emote.data.host.url.replace(/^\/\//, '')}/${emote.data.host.files.slice(-1)[0].name}`;
+        const emoteKey = `:${emote.name}:`;
+        emotes[emoteKey] = `https://${emote.data.host.url.replace(/^\/\//, '')}/${emote.data.host.files.slice(-1)[0].name}`;
       }
-      return acc;
-    }, {});
+    });
+    
+    return {
+      username,
+      emotes
+    };
   } catch (error) {
     console.error(`Error fetching emotes for ${channelId}:`, error);
-    return {};
+    return { username: channelId, emotes: {} };
   }
 }
 
@@ -29,14 +37,32 @@ async function downloadEmotes() {
     return;
   }
 
-  let globalEmoteMapping = {};
+  // New structure: each channel has its own emotes
+  const channels = [];
+  const globalEmoteMapping = {};
+  
   for (const channelId of channelIds) {
-    const emotes = await get7TVEmotes(channelId);
-    Object.assign(globalEmoteMapping, emotes);
+    const { username, emotes } = await get7TVEmotes(channelId);
+    
+    // Store channel info with its emotes
+    channels.push({
+      id: channelId,
+      username: username,
+      emotes: emotes
+    });
+    
+    // Also maintain a global mapping for backward compatibility
+    Object.entries(emotes).forEach(([key, url]) => {
+      globalEmoteMapping[key] = url;
+    });
   }
 
-  await chrome.storage.local.set({ emoteMapping: globalEmoteMapping });
-  console.log("Emote mapping updated.");
+  await chrome.storage.local.set({ 
+    emoteMapping: globalEmoteMapping, // For backward compatibility
+    channels: channels // New structure with clear channel separation
+  });
+  
+  console.log("Emote mapping updated with new channel structure.");
 }
 
 // Function to insert emote into messenger.com
