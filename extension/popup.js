@@ -16,11 +16,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const toast = document.getElementById('toast');
   
   // Constants
-  const ITEMS_PER_PAGE = 12;
+  const ITEMS_PER_PAGE = 30;
   
-  // State
-  let allEmotes = {}; // All emotes from storage
-  let displayedEmotes = []; // Emotes currently displayed
+  // State variables
+  let allEmotes = {};
+  let channels = [];
+  let displayedEmotes = [];
   let currentPage = 1;
   let searchTerm = '';
   
@@ -198,11 +199,41 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Load emotes from storage
   function loadEmotes() {
-    chrome.storage.local.get(['emoteMapping'], (result) => {
+    chrome.storage.local.get(['emoteMapping', 'channels'], (result) => {
+      console.log('Loaded data:', result);
+      
       if (result.emoteMapping && Object.keys(result.emoteMapping).length > 0) {
         allEmotes = result.emoteMapping;
-        updateEmoteCount();
-        filterAndDisplayEmotes();
+        channels = result.channels || [];
+        
+        console.log('All emotes count:', Object.keys(allEmotes).length);
+        console.log('Channels count:', channels.length);
+        
+        // If we have emotes but no channels (for backward compatibility)
+        if (channels.length === 0) {
+          chrome.storage.local.get(['channelIds'], (result) => {
+            if (result.channelIds && result.channelIds.length > 0) {
+              // Create a single channel with all emotes
+              channels = [{
+                id: 'all',
+                username: 'All Emotes',
+                emotes: allEmotes
+              }];
+              console.log('Created fallback channel with all emotes');
+            }
+            updateEmoteCount();
+            filterAndDisplayEmotes();
+          });
+        } else {
+          // Log channel data
+          channels.forEach(channel => {
+            console.log(`Channel ${channel.username} has ${Object.keys(channel.emotes || {}).length} emotes`);
+          });
+          
+          updateEmoteCount();
+          filterAndDisplayEmotes();
+        }
+        
         noEmotesMessage.style.display = 'none';
       } else {
         emoteGrid.innerHTML = '';
@@ -229,30 +260,45 @@ document.addEventListener('DOMContentLoaded', () => {
     if (emoteKeys.length === 0) return;
     
     // Filter based on search term
-    displayedEmotes = emoteKeys
-      .filter(key => {
-        const emoteName = key.replace(/:/g, '').toLowerCase();
-        return searchTerm === '' || emoteName.includes(searchTerm.toLowerCase());
-      })
-      .sort((a, b) => {
-        // Sort alphabetically
-        return a.localeCompare(b);
-      });
-    
-    // Display a subset of emotes for the current page
-    renderEmoteGrid();
+    if (searchTerm === '') {
+      // If no search term, we'll display by channel in renderEmoteGrid
+      displayedEmotes = [];
+      // Always hide load more button in channel view
+      loadMoreContainer.classList.add('hidden');
+      renderEmoteGrid();
+    } else {
+      // If searching, filter all emotes
+      displayedEmotes = emoteKeys
+        .filter(key => {
+          const emoteName = key.replace(/:/g, '').toLowerCase();
+          return emoteName.includes(searchTerm.toLowerCase());
+        })
+        .sort((a, b) => {
+          // Sort alphabetically
+          return a.localeCompare(b);
+        });
+      
+      // Display a subset of emotes for the current page
+      renderEmoteGrid();
+    }
   }
   
   // Render the emote grid
   function renderEmoteGrid() {
     emoteGrid.innerHTML = '';
     
+    console.log('Rendering emote grid. Search term:', searchTerm);
+    
+    // If no search term, ensure load more button is hidden
+    if (searchTerm === '') {
+      loadMoreContainer.classList.add('hidden');
+    }
+    
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
     const endIndex = startIndex + ITEMS_PER_PAGE;
-    const emotesToShow = displayedEmotes.slice(startIndex, endIndex);
     
     // If no emotes match the search
-    if (displayedEmotes.length === 0 && searchTerm !== '') {
+    if (displayedEmotes.length === 0 && searchTerm !== '' && Object.keys(allEmotes).length > 0) {
       emoteGrid.innerHTML = `
         <div class="no-emotes-message" style="grid-column: 1 / -1;">
           <p>No emotes found for "${searchTerm}"</p>
@@ -262,37 +308,144 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     
-    // Create emote items
-    emotesToShow.forEach(key => {
-      const emoteUrl = allEmotes[key];
-      const emoteName = key.replace(/:/g, '');
+    // If we're searching, show emotes with pagination
+    if (searchTerm !== '') {
+      const emotesToShow = displayedEmotes.slice(startIndex, endIndex);
       
-      const emoteItem = document.createElement('div');
-      emoteItem.className = 'emote-item';
-      emoteItem.setAttribute('data-emote-key', key);
-      emoteItem.innerHTML = `
-        <div class="emote-img-container">
-          <img src="${emoteUrl}" alt="${emoteName}" class="emote-img">
-        </div>
-        <div class="emote-details">
-          <div class="emote-name">${emoteName}</div>
-          <div class="emote-trigger">${key}</div>
-        </div>
-      `;
+      console.log(`Showing search results: ${emotesToShow.length} emotes (${startIndex}-${endIndex} of ${displayedEmotes.length})`);
       
-      // Add click event to insert emote
-      emoteItem.addEventListener('click', () => {
-        insertEmoteIntoActiveTab(key);
+      emotesToShow.forEach(key => {
+        const emoteUrl = allEmotes[key];
+        const emoteName = key.replace(/:/g, '');
+        
+        const emoteItem = document.createElement('div');
+        emoteItem.className = 'emote-item';
+        emoteItem.setAttribute('data-emote-key', key);
+        emoteItem.innerHTML = `
+          <div class="emote-img-container">
+            <img src="${emoteUrl}" alt="${emoteName}" class="emote-img">
+          </div>
+          <div class="emote-details">
+            <div class="emote-name">${emoteName}</div>
+            <div class="emote-trigger">${key}</div>
+          </div>
+        `;
+        
+        // Add click event to insert emote
+        emoteItem.addEventListener('click', () => {
+          insertEmoteIntoActiveTab(key);
+        });
+        
+        emoteGrid.appendChild(emoteItem);
       });
       
-      emoteGrid.appendChild(emoteItem);
-    });
-    
-    // Update "Load More" button visibility
-    if (endIndex < displayedEmotes.length) {
-      loadMoreContainer.classList.remove('hidden');
-      loadMoreBtn.textContent = `Load More (${displayedEmotes.length - endIndex} remaining)`;
+      // Update "Load More" button visibility
+      if (endIndex < displayedEmotes.length) {
+        loadMoreContainer.classList.remove('hidden');
+        loadMoreBtn.textContent = `Load More (${displayedEmotes.length - endIndex} remaining)`;
+      } else {
+        loadMoreContainer.classList.add('hidden');
+      }
     } else {
+      // Group emotes by channel - show all emotes for each channel
+      console.log(`Showing emotes by channel. Total channels: ${channels.length}`);
+      
+      // Always hide load more button in channel view
+      loadMoreContainer.classList.add('hidden');
+      
+      channels.forEach(channel => {
+        if (!channel.emotes || Object.keys(channel.emotes).length === 0) {
+          console.log(`Channel ${channel.username} has no emotes, skipping`);
+          return;
+        }
+        
+        // Count emotes for this channel
+        const emoteCount = Object.keys(channel.emotes).length;
+        console.log(`Rendering channel ${channel.username} with ${emoteCount} emotes`);
+        
+        // Create channel section
+        const channelSection = document.createElement('div');
+        channelSection.className = 'channel-section';
+        channelSection.setAttribute('data-channel-id', channel.id);
+        
+        // Create channel header with username
+        const channelHeader = document.createElement('div');
+        channelHeader.className = 'channel-header';
+        
+        channelHeader.innerHTML = `
+          <div class="channel-header-content">
+            <span class="channel-name">${channel.username}</span>
+            <span class="channel-emote-count">${emoteCount} emotes</span>
+          </div>
+          <div class="channel-toggle-icon"></div>
+        `;
+        
+        // Create channel emotes container
+        const channelEmotes = document.createElement('div');
+        channelEmotes.className = 'channel-emotes';
+        
+        // Add ALL emotes for this channel - no pagination
+        const channelEmoteKeys = Object.keys(channel.emotes);
+        console.log(`Channel ${channel.username} emote keys:`, channelEmoteKeys);
+        
+        Object.entries(channel.emotes).forEach(([key, url]) => {
+          const emoteName = key.replace(/:/g, '');
+          
+          const emoteItem = document.createElement('div');
+          emoteItem.className = 'emote-item';
+          emoteItem.setAttribute('data-emote-key', key);
+          emoteItem.innerHTML = `
+            <div class="emote-img-container">
+              <img src="${url}" alt="${emoteName}" class="emote-img">
+            </div>
+            <div class="emote-details">
+              <div class="emote-name">${emoteName}</div>
+              <div class="emote-trigger">${key}</div>
+            </div>
+          `;
+          
+          // Add click event to insert emote
+          emoteItem.addEventListener('click', () => {
+            insertEmoteIntoActiveTab(key);
+          });
+          
+          channelEmotes.appendChild(emoteItem);
+        });
+        
+        // Add toggle functionality to channel header
+        channelHeader.addEventListener('click', (e) => {
+          // Don't toggle if clicking on an emote
+          if (e.target.closest('.emote-item')) {
+            return;
+          }
+          
+          channelSection.classList.toggle('collapsed');
+          
+          // Save collapsed state to storage
+          chrome.storage.local.get(['collapsedChannels'], (result) => {
+            const collapsedChannels = result.collapsedChannels || {};
+            collapsedChannels[channel.id] = channelSection.classList.contains('collapsed');
+            chrome.storage.local.set({ collapsedChannels });
+          });
+        });
+        
+        // Add channel header and emotes to section
+        channelSection.appendChild(channelHeader);
+        channelSection.appendChild(channelEmotes);
+        
+        // Check if this channel should be collapsed
+        chrome.storage.local.get(['collapsedChannels'], (result) => {
+          const collapsedChannels = result.collapsedChannels || {};
+          if (collapsedChannels[channel.id]) {
+            channelSection.classList.add('collapsed');
+          }
+        });
+        
+        // Add section to grid
+        emoteGrid.appendChild(channelSection);
+      });
+      
+      // Hide load more button since we're showing all emotes grouped by channel
       loadMoreContainer.classList.add('hidden');
     }
   }
