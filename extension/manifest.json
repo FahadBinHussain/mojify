@@ -9,7 +9,8 @@
     "activeTab",
     "scripting",
     "contextMenus",
-    "tabs"
+    "tabs",
+    "debugger"
   ],
   "host_permissions": [
     "https://7tv.io/*",

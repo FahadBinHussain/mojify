@@ -59,7 +59,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Insert emote into active text field on messenger.com
   function insertEmoteIntoActiveTab(emoteTrigger) {
     // Find active tab
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (tabs.length === 0) {
         showToast('No active tab found', 'error');
         return;
@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // Get emote URL from storage
-      chrome.storage.local.get(['emoteMapping'], (result) => {
+      chrome.storage.local.get(['emoteMapping'], async (result) => {
         if (!result.emoteMapping || !result.emoteMapping[emoteTrigger]) {
           showToast('Emote not found in mapping', 'error');
           return;
@@ -112,62 +112,86 @@ document.addEventListener('DOMContentLoaded', () => {
         // Show loading indicator
         showToast('Inserting emote...', 'loading');
         
-        // Send message to background script to handle the insertion
-        chrome.runtime.sendMessage({
-          type: 'insertEmote',
-          tabId: currentTab.id,
-          emoteUrl,
-          emoteTrigger
-        }, (response) => {
-          if (response && response.success) {
-            showToast('Emote inserted!');
-            // Close popup after successful insertion
-            setTimeout(() => window.close(), 800);
-          } else {
-            const error = response && response.error ? response.error : 'Unknown error';
-            showToast(`Error: ${error}`, 'error');
-            
-            // Add diagnostic info for insertion error
-            const diagInfo = document.createElement('div');
-            diagInfo.className = 'diagnostic-info';
-            diagInfo.innerHTML = `
-              <div class="diagnostic-header">
-                <h3>Diagnostic Information</h3>
-                <p>Failed to insert emote</p>
-                <p>Error: <code>${error}</code></p>
-                <p>You can try reloading the page and trying again</p>
-              </div>
-            `;
-            
-            // Show diagnostics in a modal
-            const modal = document.createElement('div');
-            modal.className = 'modal';
-            modal.appendChild(diagInfo);
-            
-            const closeBtn = document.createElement('button');
-            closeBtn.className = 'close-btn';
-            closeBtn.innerHTML = 'Close';
-            closeBtn.addEventListener('click', () => {
-              document.body.removeChild(modal);
-            });
-            
-            const reloadBtn = document.createElement('button');
-            reloadBtn.className = 'reload-btn';
-            reloadBtn.innerHTML = 'Reload Page';
-            reloadBtn.addEventListener('click', () => {
-              chrome.tabs.reload(currentTab.id);
-              window.close();
-            });
-            
-            const buttonContainer = document.createElement('div');
-            buttonContainer.className = 'button-container';
-            buttonContainer.appendChild(closeBtn);
-            buttonContainer.appendChild(reloadBtn);
-            
-            diagInfo.appendChild(buttonContainer);
-            document.body.appendChild(modal);
+        try {
+          // Fetch the image
+          const response = await fetch(emoteUrl);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch emote: ${response.status}`);
           }
-        });
+          
+          const blob = await response.blob();
+          
+          // Copy the image to clipboard
+          try {
+            const item = new ClipboardItem({ [blob.type]: blob });
+            await navigator.clipboard.write([item]);
+            console.log("Image copied to clipboard");
+          } catch (clipboardError) {
+            console.error("Clipboard error:", clipboardError);
+            showToast(`Clipboard error: ${clipboardError.message}`, 'error');
+            return;
+          }
+          
+          // Send message to background script to handle the insertion
+          chrome.runtime.sendMessage({
+            type: 'insertEmote',
+            tabId: currentTab.id,
+            emoteUrl,
+            emoteTrigger
+          }, (response) => {
+            if (response && response.success) {
+              showToast('Emote inserted!');
+              // Close popup after successful insertion
+              setTimeout(() => window.close(), 800);
+            } else {
+              const error = response && response.error ? response.error : 'Unknown error';
+              showToast(`Error: ${error}`, 'error');
+              
+              // Add diagnostic info for insertion error
+              const diagInfo = document.createElement('div');
+              diagInfo.className = 'diagnostic-info';
+              diagInfo.innerHTML = `
+                <div class="diagnostic-header">
+                  <h3>Diagnostic Information</h3>
+                  <p>Failed to insert emote</p>
+                  <p>Error: <code>${error}</code></p>
+                  <p>You can try reloading the page and trying again</p>
+                </div>
+              `;
+              
+              // Show diagnostics in a modal
+              const modal = document.createElement('div');
+              modal.className = 'modal';
+              modal.appendChild(diagInfo);
+              
+              const closeBtn = document.createElement('button');
+              closeBtn.className = 'close-btn';
+              closeBtn.innerHTML = 'Close';
+              closeBtn.addEventListener('click', () => {
+                document.body.removeChild(modal);
+              });
+              
+              const reloadBtn = document.createElement('button');
+              reloadBtn.className = 'reload-btn';
+              reloadBtn.innerHTML = 'Reload Page';
+              reloadBtn.addEventListener('click', () => {
+                chrome.tabs.reload(currentTab.id);
+                window.close();
+              });
+              
+              const buttonContainer = document.createElement('div');
+              buttonContainer.className = 'button-container';
+              buttonContainer.appendChild(closeBtn);
+              buttonContainer.appendChild(reloadBtn);
+              
+              diagInfo.appendChild(buttonContainer);
+              document.body.appendChild(modal);
+            }
+          });
+        } catch (error) {
+          console.error("Error:", error);
+          showToast(`Error: ${error.message}`, 'error');
+        }
       });
     });
   }

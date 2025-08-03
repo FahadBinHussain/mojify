@@ -103,8 +103,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     try {
       const emoteUrl = emoteMapping[emoteTrigger];
-      const emoteImg = `<img src="${emoteUrl}" alt="${emoteTrigger}" style="height: 1.5em; vertical-align: middle;" />`;
-      debugLog("Emote image tag:", emoteImg);
+      debugLog("Emote URL:", emoteUrl);
       
       // Find the active input field on messenger.com
       let activeElement = document.activeElement;
@@ -130,93 +129,17 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       if (activeElement) {
         debugLog("Using active element:", activeElement);
         
-        if (activeElement.isContentEditable) {
-          debugLog("Element is contentEditable");
-          
-          // Try multiple insertion methods for contentEditable
-          
-          // Method 1: execCommand
-          if (document.queryCommandSupported && document.queryCommandSupported('insertHTML')) {
-            debugLog("Trying execCommand method");
-            if (document.execCommand('insertHTML', false, emoteImg)) {
-              debugLog("execCommand successful");
-              // Dispatch input event
-              activeElement.dispatchEvent(new Event('input', { bubbles: true }));
-              sendResponse({ success: true });
-              return true;
-            }
-          }
-          
-          // Method 2: Selection API
-          try {
-            debugLog("Trying Selection API method");
-            const selection = window.getSelection();
-            if (!selection.rangeCount) {
-              debugLog("No selection range found, creating new range");
-              const range = document.createRange();
-              range.selectNodeContents(activeElement);
-              range.collapse(false);
-              selection.removeAllRanges();
-              selection.addRange(range);
-            }
-            
-            const range = selection.getRangeAt(0);
-            debugLog("Selection range:", range);
-            
-            const fragment = range.createContextualFragment(emoteImg);
-            range.insertNode(fragment);
-            range.collapse(false);
-            
-            // Dispatch input event to ensure messenger detects the change
-            const inputEvent = new Event('input', { bubbles: true });
-            activeElement.dispatchEvent(inputEvent);
-            
-            debugLog("Emote inserted via Selection API");
-            sendResponse({ success: true });
-            return true;
-          } catch (selectionError) {
-            debugLog("Selection API error:", selectionError);
-          }
-          
-          // Method 3: Direct innerHTML manipulation
-          try {
-            debugLog("Trying innerHTML method");
-            const currentHtml = activeElement.innerHTML;
-            activeElement.innerHTML = currentHtml + emoteImg;
-            
-            // Dispatch input event
-            activeElement.dispatchEvent(new Event('input', { bubbles: true }));
-            
-            debugLog("Emote inserted via innerHTML");
-            sendResponse({ success: true });
-            return true;
-          } catch (innerHtmlError) {
-            debugLog("innerHTML error:", innerHtmlError);
-          }
-        } else {
-          debugLog("Element is standard input/textarea");
-          
-          // For standard input/textarea elements
-          const cursorPos = activeElement.selectionStart;
-          debugLog("Cursor position:", cursorPos);
-          
-          const textBefore = activeElement.value.substring(0, cursorPos);
-          const textAfter = activeElement.value.substring(cursorPos);
-          
-          // For plain text inputs, we can't insert HTML, so insert the trigger text
-          activeElement.value = textBefore + emoteTrigger + textAfter;
-          
-          // Move cursor after emote
-          activeElement.selectionStart = activeElement.selectionEnd = cursorPos + emoteTrigger.length;
-          
-          // Dispatch input event
-          const inputEvent = new Event('input', { bubbles: true });
-          activeElement.dispatchEvent(inputEvent);
-          
-          debugLog("Emote trigger inserted into standard input element");
-          sendResponse({ success: true });
-          return true;
-        }
+        // Just request paste simulation from background script
+        chrome.runtime.sendMessage({
+          type: 'insertEmote',
+          emoteUrl: emoteUrl,
+          emoteTrigger: emoteTrigger
+        }, (response) => {
+          debugLog("Background response:", response);
+          sendResponse(response);
+        });
+        
+        return true; // Async response
       } else {
         debugLog("No active element found after all attempts");
         sendResponse({ success: false, error: 'No input field found' });
