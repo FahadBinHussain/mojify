@@ -1,5 +1,45 @@
 let emoteMapping = {};
-let emoteImageData = {};
+
+// IndexedDB wrapper for emote storage (same as background.js)
+const emoteDB = {
+  db: null,
+  dbName: 'MojifyEmoteDB',
+  version: 1,
+
+  async init() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, this.version);
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        this.db = request.result;
+        resolve();
+      };
+
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains('emotes')) {
+          const emotesStore = db.createObjectStore('emotes', { keyPath: 'key' });
+          emotesStore.createIndex('channel', 'channel', { unique: false });
+          emotesStore.createIndex('url', 'url', { unique: false });
+        }
+      };
+    });
+  },
+
+  async getEmote(key) {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emotes'], 'readonly');
+      const store = transaction.objectStore('emotes');
+      const request = store.get(key);
+
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+};
 
 // Debug mode
 const DEBUG = true;
@@ -12,19 +52,12 @@ function debugLog(...args) {
 }
 
 // Load emote mapping from storage
-chrome.storage.local.get(['emoteMapping', 'emoteImageData'], (result) => {
+chrome.storage.local.get(['emoteMapping'], (result) => {
   if (result.emoteMapping) {
     emoteMapping = result.emoteMapping;
     debugLog("Loaded emote mapping with", Object.keys(emoteMapping).length, "emotes");
   } else {
     debugLog("No emote mapping found in storage");
-  }
-
-  if (result.emoteImageData) {
-    emoteImageData = result.emoteImageData;
-    debugLog("Loaded emote image data with", Object.keys(emoteImageData).length, "emotes");
-  } else {
-    debugLog("No emote image data found in storage");
   }
 });
 
@@ -32,10 +65,6 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
   if (changes.emoteMapping) {
     emoteMapping = changes.emoteMapping.newValue;
     debugLog("Updated emote mapping with", Object.keys(emoteMapping).length, "emotes");
-  }
-  if (changes.emoteImageData) {
-    emoteImageData = changes.emoteImageData.newValue;
-    debugLog("Updated emote image data with", Object.keys(emoteImageData).length, "emotes");
   }
 });
 
@@ -114,52 +143,39 @@ async function insertEmote(emoteTrigger) {
         const emoteUrl = emoteMapping[emoteTrigger];
         debugLog("Emote URL:", emoteUrl);
 
-        // Check if we have cached image data
+        // Check if we have cached image data in IndexedDB
         let blob;
         let mimeType;
 
-        if (emoteImageData[emoteTrigger] && emoteImageData[emoteTrigger].data) {
-            debugLog("Using cached image data");
-            const cachedData = emoteImageData[emoteTrigger];
-            const base64Response = await fetch(cachedData.data);
-            blob = await base64Response.blob();
-            mimeType = cachedData.type || 'image/png';
-        } else {
-            debugLog("Downloading image data...");
+        try {
+            // Initialize IndexedDB if needed
+            if (!emoteDB.db) {
+                await emoteDB.init();
+            }
+
+            const cachedEmote = await emoteDB.getEmote(emoteTrigger);
+            if (cachedEmote && cachedEmote.blob) {
+                debugLog("Using cached blob from IndexedDB");
+                blob = cachedEmote.blob;
+                mimeType = cachedEmote.type || 'image/png';
+            } else {
+                debugLog("Downloading image data...");
+                const response = await fetch(emoteUrl);
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch emote: ${response.status}`);
+                }
+                blob = await response.blob();
+                mimeType = blob.type || 'image/png';
+                debugLog("Downloaded fresh image data");
+            }
+        } catch (error) {
+            debugLog("Error accessing IndexedDB, falling back to direct download:", error);
             const response = await fetch(emoteUrl);
             if (!response.ok) {
                 throw new Error(`Failed to fetch emote: ${response.status}`);
             }
             blob = await response.blob();
             mimeType = blob.type || 'image/png';
-
-            // Cache for future use
-            try {
-                const base64 = await new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => resolve(reader.result);
-                    reader.onerror = reject;
-                    reader.readAsDataURL(blob);
-                });
-
-                emoteImageData[emoteTrigger] = {
-                    url: emoteUrl,
-                    data: base64,
-                    type: mimeType,
-                    size: blob.size
-                };
-
-                // Update storage
-                chrome.storage.local.get(['emoteImageData'], (result) => {
-                    const currentData = result.emoteImageData || {};
-                    currentData[emoteTrigger] = emoteImageData[emoteTrigger];
-                    chrome.storage.local.set({ emoteImageData: currentData });
-                });
-
-                debugLog("Cached image data");
-            } catch (error) {
-                debugLog("Could not cache image:", error);
-            }
         }
 
         // Create File object
