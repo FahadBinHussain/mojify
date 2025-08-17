@@ -219,6 +219,13 @@ document.addEventListener('DOMContentLoaded', () => {
             // Reset loading state
             if (emoteElement) resetEmoteLoadingState(emoteElement);
 
+            // Check for connection errors
+            if (chrome.runtime.lastError) {
+              console.error('[Mojify] Connection error:', chrome.runtime.lastError);
+              showToast('Connection error - try refreshing the page', 'error');
+              return;
+            }
+
             if (response && response.success) {
               showToast('Emote inserted successfully!');
             } else {
@@ -1441,17 +1448,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Listen for automatic download notifications from background script
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'automaticDownloadStarted') {
-      showToast(`Starting automatic download for ${message.channelIds.length} channel(s)`);
+    // Add error handling for message listeners
+    try {
+      if (message.type === 'automaticDownloadStarted') {
+        showToast(`Starting automatic download for ${message.channelIds.length} channel(s)`);
 
-      // Show progress UI if not already shown
-      if (downloadProgress.classList.contains('hidden')) {
-        downloadProgress.classList.remove('hidden');
-        progressFill.style.width = '0%';
-        progressText.textContent = 'Starting automatic download...';
-        progressCount.textContent = '0/0';
+        // Show progress UI if not already shown
+        if (downloadProgress.classList.contains('hidden')) {
+          downloadProgress.classList.remove('hidden');
+          progressFill.style.width = '0%';
+          progressText.textContent = 'Starting automatic download...';
+          progressCount.textContent = '0/0';
+        }
       }
-    }
 
     // Handle download progress updates
     if (message.type === 'downloadProgress') {
@@ -1477,11 +1486,58 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Handle toast notifications from background script
-    if (message.type === 'showToast') {
-      showToast(message.message, message.toastType || 'success');
+      // Handle toast notifications from background script
+      if (message.type === 'showToast') {
+        showToast(message.message, message.toastType || 'success');
+      }
+    } catch (error) {
+      console.error('[Mojify] Error in message listener:', error);
     }
   });
+
+  // Check download status and reset UI if needed
+  function checkDownloadStatus() {
+    chrome.storage.local.get(['downloadInProgress', 'downloadProgress'], (result) => {
+      const downloadInProgress = result.downloadInProgress;
+      const downloadProgressData = result.downloadProgress;
+
+      // If download progress has reset flag or no actual download in progress
+      if (downloadProgressData?.reset || !downloadInProgress) {
+        console.log('[Popup] Clearing stuck download progress UI');
+
+        // Hide progress UI
+        downloadProgress.classList.add('hidden');
+
+        // Reset progress elements
+        progressFill.style.width = '0%';
+        progressText.textContent = '';
+        progressCount.textContent = '0/0';
+
+        // Clear the reset flag
+        if (downloadProgressData?.reset) {
+          chrome.storage.local.set({
+            downloadProgress: {
+              current: 0,
+              total: 0,
+              completed: false,
+              reset: false
+            }
+          });
+        }
+      } else if (downloadInProgress && downloadProgressData) {
+        // Resume showing progress if actually downloading
+        console.log('[Popup] Resuming download progress display');
+        downloadProgress.classList.remove('hidden');
+
+        const { current, total, currentEmote } = downloadProgressData;
+        const percentage = total > 0 ? (current / total) * 100 : 0;
+
+        progressFill.style.width = `${percentage}%`;
+        progressCount.textContent = `${current}/${total}`;
+        progressText.textContent = currentEmote || 'Downloading emotes...';
+      }
+    });
+  }
 
   // Initialize
   function init() {
