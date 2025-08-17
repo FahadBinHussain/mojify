@@ -208,7 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const emoteUrl = result.emoteMapping[emoteTrigger];
 
         // Show loading indicator
-        showToast('Downloading and inserting emote...', 'loading');
+        showToast('Inserting emote...', 'loading');
 
         try {
           // Send message to content script to handle the insertion
