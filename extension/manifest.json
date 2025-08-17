@@ -10,7 +10,9 @@
     "scripting",
     "contextMenus",
     "tabs",
-    "debugger"
+    "debugger",
+    "clipboardWrite",
+    "clipboardRead"
   ],
   "host_permissions": [
     "https://7tv.io/*",
@@ -42,4 +44,4 @@
     "48": "icons/icon48.svg",
     "128": "icons/icon128.svg"
   }
-} 
+}

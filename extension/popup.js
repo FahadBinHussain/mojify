@@ -14,164 +14,187 @@ document.addEventListener('DOMContentLoaded', () => {
   const tabPanes = document.querySelectorAll('.tab-pane');
   const tabIndicator = document.querySelector('.tab-indicator');
   const toast = document.getElementById('toast');
-  
+
+  // Progress and storage elements
+  const downloadProgress = document.getElementById('download-progress');
+  const progressText = document.getElementById('progress-text');
+  const progressCount = document.getElementById('progress-count');
+  const progressFill = document.getElementById('progress-fill');
+  const channelManagement = document.getElementById('channel-management');
+  const channelList = document.getElementById('channel-list');
+  const totalEmotesCount = document.getElementById('total-emotes-count');
+  const storageUsed = document.getElementById('storage-used');
+  const channelsCount = document.getElementById('channels-count');
+  const clearAllStorageBtn = document.getElementById('clear-all-storage');
+
   // Constants
   const ITEMS_PER_PAGE = 30;
-  
+
   // State variables
   let allEmotes = {};
   let channels = [];
   let displayedEmotes = [];
   let currentPage = 1;
   let searchTerm = '';
-  
+
   // Initialize tab indicator position
   function initTabs() {
     const activeTab = document.querySelector('.tab-btn.active');
     const tabWidth = 100 / tabButtons.length;
     const activeIndex = Array.from(tabButtons).findIndex(tab => tab.classList.contains('active'));
-    
+
     tabIndicator.style.width = `${tabWidth}%`;
     tabIndicator.style.transform = `translateX(${activeIndex * 100}%)`;
-    
+
     tabButtons.forEach((button, index) => {
       button.addEventListener('click', () => {
         tabButtons.forEach(btn => btn.classList.remove('active'));
         tabPanes.forEach(pane => pane.classList.remove('active'));
-        
+
         button.classList.add('active');
         document.getElementById(`${button.dataset.tab}-tab`).classList.add('active');
-        
+
         tabIndicator.style.transform = `translateX(${index * 100}%)`;
       });
     });
   }
-  
+
   // Show toast notification
   function showToast(message, type = 'success') {
     toast.textContent = message;
     toast.className = `toast ${type} show`;
-    
+
     setTimeout(() => {
       toast.className = 'toast hidden';
     }, 3000);
   }
-  
+
+  // Reset emote loading state
+  function resetEmoteLoadingState(emoteElement) {
+    if (emoteElement) {
+      emoteElement.classList.remove('loading');
+      const img = emoteElement.querySelector('.emote-image');
+      if (img) {
+        img.style.opacity = '';
+      }
+      const spinner = emoteElement.querySelector('.emote-loading-spinner');
+      if (spinner) {
+        spinner.remove();
+      }
+    }
+  }
+
   // Insert emote into active text field on messenger.com
-  function insertEmoteIntoActiveTab(emoteTrigger) {
+  function insertEmoteIntoActiveTab(emoteTrigger, emoteElement = null) {
+    // Show loading state on the emote element
+    if (emoteElement) {
+      emoteElement.classList.add('loading');
+      const img = emoteElement.querySelector('.emote-image');
+      if (img) {
+        img.style.opacity = '0.5';
+      }
+      const loadingSpinner = document.createElement('div');
+      loadingSpinner.className = 'emote-loading-spinner';
+      loadingSpinner.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+      emoteElement.appendChild(loadingSpinner);
+    }
+
     // Find active tab
-    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs.length === 0) {
         showToast('No active tab found', 'error');
+        if (emoteElement) resetEmoteLoadingState(emoteElement);
         return;
       }
-      
+
       const currentTab = tabs[0];
-      
+
       // Check if the current tab is messenger.com
       if (!currentTab.url.includes('messenger.com')) {
         showToast('This feature only works on messenger.com', 'error');
-        
+        if (emoteElement) resetEmoteLoadingState(emoteElement);
+
         // Add diagnostic info
         const diagInfo = document.createElement('div');
         diagInfo.className = 'diagnostic-info';
         diagInfo.innerHTML = `
           <div class="diagnostic-header">
-            <h3>Diagnostic Information</h3>
-            <p>You tried to insert an emote on: <code>${new URL(currentTab.url).hostname}</code></p>
+            <h3>Not on Messenger</h3>
+            <p>Current URL: <code>${currentTab.url}</code></p>
             <p>This feature only works on <code>messenger.com</code></p>
           </div>
         `;
-        
+
         // Show diagnostics in a modal
         const modal = document.createElement('div');
         modal.className = 'modal';
         modal.appendChild(diagInfo);
-        
+
         const closeBtn = document.createElement('button');
         closeBtn.className = 'close-btn';
         closeBtn.innerHTML = 'Close';
         closeBtn.addEventListener('click', () => {
           document.body.removeChild(modal);
         });
-        
+
         diagInfo.appendChild(closeBtn);
         document.body.appendChild(modal);
-        
+
         return;
       }
 
       // Get emote URL from storage
       chrome.storage.local.get(['emoteMapping'], async (result) => {
         if (!result.emoteMapping || !result.emoteMapping[emoteTrigger]) {
-          showToast('Emote not found in mapping', 'error');
+          showToast('Emote not found', 'error');
+          if (emoteElement) resetEmoteLoadingState(emoteElement);
           return;
         }
 
         const emoteUrl = result.emoteMapping[emoteTrigger];
-        
+
         // Show loading indicator
-        showToast('Inserting emote...', 'loading');
-        
+        showToast('Downloading and inserting emote...', 'loading');
+
         try {
-          // Fetch the image
-          const response = await fetch(emoteUrl);
-          if (!response.ok) {
-            throw new Error(`Failed to fetch emote: ${response.status}`);
-          }
-          
-          const blob = await response.blob();
-          
-          // Copy the image to clipboard
-          try {
-            const item = new ClipboardItem({ [blob.type]: blob });
-            await navigator.clipboard.write([item]);
-            console.log("Image copied to clipboard");
-          } catch (clipboardError) {
-            console.error("Clipboard error:", clipboardError);
-            showToast(`Clipboard error: ${clipboardError.message}`, 'error');
-            return;
-          }
-          
-          // Send message to background script to handle the insertion
-          chrome.runtime.sendMessage({
-            type: 'insertEmote',
-            tabId: currentTab.id,
-            emoteUrl,
-            emoteTrigger
+          // Send message to content script to handle the insertion
+          chrome.tabs.sendMessage(currentTab.id, {
+            action: 'insertEmote',
+            emoteTrigger: emoteTrigger
           }, (response) => {
+            // Reset loading state
+            if (emoteElement) resetEmoteLoadingState(emoteElement);
+
             if (response && response.success) {
-              showToast('Emote inserted!');
-              // Close popup after successful insertion
-              setTimeout(() => window.close(), 800);
+              showToast('Emote inserted successfully!');
             } else {
               const error = response && response.error ? response.error : 'Unknown error';
               showToast(`Error: ${error}`, 'error');
-              
+
               // Add diagnostic info for insertion error
               const diagInfo = document.createElement('div');
               diagInfo.className = 'diagnostic-info';
               diagInfo.innerHTML = `
                 <div class="diagnostic-header">
-                  <h3>Diagnostic Information</h3>
-                  <p>Failed to insert emote</p>
-                  <p>Error: <code>${error}</code></p>
+                  <h3>Insertion Failed</h3>
+                  <p>Error: ${error}</p>
+                  <p>Make sure you're on messenger.com and try clicking in the message input field first</p>
                   <p>You can try reloading the page and trying again</p>
                 </div>
               `;
-              
+
               // Show diagnostics in a modal
               const modal = document.createElement('div');
               modal.className = 'modal';
               modal.appendChild(diagInfo);
-              
+
               const closeBtn = document.createElement('button');
               closeBtn.className = 'close-btn';
               closeBtn.innerHTML = 'Close';
               closeBtn.addEventListener('click', () => {
                 document.body.removeChild(modal);
               });
-              
+
               const reloadBtn = document.createElement('button');
               reloadBtn.className = 'reload-btn';
               reloadBtn.innerHTML = 'Reload Page';
@@ -179,36 +202,37 @@ document.addEventListener('DOMContentLoaded', () => {
                 chrome.tabs.reload(currentTab.id);
                 window.close();
               });
-              
+
               const buttonContainer = document.createElement('div');
               buttonContainer.className = 'button-container';
               buttonContainer.appendChild(closeBtn);
               buttonContainer.appendChild(reloadBtn);
-              
+
               diagInfo.appendChild(buttonContainer);
               document.body.appendChild(modal);
             }
           });
         } catch (error) {
-          console.error("Error:", error);
+          console.error('Mojify Error:', error);
           showToast(`Error: ${error.message}`, 'error');
+          if (emoteElement) resetEmoteLoadingState(emoteElement);
         }
       });
     });
   }
-  
+
   // Load emotes from storage
   function loadEmotes() {
-    chrome.storage.local.get(['emoteMapping', 'channels'], (result) => {
+    chrome.storage.local.get(['emoteMapping', 'channels', 'emoteImageData'], (result) => {
       console.log('Loaded data:', result);
-      
+
       if (result.emoteMapping && Object.keys(result.emoteMapping).length > 0) {
         allEmotes = result.emoteMapping;
         channels = result.channels || [];
-        
+
         console.log('All emotes count:', Object.keys(allEmotes).length);
         console.log('Channels count:', channels.length);
-        
+
         // If we have emotes but no channels (for backward compatibility)
         if (channels.length === 0) {
           chrome.storage.local.get(['channelIds'], (result) => {
@@ -223,42 +247,48 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             updateEmoteCount();
             filterAndDisplayEmotes();
+            updateStorageInfo();
+            updateChannelManagement();
           });
         } else {
           // Log channel data
           channels.forEach(channel => {
             console.log(`Channel ${channel.username} has ${Object.keys(channel.emotes || {}).length} emotes`);
           });
-          
+
           updateEmoteCount();
           filterAndDisplayEmotes();
+          updateStorageInfo();
+          updateChannelManagement();
         }
-        
+
         noEmotesMessage.style.display = 'none';
       } else {
         emoteGrid.innerHTML = '';
         noEmotesMessage.style.display = 'flex';
         loadMoreContainer.classList.add('hidden');
         emoteCount.textContent = '0';
+        updateStorageInfo();
+        updateChannelManagement();
       }
     });
   }
-  
+
   // Update emote count
   function updateEmoteCount() {
     const count = Object.keys(allEmotes).length;
     emoteCount.textContent = count;
   }
-  
+
   // Filter emotes based on search term
   function filterAndDisplayEmotes(resetPage = true) {
     if (resetPage) {
       currentPage = 1;
     }
-    
+
     const emoteKeys = Object.keys(allEmotes);
     if (emoteKeys.length === 0) return;
-    
+
     // Filter based on search term
     if (searchTerm === '') {
       // If no search term, we'll display by channel in renderEmoteGrid
@@ -277,26 +307,26 @@ document.addEventListener('DOMContentLoaded', () => {
           // Sort alphabetically
           return a.localeCompare(b);
         });
-      
+
       // Display a subset of emotes for the current page
       renderEmoteGrid();
     }
   }
-  
+
   // Render the emote grid
   function renderEmoteGrid() {
     emoteGrid.innerHTML = '';
-    
+
     console.log('Rendering emote grid. Search term:', searchTerm);
-    
+
     // If no search term, ensure load more button is hidden
     if (searchTerm === '') {
       loadMoreContainer.classList.add('hidden');
     }
-    
+
     const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
     const endIndex = startIndex + ITEMS_PER_PAGE;
-    
+
     // If no emotes match the search
     if (displayedEmotes.length === 0 && searchTerm !== '' && Object.keys(allEmotes).length > 0) {
       emoteGrid.innerHTML = `
@@ -307,17 +337,17 @@ document.addEventListener('DOMContentLoaded', () => {
       loadMoreContainer.classList.add('hidden');
       return;
     }
-    
+
     // If we're searching, show emotes with pagination
     if (searchTerm !== '') {
       const emotesToShow = displayedEmotes.slice(startIndex, endIndex);
-      
+
       console.log(`Showing search results: ${emotesToShow.length} emotes (${startIndex}-${endIndex} of ${displayedEmotes.length})`);
-      
+
       emotesToShow.forEach(key => {
         const emoteUrl = allEmotes[key];
         const emoteName = key.replace(/:/g, '');
-        
+
         const emoteItem = document.createElement('div');
         emoteItem.className = 'emote-item';
         emoteItem.setAttribute('data-emote-key', key);
@@ -330,15 +360,15 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="emote-trigger">${key}</div>
           </div>
         `;
-        
+
         // Add click event to insert emote
         emoteItem.addEventListener('click', () => {
-          insertEmoteIntoActiveTab(key);
+          insertEmoteIntoActiveTab(key, emoteItem);
         });
-        
+
         emoteGrid.appendChild(emoteItem);
       });
-      
+
       // Update "Load More" button visibility
       if (endIndex < displayedEmotes.length) {
         loadMoreContainer.classList.remove('hidden');
@@ -349,29 +379,29 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       // Group emotes by channel - show all emotes for each channel
       console.log(`Showing emotes by channel. Total channels: ${channels.length}`);
-      
+
       // Always hide load more button in channel view
       loadMoreContainer.classList.add('hidden');
-      
+
       channels.forEach(channel => {
         if (!channel.emotes || Object.keys(channel.emotes).length === 0) {
           console.log(`Channel ${channel.username} has no emotes, skipping`);
           return;
         }
-        
+
         // Count emotes for this channel
         const emoteCount = Object.keys(channel.emotes).length;
         console.log(`Rendering channel ${channel.username} with ${emoteCount} emotes`);
-        
+
         // Create channel section
         const channelSection = document.createElement('div');
         channelSection.className = 'channel-section';
         channelSection.setAttribute('data-channel-id', channel.id);
-        
+
         // Create channel header with username
         const channelHeader = document.createElement('div');
         channelHeader.className = 'channel-header';
-        
+
         channelHeader.innerHTML = `
           <div class="channel-header-content">
             <span class="channel-name">${channel.username}</span>
@@ -379,18 +409,18 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
           <div class="channel-toggle-icon"></div>
         `;
-        
+
         // Create channel emotes container
         const channelEmotes = document.createElement('div');
         channelEmotes.className = 'channel-emotes';
-        
+
         // Add ALL emotes for this channel - no pagination
         const channelEmoteKeys = Object.keys(channel.emotes);
         console.log(`Channel ${channel.username} emote keys:`, channelEmoteKeys);
-        
+
         Object.entries(channel.emotes).forEach(([key, url]) => {
           const emoteName = key.replace(/:/g, '');
-          
+
           const emoteItem = document.createElement('div');
           emoteItem.className = 'emote-item';
           emoteItem.setAttribute('data-emote-key', key);
@@ -403,24 +433,24 @@ document.addEventListener('DOMContentLoaded', () => {
               <div class="emote-trigger">${key}</div>
             </div>
           `;
-          
+
           // Add click event to insert emote
           emoteItem.addEventListener('click', () => {
-            insertEmoteIntoActiveTab(key);
+            insertEmoteIntoActiveTab(key, emoteItem);
           });
-          
+
           channelEmotes.appendChild(emoteItem);
         });
-        
+
         // Add toggle functionality to channel header
         channelHeader.addEventListener('click', (e) => {
           // Don't toggle if clicking on an emote
           if (e.target.closest('.emote-item')) {
             return;
           }
-          
+
           channelSection.classList.toggle('collapsed');
-          
+
           // Save collapsed state to storage
           chrome.storage.local.get(['collapsedChannels'], (result) => {
             const collapsedChannels = result.collapsedChannels || {};
@@ -428,11 +458,11 @@ document.addEventListener('DOMContentLoaded', () => {
             chrome.storage.local.set({ collapsedChannels });
           });
         });
-        
+
         // Add channel header and emotes to section
         channelSection.appendChild(channelHeader);
         channelSection.appendChild(channelEmotes);
-        
+
         // Check if this channel should be collapsed
         chrome.storage.local.get(['collapsedChannels'], (result) => {
           const collapsedChannels = result.collapsedChannels || {};
@@ -440,28 +470,28 @@ document.addEventListener('DOMContentLoaded', () => {
             channelSection.classList.add('collapsed');
           }
         });
-        
+
         // Add section to grid
         emoteGrid.appendChild(channelSection);
       });
-      
+
       // Hide load more button since we're showing all emotes grouped by channel
       loadMoreContainer.classList.add('hidden');
     }
   }
-  
+
   // Load more emotes when button is clicked
   loadMoreBtn.addEventListener('click', () => {
     currentPage++;
     renderEmoteGrid();
   });
-  
+
   // Search functionality
   searchInput.addEventListener('input', (e) => {
     searchTerm = e.target.value.trim();
     filterAndDisplayEmotes();
   });
-  
+
   // Load saved channel IDs
   function loadChannelIds() {
     chrome.storage.local.get(['channelIds'], (result) => {
@@ -470,83 +500,146 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
-  
+
   // Save channel IDs
   saveButton.addEventListener('click', () => {
     const text = channelIdsInput.value.trim();
     let channelIds;
-    
+
     // Handle both comma-separated and newline-separated formats
     if (text.includes(',')) {
       channelIds = text.split(',').map(id => id.trim()).filter(id => id);
     } else {
       channelIds = text.split('\n').map(id => id.trim()).filter(id => id);
     }
-    
+
     if (channelIds.length === 0) {
       showToast('Please enter at least one channel ID', 'error');
       return;
     }
-    
+
     chrome.storage.local.set({ channelIds }, () => {
       showToast('Channel IDs saved successfully');
+
+      // Automatically download emotes after saving channel IDs
+      setTimeout(() => {
+        // Show loading state
+        saveButton.disabled = true;
+        saveButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Downloading...</span>';
+
+        chrome.runtime.sendMessage({ type: 'downloadEmotes' }, (response) => {
+          // Reset button state
+          saveButton.disabled = false;
+          saveButton.innerHTML = '<i class="fas fa-save"></i> <span>Save</span>';
+
+          if (response && response.success) {
+            showToast('Emotes downloaded successfully');
+            loadEmotes(); // Reload emotes
+            searchInput.value = ''; // Clear search
+            searchTerm = '';
+          } else {
+            showToast('Error downloading emotes', 'error');
+          }
+        });
+      }, 500); // Small delay to show the save success message first
     });
   });
-  
+
   // Download/refresh emotes
   downloadButton.addEventListener('click', () => {
-    // Check if there are channel IDs configured
-    chrome.storage.local.get(['channelIds'], (result) => {
-      if (!result.channelIds || result.channelIds.length === 0) {
-        showToast('No channel IDs configured', 'error');
-        
-        // Switch to settings tab
-        document.querySelector('.tab-btn[data-tab="settings"]').click();
+    // Check if download is already in progress
+    chrome.storage.local.get(['downloadInProgress'], (result) => {
+      if (result.downloadInProgress) {
+        showToast('Download already in progress', 'error');
         return;
       }
-      
-      // Show loading state
-      downloadButton.disabled = true;
-      downloadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Loading...</span>';
-      
-      chrome.runtime.sendMessage({ type: 'downloadEmotes' }, (response) => {
-        // Reset button state
-        downloadButton.disabled = false;
-        downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
-        
-        if (response && response.success) {
-          showToast('Emotes downloaded successfully');
-          loadEmotes(); // Reload emotes
-          searchInput.value = ''; // Clear search
-          searchTerm = '';
-        } else {
-          showToast('Error downloading emotes', 'error');
+
+      // Check if there are channel IDs configured
+      chrome.storage.local.get(['channelIds'], (checkResult) => {
+        if (!checkResult.channelIds || checkResult.channelIds.length === 0) {
+          showToast('No channel IDs configured', 'error');
+
+          // Switch to settings tab
+          document.querySelector('.tab-btn[data-tab="settings"]').click();
+          return;
         }
+
+        // Show loading state and progress
+        downloadButton.disabled = true;
+        downloadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Downloading...</span>';
+        downloadProgress.classList.remove('hidden');
+        progressFill.style.width = '0%';
+        progressText.textContent = 'Starting download...';
+        progressCount.textContent = '0/0';
+
+        // Listen for progress updates
+        const progressListener = (message) => {
+          if (message.type === 'downloadProgress') {
+            const { current, total, currentEmote, completed } = message;
+            const percentage = total > 0 ? (current / total) * 100 : 0;
+
+            progressFill.style.width = `${percentage}%`;
+            progressCount.textContent = `${current}/${total}`;
+            progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
+
+            if (completed) {
+              // Download completed
+              setTimeout(() => {
+                downloadButton.disabled = false;
+                downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
+                downloadProgress.classList.add('hidden');
+                chrome.runtime.onMessage.removeListener(progressListener);
+              }, 1000);
+            }
+          }
+        };
+
+        chrome.runtime.onMessage.addListener(progressListener);
+
+        // Start polling for progress in case popup closes and reopens
+        startProgressPolling();
+
+        chrome.runtime.sendMessage({ type: 'downloadEmotes' }, (response) => {
+          if (response && response.success) {
+            showToast('Emotes downloaded successfully');
+            loadEmotes(); // Reload emotes
+            searchInput.value = ''; // Clear search
+            searchTerm = '';
+          } else {
+            showToast(`Error downloading emotes: ${response?.error || 'Unknown error'}`, 'error');
+            downloadButton.disabled = false;
+            downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
+            downloadProgress.classList.add('hidden');
+          }
+
+          // Remove progress listener
+          chrome.runtime.onMessage.removeListener(progressListener);
+        });
       });
     });
   });
-  
+
   // Button press effect for all buttons
   function addButtonEffects() {
     const buttons = document.querySelectorAll('button');
-    
+
     buttons.forEach(button => {
       button.addEventListener('mousedown', () => {
         if (!button.disabled) {
           button.style.transform = 'scale(0.97)';
         }
       });
-      
+
       button.addEventListener('mouseup', () => {
         button.style.transform = '';
       });
-      
+
       button.addEventListener('mouseleave', () => {
         button.style.transform = '';
       });
     });
   }
-  
+
   // Add to the document ready event after initialization code
   function initDebugSection() {
     const toggleDebugBtn = document.getElementById('toggle-debug');
@@ -554,8 +647,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const findFieldBtn = document.getElementById('debug-find-field');
     const insertTextBtn = document.getElementById('debug-insert-text');
     const detectPageBtn = document.getElementById('debug-detect-page');
+    const testDragDropBtn = document.getElementById('debug-test-dragdrop');
     const debugResultContent = document.querySelector('.debug-result-content');
-    
+
     // Toggle debug section visibility
     toggleDebugBtn.addEventListener('click', () => {
       if (debugContent.style.display === 'none') {
@@ -566,7 +660,7 @@ document.addEventListener('DOMContentLoaded', () => {
         toggleDebugBtn.textContent = 'Show';
       }
     });
-    
+
     // Find text field debug
     findFieldBtn.addEventListener('click', () => {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -574,11 +668,11 @@ document.addEventListener('DOMContentLoaded', () => {
           setDebugResult('No active tab found', 'error');
           return;
         }
-        
+
         const currentTab = tabs[0];
-        
+
         setDebugResult('Finding text field...', 'loading');
-        
+
         chrome.scripting.executeScript({
           target: { tabId: currentTab.id },
           func: debugFindTextField
@@ -593,7 +687,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       });
     });
-    
+
     // Insert test text
     insertTextBtn.addEventListener('click', () => {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -601,11 +695,11 @@ document.addEventListener('DOMContentLoaded', () => {
           setDebugResult('No active tab found', 'error');
           return;
         }
-        
+
         const currentTab = tabs[0];
-        
+
         setDebugResult('Inserting test text...', 'loading');
-        
+
         chrome.scripting.executeScript({
           target: { tabId: currentTab.id },
           func: debugInsertTestText
@@ -620,7 +714,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       });
     });
-    
+
     // Detect page structure
     detectPageBtn.addEventListener('click', () => {
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -628,11 +722,11 @@ document.addEventListener('DOMContentLoaded', () => {
           setDebugResult('No active tab found', 'error');
           return;
         }
-        
+
         const currentTab = tabs[0];
-        
+
         setDebugResult('Analyzing page...', 'loading');
-        
+
         chrome.scripting.executeScript({
           target: { tabId: currentTab.id },
           func: debugAnalyzePage
@@ -647,7 +741,30 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       });
     });
-    
+
+    // Test drag and drop functionality
+    testDragDropBtn.addEventListener('click', () => {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs.length === 0) {
+          setDebugResult('No active tab found', 'error');
+          return;
+        }
+
+        const currentTab = tabs[0];
+
+        setDebugResult('Testing drag and drop...', 'loading');
+
+        chrome.tabs.sendMessage(currentTab.id, { action: 'testDragDrop' }, (response) => {
+          if (response && response.success) {
+            setDebugResult('Drag and drop test completed successfully', 'success');
+          } else {
+            const error = response && response.error ? response.error : 'Test failed';
+            setDebugResult(`Drag and drop test failed: ${error}`, 'error');
+          }
+        });
+      });
+    });
+
     function setDebugResult(text, type) {
       debugResultContent.textContent = text;
       debugResultContent.className = 'debug-result-content';
@@ -662,7 +779,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       let log = "DEBUG: Finding Text Field\n";
       log += "-----------------------\n";
-      
+
       // Target messenger.com input fields with various selectors
       const selectors = [
         '.x78zum5.x13a6bvl',
@@ -673,16 +790,16 @@ document.addEventListener('DOMContentLoaded', () => {
         '[data-testid="messenger_composer_text"]',
         '[role="textbox"]'
       ];
-      
+
       log += `Page URL: ${window.location.href}\n`;
       log += `Document Ready: ${document.readyState}\n\n`;
-      
+
       let foundAny = false;
       for (const selector of selectors) {
         const elements = document.querySelectorAll(selector);
         log += `Selector: ${selector}\n`;
         log += `Found: ${elements.length} elements\n`;
-        
+
         if (elements.length > 0) {
           foundAny = true;
           for (let i = 0; i < Math.min(elements.length, 3); i++) {
@@ -690,7 +807,7 @@ document.addEventListener('DOMContentLoaded', () => {
             log += `- Element ${i + 1}: ${el.tagName}\n`;
             log += `  Visible: ${el.offsetParent !== null}\n`;
             log += `  ContentEditable: ${el.isContentEditable}\n`;
-            
+
             // Try to focus
             try {
               el.focus();
@@ -706,13 +823,13 @@ document.addEventListener('DOMContentLoaded', () => {
           log += '\n';
         }
       }
-      
+
       if (foundAny) {
         log += "Found potential text fields";
       } else {
         log += "No text fields found";
       }
-      
+
       return log;
     } catch (error) {
       return `Error: ${error.message}`;
@@ -723,17 +840,17 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       let log = "DEBUG: Insert Test Text\n";
       log += "---------------------\n";
-      
+
       const activeElement = document.activeElement;
       log += `Active Element: ${activeElement ? activeElement.tagName : 'None'}\n`;
-      
+
       if (!activeElement) {
         log += "No active element found. Finding text field...\n";
-        
+
         // Try to find and focus the text field
         const selector = '.x78zum5.x13a6bvl, [contenteditable="true"], [role="textbox"]';
         const elements = document.querySelectorAll(selector);
-        
+
         if (elements.length > 0) {
           for (const el of elements) {
             if (el.offsetParent !== null) {
@@ -747,13 +864,13 @@ document.addEventListener('DOMContentLoaded', () => {
           return log + "Failed to insert test text";
         }
       }
-      
+
       // Now try to insert text into the active element
       const testText = "🧪 Mojify Test Text 🧪";
-      
+
       if (document.activeElement.isContentEditable) {
         log += "Using contentEditable method\n";
-        
+
         // Try execCommand
         if (document.queryCommandSupported('insertText')) {
           document.execCommand('insertText', false, testText);
@@ -772,19 +889,19 @@ document.addEventListener('DOMContentLoaded', () => {
             log += "No selection range\n";
           }
         }
-        
+
         document.activeElement.dispatchEvent(new Event('input', { bubbles: true }));
         return log + "Success: Text inserted into contentEditable element";
       }
       // For input or textarea
       else if (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT') {
         log += "Using input/textarea method\n";
-        
+
         const pos = document.activeElement.selectionStart || 0;
         const value = document.activeElement.value || '';
         document.activeElement.value = value.slice(0, pos) + testText + value.slice(pos);
         document.activeElement.dispatchEvent(new Event('input', { bubbles: true }));
-        
+
         return log + "Success: Text inserted into input/textarea";
       }
       else {
@@ -799,10 +916,10 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       let log = "DEBUG: Page Analysis\n";
       log += "-------------------\n";
-      
+
       log += `URL: ${window.location.href}\n`;
       log += `Is Messenger: ${window.location.href.includes('messenger.com')}\n\n`;
-      
+
       // Check for various Messenger elements
       const containers = [
         { name: "Main content", selector: '[role="main"]' },
@@ -810,22 +927,22 @@ document.addEventListener('DOMContentLoaded', () => {
         { name: "Form", selector: '[role="form"]' },
         { name: "Navigation", selector: '[role="navigation"]' }
       ];
-      
+
       log += "Page Structure:\n";
       containers.forEach(container => {
         const elements = document.querySelectorAll(container.selector);
         log += `${container.name}: ${elements.length} found\n`;
       });
-      
+
       // Check for editable elements
       const editables = document.querySelectorAll('[contenteditable="true"]');
       log += `\nEditable elements: ${editables.length}\n`;
-      
+
       // Check for focus handling
       log += "\nFocus Test:\n";
       const activeBeforeTest = document.activeElement;
       log += `Active element before test: ${activeBeforeTest ? activeBeforeTest.tagName : 'None'}\n`;
-      
+
       try {
         // Try to create a temporary input
         const tempInput = document.createElement('input');
@@ -838,7 +955,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (e) {
         log += `Focus test error: ${e.message}\n`;
       }
-      
+
       // List potential text entry fields
       log += "\nPotential Message Fields:\n";
       const messageSelectors = [
@@ -847,7 +964,7 @@ document.addEventListener('DOMContentLoaded', () => {
         '[aria-label*="type" i]',
         '.x78zum5.x13a6bvl'
       ];
-      
+
       let found = false;
       for (const selector of messageSelectors) {
         const fields = document.querySelectorAll(selector);
@@ -863,25 +980,224 @@ document.addEventListener('DOMContentLoaded', () => {
           break;
         }
       }
-      
+
       if (!found) {
         log += "No message fields found with common selectors\n";
       }
-      
+
       return log;
     } catch (error) {
       return `Error: ${error.message}`;
     }
   }
-  
+
+  // Storage and channel management functions
+  function updateStorageInfo() {
+    chrome.storage.local.get(['emoteMapping', 'channels', 'emoteImageData'], (result) => {
+      const emoteCount = result.emoteMapping ? Object.keys(result.emoteMapping).length : 0;
+      const channelCount = result.channels ? result.channels.length : 0;
+
+      totalEmotesCount.textContent = emoteCount;
+      channelsCount.textContent = channelCount;
+
+      // Calculate storage usage
+      let totalSize = 0;
+      if (result.emoteImageData) {
+        Object.values(result.emoteImageData).forEach(emote => {
+          if (emote.size) {
+            totalSize += emote.size;
+          }
+        });
+      }
+
+      // Convert bytes to appropriate unit
+      let sizeText = '0 KB';
+      if (totalSize > 0) {
+        if (totalSize < 1024) {
+          sizeText = `${totalSize} B`;
+        } else if (totalSize < 1024 * 1024) {
+          sizeText = `${(totalSize / 1024).toFixed(1)} KB`;
+        } else {
+          sizeText = `${(totalSize / (1024 * 1024)).toFixed(1)} MB`;
+        }
+      }
+
+      storageUsed.textContent = sizeText;
+    });
+  }
+
+  function updateChannelManagement() {
+    chrome.storage.local.get(['channels'], (result) => {
+      const channels = result.channels || [];
+
+      if (channels.length > 0) {
+        channelManagement.style.display = 'block';
+        channelList.innerHTML = '';
+
+        channels.forEach(channel => {
+          const emoteCount = channel.emotes ? Object.keys(channel.emotes).length : 0;
+
+          const channelItem = document.createElement('div');
+          channelItem.className = 'channel-item';
+          channelItem.innerHTML = `
+            <div class="channel-info">
+              <div class="channel-name">${channel.username}</div>
+              <div class="channel-stats">${emoteCount} emotes</div>
+            </div>
+            <div class="channel-actions">
+              <button class="delete-channel-btn" data-channel-id="${channel.id}">
+                <i class="fas fa-trash"></i> Delete
+              </button>
+            </div>
+          `;
+
+          channelList.appendChild(channelItem);
+        });
+
+        // Add delete channel handlers
+        channelList.querySelectorAll('.delete-channel-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            const channelId = e.target.closest('.delete-channel-btn').dataset.channelId;
+            deleteChannel(channelId);
+          });
+        });
+      } else {
+        channelManagement.style.display = 'none';
+      }
+    });
+  }
+
+  function deleteChannel(channelId) {
+    if (!confirm('Are you sure you want to delete this channel and all its emotes?')) {
+      return;
+    }
+
+    chrome.storage.local.get(['channels', 'emoteMapping', 'emoteImageData'], (result) => {
+      const channels = result.channels || [];
+      const emoteMapping = result.emoteMapping || {};
+      const emoteImageData = result.emoteImageData || {};
+
+      // Find the channel to delete
+      const channelIndex = channels.findIndex(c => c.id === channelId);
+      if (channelIndex === -1) return;
+
+      const channel = channels[channelIndex];
+
+      // Remove emotes from global mappings
+      if (channel.emotes) {
+        Object.keys(channel.emotes).forEach(emoteKey => {
+          delete emoteMapping[emoteKey];
+          delete emoteImageData[emoteKey];
+        });
+      }
+
+      // Remove channel
+      channels.splice(channelIndex, 1);
+
+      // Save updated data
+      chrome.storage.local.set({
+        channels,
+        emoteMapping,
+        emoteImageData
+      }, () => {
+        showToast(`Channel "${channel.username}" deleted successfully`);
+        loadEmotes();
+      });
+    });
+  }
+
+  // Clear all storage handler
+  clearAllStorageBtn.addEventListener('click', () => {
+    if (!confirm('Are you sure you want to delete ALL emote data? This cannot be undone.')) {
+      return;
+    }
+
+    chrome.storage.local.clear(() => {
+      showToast('All emote data cleared');
+      loadEmotes();
+    });
+  });
+
+  // Check for ongoing downloads
+  function checkDownloadStatus() {
+    chrome.storage.local.get(['downloadInProgress', 'downloadProgress'], (result) => {
+      if (result.downloadInProgress) {
+        // Download is in progress, show progress bar
+        downloadButton.disabled = true;
+        downloadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Downloading...</span>';
+        downloadProgress.classList.remove('hidden');
+
+        if (result.downloadProgress) {
+          const { current, total, currentEmote } = result.downloadProgress;
+          const percentage = total > 0 ? (current / total) * 100 : 0;
+
+          progressFill.style.width = `${percentage}%`;
+          progressCount.textContent = `${current}/${total}`;
+          progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
+        }
+
+        // Start polling for progress updates
+        startProgressPolling();
+      } else if (result.downloadProgress && result.downloadProgress.completed) {
+        // Download completed, refresh the UI
+        loadEmotes();
+        showToast('Emotes downloaded successfully');
+
+        // Clear completed status
+        chrome.storage.local.remove(['downloadProgress']);
+      } else if (result.downloadProgress && result.downloadProgress.error) {
+        // Download failed
+        showToast(`Download failed: ${result.downloadProgress.error}`, 'error');
+
+        // Clear error status
+        chrome.storage.local.remove(['downloadProgress']);
+      }
+    });
+  }
+
+  function startProgressPolling() {
+    const pollInterval = setInterval(() => {
+      chrome.storage.local.get(['downloadInProgress', 'downloadProgress'], (result) => {
+        if (!result.downloadInProgress) {
+          // Download finished
+          clearInterval(pollInterval);
+          downloadButton.disabled = false;
+          downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
+          downloadProgress.classList.add('hidden');
+
+          if (result.downloadProgress) {
+            if (result.downloadProgress.completed) {
+              loadEmotes();
+              showToast('Emotes downloaded successfully');
+            } else if (result.downloadProgress.error) {
+              showToast(`Download failed: ${result.downloadProgress.error}`, 'error');
+            }
+          }
+
+          // Clear progress status
+          chrome.storage.local.remove(['downloadProgress']);
+        } else if (result.downloadProgress) {
+          // Update progress
+          const { current, total, currentEmote } = result.downloadProgress;
+          const percentage = total > 0 ? (current / total) * 100 : 0;
+
+          progressFill.style.width = `${percentage}%`;
+          progressCount.textContent = `${current}/${total}`;
+          progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
+        }
+      });
+    }, 1000);
+  }
+
   // Initialize
   function init() {
     initTabs();
     loadEmotes();
     loadChannelIds();
     addButtonEffects();
-    initDebugSection(); // Add this line
+    initDebugSection();
+    checkDownloadStatus();
   }
-  
+
   init();
-}); 
+});

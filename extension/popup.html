@@ -20,7 +20,7 @@
         </div>
       </div>
     </div>
-    
+
     <div class="tab-container">
       <div class="tab-header">
         <button class="tab-btn active" data-tab="emotes">
@@ -33,7 +33,7 @@
         </button>
         <div class="tab-indicator"></div>
       </div>
-      
+
       <div class="tab-content">
         <!-- Emotes Tab -->
         <div class="tab-pane active" id="emotes-tab">
@@ -43,7 +43,7 @@
               <input type="text" id="search-emotes" placeholder="Search emotes">
             </div>
           </div>
-          
+
           <div class="emote-stats">
             <div class="stat">
               <span class="stat-number" id="emote-count">0</span>
@@ -54,40 +54,79 @@
               <span>Refresh Emotes</span>
             </button>
           </div>
-          
+
+          <div class="download-progress hidden" id="download-progress">
+            <div class="progress-info">
+              <span id="progress-text">Downloading emotes...</span>
+              <span id="progress-count">0/0</span>
+            </div>
+            <div class="progress-bar">
+              <div class="progress-fill" id="progress-fill"></div>
+            </div>
+          </div>
+
           <div class="emotes-container">
             <div class="no-emotes-message" id="no-emotes-message">
               <i class="fas fa-ghost empty-icon"></i>
               <p>No emotes loaded</p>
               <p class="empty-subtitle">Add channel IDs in Settings tab and click Refresh Emotes</p>
             </div>
-            
+
             <div class="emote-grid" id="emote-grid"></div>
-            
+
             <div class="load-more hidden" id="load-more">
               <button id="load-more-btn">Load More</button>
             </div>
           </div>
         </div>
-        
+
         <!-- Settings Tab -->
         <div class="tab-pane" id="settings-tab">
           <div class="settings-section">
             <h2 class="section-title">Channel Configuration</h2>
             <p class="section-description">Enter Twitch channel IDs to load their 7TV emotes</p>
-            
+
             <div class="form-group">
               <label for="channel-ids">Twitch Channel IDs</label>
               <textarea id="channel-ids" placeholder="Enter channel IDs, one per line or comma-separated"></textarea>
               <div class="helper-text">Example: xqc, forsen, sodapoppin</div>
             </div>
-            
+
             <button id="save-button" class="primary-button">
               <i class="fas fa-save"></i>
               <span>Save Channel IDs</span>
             </button>
           </div>
-          
+
+          <div class="settings-section channel-management" id="channel-management" style="display: none;">
+            <h2 class="section-title">Channel Management</h2>
+            <div class="channel-list" id="channel-list">
+              <!-- Channels will be populated here -->
+            </div>
+          </div>
+
+          <div class="settings-section storage-info">
+            <h2 class="section-title">Storage Information</h2>
+            <div class="storage-details">
+              <div class="storage-item">
+                <span class="storage-label">Total Emotes:</span>
+                <span class="storage-value" id="total-emotes-count">0</span>
+              </div>
+              <div class="storage-item">
+                <span class="storage-label">Storage Used:</span>
+                <span class="storage-value" id="storage-used">0 KB</span>
+              </div>
+              <div class="storage-item">
+                <span class="storage-label">Channels:</span>
+                <span class="storage-value" id="channels-count">0</span>
+              </div>
+            </div>
+            <button id="clear-all-storage" class="danger-button">
+              <i class="fas fa-trash"></i>
+              <span>Clear All Data</span>
+            </button>
+          </div>
+
           <div class="settings-section usage-section">
             <h2 class="section-title">Usage Instructions</h2>
             <div class="usage-item">
@@ -97,7 +136,7 @@
                 <p>Type an emote code surrounded by colons (e.g., <code>:kappa:</code>) anywhere on the web.</p>
               </div>
             </div>
-            
+
             <div class="usage-item">
               <i class="fas fa-mouse-pointer"></i>
               <div>
@@ -105,7 +144,7 @@
                 <p>Click on any emote in the extension to insert it directly on messenger.com.</p>
               </div>
             </div>
-            
+
             <div class="usage-item">
               <i class="fas fa-info-circle"></i>
               <div>
@@ -114,7 +153,7 @@
               </div>
             </div>
           </div>
-          
+
           <div class="settings-section about-section">
             <h2 class="section-title">About Mojify</h2>
             <p class="about-text">Mojify lets you use Twitch emotes anywhere on the web by typing their name surrounded by colons.</p>
@@ -122,32 +161,36 @@
             <p class="about-text"><b>New!</b> Click any emote to instantly insert it in messenger.com</p>
             <p class="powered-by">Powered by 7TV</p>
           </div>
-          
+
           <div class="settings-section debug-section">
             <h2 class="section-title">
               Debug Tools
               <button id="toggle-debug" class="toggle-button">Show</button>
             </h2>
-            
+
             <div id="debug-content" class="debug-content" style="display: none;">
               <div class="debug-info">
                 <p>These tools help diagnose problems with text field detection.</p>
               </div>
-              
+
               <div class="debug-actions">
                 <button id="debug-find-field" class="debug-button">
                   <i class="fas fa-search"></i> Find Text Field
                 </button>
-                
+
                 <button id="debug-insert-text" class="debug-button">
                   <i class="fas fa-font"></i> Insert Test Text
                 </button>
-                
+
                 <button id="debug-detect-page" class="debug-button">
                   <i class="fas fa-code"></i> Analyze Page
                 </button>
+
+                <button id="debug-test-dragdrop" class="debug-button">
+                  <i class="fas fa-images"></i> Test Drag & Drop
+                </button>
               </div>
-              
+
               <div id="debug-result" class="debug-result">
                 <div class="debug-result-header">Results will appear here</div>
                 <div class="debug-result-content"></div>
@@ -157,10 +200,10 @@
         </div>
       </div>
     </div>
-    
+
     <div id="toast" class="toast hidden"></div>
   </div>
-  
+
   <script src="popup.js"></script>
 </body>
-</html> 
+</html>

@@ -1,5 +1,5 @@
-
 let emoteMapping = {};
+let emoteImageData = {};
 
 // Debug mode
 const DEBUG = true;
@@ -12,12 +12,19 @@ function debugLog(...args) {
 }
 
 // Load emote mapping from storage
-chrome.storage.local.get(['emoteMapping'], (result) => {
+chrome.storage.local.get(['emoteMapping', 'emoteImageData'], (result) => {
   if (result.emoteMapping) {
     emoteMapping = result.emoteMapping;
     debugLog("Loaded emote mapping with", Object.keys(emoteMapping).length, "emotes");
   } else {
     debugLog("No emote mapping found in storage");
+  }
+
+  if (result.emoteImageData) {
+    emoteImageData = result.emoteImageData;
+    debugLog("Loaded emote image data with", Object.keys(emoteImageData).length, "emotes");
+  } else {
+    debugLog("No emote image data found in storage");
   }
 });
 
@@ -26,136 +33,185 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     emoteMapping = changes.emoteMapping.newValue;
     debugLog("Updated emote mapping with", Object.keys(emoteMapping).length, "emotes");
   }
+  if (changes.emoteImageData) {
+    emoteImageData = changes.emoteImageData.newValue;
+    debugLog("Updated emote image data with", Object.keys(emoteImageData).length, "emotes");
+  }
 });
 
+// Find messenger input field (copied from example)
+function findMessengerInputField() {
+    const possibleSelectors = [
+        'div[aria-label="Message"][contenteditable="true"][data-lexical-editor="true"]',
+        '.xzsf02u.notranslate[contenteditable="true"][role="textbox"]',
+        '.notranslate[contenteditable="true"][data-lexical-editor="true"]',
+        '[aria-label="Message"][contenteditable="true"]',
+        '[contenteditable="true"][role="textbox"]',
+        '[contenteditable="true"][data-lexical-editor="true"]',
+        '.xzsf02u[role="textbox"]',
+        '[aria-label="Message"]',
+        '[placeholder="Aa"]',
+        '.notranslate[contenteditable="true"]',
+        'div[role="textbox"][spellcheck="true"]',
+        'form [contenteditable="true"]',
+        '[contenteditable="true"]'
+    ];
+
+    for (const selector of possibleSelectors) {
+        const elements = document.querySelectorAll(selector);
+        if (elements.length > 0) {
+            if (elements.length > 1) {
+                let maxBottom = 0;
+                let bestElement = null;
+                for (const el of elements) {
+                    const rect = el.getBoundingClientRect();
+                    if (rect.bottom > maxBottom && rect.width > 50) {
+                        maxBottom = rect.bottom;
+                        bestElement = el;
+                    }
+                }
+                if (bestElement) return bestElement;
+            } else {
+                return elements[0];
+            }
+        }
+    }
+    return null;
+}
+
+// Simulate file drop (exact copy from example)
+function simulateFileDrop(file, targetElement) {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(file);
+
+    ['dragenter', 'dragover', 'drop'].forEach(eventType => {
+        const event = new DragEvent(eventType, {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer
+        });
+        targetElement.dispatchEvent(event);
+    });
+}
+
+// Main emote insertion function (adapted from example)
+async function insertEmote(emoteTrigger) {
+    debugLog("=== INSERTING EMOTE ===", emoteTrigger);
+
+    try {
+        // Check if we're on messenger.com
+        if (!window.location.href.includes('messenger.com')) {
+            debugLog("Not on messenger.com");
+            return { success: false, error: 'This feature only works on messenger.com' };
+        }
+
+        // Get emote URL
+        if (!emoteMapping || !emoteMapping[emoteTrigger]) {
+            debugLog("Emote not found in mapping:", emoteTrigger);
+            return { success: false, error: 'Emote not found' };
+        }
+
+        const emoteUrl = emoteMapping[emoteTrigger];
+        debugLog("Emote URL:", emoteUrl);
+
+        // Check if we have cached image data
+        let blob;
+        let mimeType;
+
+        if (emoteImageData[emoteTrigger] && emoteImageData[emoteTrigger].data) {
+            debugLog("Using cached image data");
+            const cachedData = emoteImageData[emoteTrigger];
+            const base64Response = await fetch(cachedData.data);
+            blob = await base64Response.blob();
+            mimeType = cachedData.type || 'image/png';
+        } else {
+            debugLog("Downloading image data...");
+            const response = await fetch(emoteUrl);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch emote: ${response.status}`);
+            }
+            blob = await response.blob();
+            mimeType = blob.type || 'image/png';
+
+            // Cache for future use
+            try {
+                const base64 = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+
+                emoteImageData[emoteTrigger] = {
+                    url: emoteUrl,
+                    data: base64,
+                    type: mimeType,
+                    size: blob.size
+                };
+
+                // Update storage
+                chrome.storage.local.get(['emoteImageData'], (result) => {
+                    const currentData = result.emoteImageData || {};
+                    currentData[emoteTrigger] = emoteImageData[emoteTrigger];
+                    chrome.storage.local.set({ emoteImageData: currentData });
+                });
+
+                debugLog("Cached image data");
+            } catch (error) {
+                debugLog("Could not cache image:", error);
+            }
+        }
+
+        // Create File object
+        const fileName = mimeType.includes('gif') ? `${emoteTrigger}.gif` : `${emoteTrigger}.png`;
+        const file = new File([blob], fileName, { type: mimeType });
+        debugLog("Created file:", fileName, file.size, "bytes");
+
+        // Find messenger input field
+        const inputField = findMessengerInputField();
+        if (!inputField) {
+            debugLog("Could not find message input field");
+            return { success: false, error: 'Could not find message input field' };
+        }
+
+        debugLog("Found input field:", inputField.tagName, inputField.className);
+
+        // Simulate file drop (exact same as example extension)
+        simulateFileDrop(file, inputField);
+        debugLog("File drop simulated");
+
+        return { success: true };
+
+    } catch (error) {
+        debugLog("Error inserting emote:", error);
+        return { success: false, error: error.message };
+    }
+}
+
+// Message listener
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    debugLog("Message received:", request);
+
+    if (request.action === 'insertEmote') {
+        insertEmote(request.emoteTrigger)
+            .then(result => {
+                debugLog("Insert result:", result);
+                sendResponse(result);
+            })
+            .catch(error => {
+                debugLog("Insert error:", error);
+                sendResponse({ success: false, error: error.message });
+            });
+        return true; // Async response
+    }
+
+    return false;
+});
+
+// Auto-replace emote codes as user types
 let typedText = '';
 const MAX_BUFFER = 30;
 
-// Find all potential messenger.com input fields
-function findMessengerInputFields() {
-  const selectors = [
-    '[contenteditable="true"][role="textbox"]',
-    'div[contenteditable="true"]',
-    'textarea[placeholder*="message" i]',
-    'textarea[aria-label*="message" i]',
-    'div[role="textbox"]',
-    // Additional messenger-specific selectors
-    '.xzsf02u.x78zum5.xdt5ytf.x1iyjqo2.xs83m0k.x1xzczws', // Latest Messenger composer class
-    '.x1ed109x.x1orsw6y.x78zum5.x1q0g3np.x1a02dak.x1yrsyyn', // Alternative Messenger composer
-    '[role="textbox"][class*="x78zum5"]',
-    'div[aria-label*="message"]',
-    'textarea[placeholder*="Aa" i]', // Messenger's typical placeholder
-    'textarea'
-  ];
-  
-  const results = [];
-  selectors.forEach(selector => {
-    const elements = document.querySelectorAll(selector);
-    if (elements.length > 0) {
-      results.push(...elements);
-      debugLog(`Found ${elements.length} elements matching selector: ${selector}`);
-    }
-  });
-  
-  // If we still don't have results, try looking in specific containers
-  if (results.length === 0) {
-    const containers = [
-      document.querySelector('[role="main"]'),
-      document.querySelector('[role="region"]'),
-      document.querySelector('[role="complementary"]'),
-      document.querySelector('[aria-label*="conversation" i]')
-    ].filter(Boolean);
-    
-    containers.forEach(container => {
-      const editables = container.querySelectorAll('[contenteditable="true"], textarea, [role="textbox"]');
-      if (editables.length > 0) {
-        results.push(...editables);
-        debugLog(`Found ${editables.length} editable elements in container`);
-      }
-    });
-  }
-  
-  return results;
-}
-
-// Handle emote insertion from popup
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  debugLog("Received message:", request);
-  
-  if (request.action === 'insertEmote') {
-    const emoteTrigger = request.emoteTrigger;
-    debugLog("Attempting to insert emote:", emoteTrigger);
-    
-    // Check if we're on messenger.com
-    const isOnMessenger = window.location.href.includes('messenger.com');
-    debugLog("Is on messenger.com:", isOnMessenger);
-    
-    if (!isOnMessenger) {
-      sendResponse({ success: false, error: 'Not on messenger.com' });
-      return true;
-    }
-    
-    if (!emoteMapping || !emoteMapping[emoteTrigger]) {
-      debugLog("Emote not found in mapping:", emoteTrigger);
-      sendResponse({ success: false, error: 'Emote not found in mapping' });
-      return true;
-    }
-    
-    try {
-      const emoteUrl = emoteMapping[emoteTrigger];
-      debugLog("Emote URL:", emoteUrl);
-      
-      // Find the active input field on messenger.com
-      let activeElement = document.activeElement;
-      debugLog("Active element:", activeElement);
-      
-      // If no active element or not the right type, try to find the message input
-      if (!activeElement || !(activeElement.isContentEditable || activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT')) {
-        debugLog("No valid active element, searching for input fields...");
-        
-        const inputFields = findMessengerInputFields();
-        debugLog("Found input fields:", inputFields);
-        
-        if (inputFields.length > 0) {
-          // Use the last one as it's likely the main chat input
-          activeElement = inputFields[inputFields.length - 1];
-          debugLog("Selected input field:", activeElement);
-          activeElement.focus();
-        } else {
-          debugLog("No suitable input fields found");
-        }
-      }
-      
-      if (activeElement) {
-        debugLog("Using active element:", activeElement);
-        
-        // Just request paste simulation from background script
-        chrome.runtime.sendMessage({
-          type: 'insertEmote',
-          emoteUrl: emoteUrl,
-          emoteTrigger: emoteTrigger
-        }, (response) => {
-          debugLog("Background response:", response);
-          sendResponse(response);
-        });
-        
-        return true; // Async response
-      } else {
-        debugLog("No active element found after all attempts");
-        sendResponse({ success: false, error: 'No input field found' });
-        return true;
-      }
-    } catch (error) {
-      console.error('Mojify Error:', error);
-      debugLog("Error inserting emote:", error);
-      sendResponse({ success: false, error: error.message });
-      return true;
-    }
-  }
-  return false;
-});
-
-// Automatically replace emote codes as user types
 document.addEventListener('input', (event) => {
   const { target } = event;
   if (target.isContentEditable || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
@@ -190,4 +246,6 @@ document.addEventListener('input', (event) => {
       typedText = '';
     }
   }
-}); 
+});
+
+debugLog("Mojify content script loaded");
