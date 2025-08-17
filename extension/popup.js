@@ -1,4 +1,58 @@
 
+// IndexedDB wrapper for emote storage (same as background.js)
+const emoteDB = {
+  db: null,
+  dbName: 'MojifyEmoteDB',
+  version: 1,
+
+  async init() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(this.dbName, this.version);
+
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        this.db = request.result;
+        resolve();
+      };
+
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains('emotes')) {
+          const emotesStore = db.createObjectStore('emotes', { keyPath: 'key' });
+          emotesStore.createIndex('channel', 'channel', { unique: false });
+          emotesStore.createIndex('url', 'url', { unique: false });
+        }
+      };
+    });
+  },
+
+  async getEmote(key) {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emotes'], 'readonly');
+      const store = transaction.objectStore('emotes');
+      const request = store.get(key);
+
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  async getAllEmotes() {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emotes'], 'readonly');
+      const store = transaction.objectStore('emotes');
+      const request = store.getAll();
+
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+  }
+};
+
 document.addEventListener('DOMContentLoaded', () => {
   // DOM elements
   const channelIdsInput = document.getElementById('channel-ids');
@@ -222,86 +276,86 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Load emotes from storage
-  function loadEmotes() {
-    chrome.storage.local.get(['emoteMapping', 'channels', 'emoteImageData'], (result) => {
-      console.log('Loaded data:', result);
-      console.log('Image data keys:', result.emoteImageData ? Object.keys(result.emoteImageData).length : 0);
+  async function loadEmotes() {
+    try {
+      // Initialize IndexedDB if needed
+      if (!emoteDB.db) {
+        await emoteDB.init();
+      }
 
-      // Store image data globally for easy access
-      window.emoteImageData = result.emoteImageData || {};
+      // Get metadata from chrome.storage
+      const storageData = await new Promise((resolve) => {
+        chrome.storage.local.get(['emoteMapping', 'channels'], resolve);
+      });
 
-      if (result.emoteMapping && Object.keys(result.emoteMapping).length > 0) {
-        allEmotes = result.emoteMapping;
-        channels = result.channels || [];
+      console.log('Loaded storage data:', storageData);
+
+      if (storageData.emoteMapping && Object.keys(storageData.emoteMapping).length > 0) {
+        allEmotes = storageData.emoteMapping;
+        channels = storageData.channels || [];
 
         console.log('All emotes count:', Object.keys(allEmotes).length);
         console.log('Channels count:', channels.length);
-        console.log('Image data count:', Object.keys(window.emoteImageData).length);
 
-        // Merge image data into channels for easier access
+        // Get all emotes from IndexedDB
+        const indexedDBEmotes = await emoteDB.getAllEmotes();
+        console.log('IndexedDB emotes count:', indexedDBEmotes.length);
+
+        // Create a map for quick lookup
+        const emoteDataMap = new Map();
+        indexedDBEmotes.forEach(emote => {
+          emoteDataMap.set(emote.key, emote);
+        });
+
+        // Process channels and merge with IndexedDB data
         if (channels.length > 0) {
           channels.forEach(channel => {
             if (channel.emotes) {
-              Object.keys(channel.emotes).forEach(emoteKey => {
-                const imageData = window.emoteImageData[emoteKey];
-                if (imageData && imageData.data) {
-                  // Update channel emote with base64 data for immediate display
-                  channel.emotes[emoteKey] = {
-                    url: channel.emotes[emoteKey],
-                    imageData: imageData
-                  };
-                } else {
-                  // Keep as string URL if no image data
-                  channel.emotes[emoteKey] = {
-                    url: channel.emotes[emoteKey],
-                    imageData: null
-                  };
-                }
+              const processedEmotes = {};
+              Object.entries(channel.emotes).forEach(([key, url]) => {
+                const emoteData = emoteDataMap.get(key);
+                processedEmotes[key] = {
+                  url: typeof url === 'string' ? url : url.url || url,
+                  hasImageData: !!emoteData,
+                  blob: emoteData?.blob || null
+                };
               });
+              channel.emotes = processedEmotes;
             }
           });
         }
 
         // If we have emotes but no channels (for backward compatibility)
         if (channels.length === 0) {
-          chrome.storage.local.get(['channelIds'], (result) => {
-            if (result.channelIds && result.channelIds.length > 0) {
-              // Create a single channel with all emotes
-              const processedEmotes = {};
-              Object.keys(allEmotes).forEach(emoteKey => {
-                const imageData = window.emoteImageData[emoteKey];
-                processedEmotes[emoteKey] = {
-                  url: allEmotes[emoteKey],
-                  imageData: imageData || null
-                };
-              });
-
-              channels = [{
-                id: 'all',
-                username: 'All Emotes',
-                emotes: processedEmotes
-              }];
-              console.log('Created fallback channel with all emotes');
-            }
-            updateEmoteCount();
-            filterAndDisplayEmotes();
-            updateStorageInfo();
-            updateChannelManagement();
-          });
-        } else {
-          // Log channel data
-          channels.forEach(channel => {
-            const emoteCount = Object.keys(channel.emotes || {}).length;
-            const imageDataCount = Object.values(channel.emotes || {}).filter(e => e.imageData).length;
-            console.log(`Channel ${channel.username} has ${emoteCount} emotes, ${imageDataCount} with image data`);
+          const channelIds = await new Promise((resolve) => {
+            chrome.storage.local.get(['channelIds'], (result) => resolve(result.channelIds));
           });
 
-          updateEmoteCount();
-          filterAndDisplayEmotes();
-          updateStorageInfo();
-          updateChannelManagement();
+          if (channelIds && channelIds.length > 0) {
+            // Create a single channel with all emotes
+            const processedEmotes = {};
+            Object.entries(allEmotes).forEach(([key, url]) => {
+              const emoteData = emoteDataMap.get(key);
+              processedEmotes[key] = {
+                url: url,
+                hasImageData: !!emoteData,
+                blob: emoteData?.blob || null
+              };
+            });
+
+            channels = [{
+              id: 'all',
+              username: 'All Emotes',
+              emotes: processedEmotes
+            }];
+            console.log('Created fallback channel with all emotes');
+          }
         }
 
+        updateEmoteCount();
+        filterAndDisplayEmotes();
+        updateStorageInfo();
+        updateChannelManagement();
         noEmotesMessage.style.display = 'none';
       } else {
         emoteGrid.innerHTML = '';
@@ -311,7 +365,13 @@ document.addEventListener('DOMContentLoaded', () => {
         updateStorageInfo();
         updateChannelManagement();
       }
-    });
+    } catch (error) {
+      console.error('Error loading emotes:', error);
+      emoteGrid.innerHTML = '';
+      noEmotesMessage.style.display = 'flex';
+      loadMoreContainer.classList.add('hidden');
+      emoteCount.textContent = '0';
+    }
   }
 
   // Update emote count
@@ -401,10 +461,6 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="emote-details">
             <div class="emote-name">${emoteName}</div>
             <div class="emote-trigger">${key}</div>
-            <div class="emote-test-info" style="font-size: 10px; color: #666; margin-top: 2px;">
-              URL: ${String(emoteUrl).substring(0, 30)}...<br>
-              Loading image data...
-            </div>
           </div>
         `;
 
@@ -412,16 +468,6 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.storage.local.get(['emoteImageData'], (result) => {
           const imageData = result.emoteImageData?.[key];
           const hasImageData = imageData?.data && imageData.data.startsWith('data:');
-          const testInfo = imageData ? `Data: ${hasImageData ? 'YES' : 'NO'}, Size: ${imageData.size || 'Unknown'}, Type: ${imageData.type || 'Unknown'}` : 'No data';
-
-          // Update test info
-          const testInfoElement = emoteItem.querySelector('.emote-test-info');
-          if (testInfoElement) {
-            testInfoElement.innerHTML = `
-              URL: ${String(emoteUrl).substring(0, 30)}...<br>
-              ${testInfo}
-            `;
-          }
 
           // Update image source if we have base64 data
           const img = emoteItem.querySelector('.emote-img');
@@ -513,17 +559,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
         Object.entries(channel.emotes).forEach(([key, emoteData]) => {
           const emoteName = key.replace(/:/g, '');
-          const url = typeof emoteData === 'string' ? emoteData : emoteData.url;
-          const imageData = typeof emoteData === 'object' ? emoteData.imageData : null;
+          const url = emoteData.url;
+          const hasBlob = !!emoteData.blob;
 
           const emoteItem = document.createElement('div');
           emoteItem.className = 'emote-item';
           emoteItem.setAttribute('data-emote-key', key);
 
-          // Determine which image source to use
-          const hasImageData = imageData?.data && imageData.data.startsWith('data:');
-          const imageSrc = hasImageData ? imageData.data : url;
-          const testInfo = imageData ? `Data: ${hasImageData ? 'YES' : 'NO'}, Size: ${imageData.size || 'Unknown'}, Type: ${imageData.type || 'Unknown'}` : 'No data';
+          // Create image source - use blob URL if available, fallback to regular URL
+          let imageSrc = url;
+          if (hasBlob) {
+            try {
+              imageSrc = URL.createObjectURL(emoteData.blob);
+            } catch (error) {
+              console.warn(`Failed to create blob URL for ${key}:`, error);
+              imageSrc = url;
+            }
+          }
 
           // Set content with proper image source
           emoteItem.innerHTML = `
@@ -533,10 +585,6 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="emote-details">
               <div class="emote-name">${emoteName}</div>
               <div class="emote-trigger">${key}</div>
-              <div class="emote-test-info" style="font-size: 10px; color: #666; margin-top: 2px;">
-                URL: ${String(url).substring(0, 30)}...<br>
-                ${testInfo}
-              </div>
             </div>
           `;
 
@@ -548,7 +596,7 @@ document.addEventListener('DOMContentLoaded', () => {
               if (img.src !== url) {
                 img.src = url;
               } else {
-                console.error(`[Popup] Both base64 and URL failed for ${key}`);
+                console.error(`[Popup] Both blob and URL failed for ${key}`);
                 img.style.backgroundColor = '#ff6b6b';
                 img.style.color = 'white';
                 img.style.fontSize = '10px';
@@ -558,7 +606,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             img.addEventListener('load', () => {
               console.log(`[Popup] Image loaded successfully for ${key}`, {
-                src: img.src.substring(0, 50) + '...',
+                hasBlob: hasBlob,
                 naturalWidth: img.naturalWidth,
                 naturalHeight: img.naturalHeight
               });
@@ -679,45 +727,27 @@ document.addEventListener('DOMContentLoaded', () => {
           progressText.textContent = 'Starting automatic download...';
           progressCount.textContent = '0/0';
 
-          // Listen for progress updates from the automatic download
           const progressListener = (message) => {
             if (message.type === 'downloadProgress') {
-              const { current, total, currentEmote, completed, newEmote, channel, batch, percentage } = message;
-              const progressPercent = percentage || (total > 0 ? (current / total) * 100 : 0);
+              const { current, total, currentEmote, completed, newEmote } = message;
+              const percentage = total > 0 ? (current / total) * 100 : 0;
 
-              progressFill.style.width = `${progressPercent}%`;
+              progressFill.style.width = `${percentage}%`;
               progressCount.textContent = `${current}/${total}`;
+              progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
 
-              let progressMessage = 'Downloading emotes...';
-              if (currentEmote) {
-                progressMessage = `${currentEmote}`;
-                if (channel) progressMessage += ` (${channel})`;
-                if (batch) progressMessage += ` - Batch ${batch}`;
-              }
-              progressText.textContent = progressMessage;
-
-              // Real-time emote display - reload emotes when new one is downloaded
               if (newEmote) {
-                console.log(`[Popup] New emote downloaded: ${newEmote}, reloading emotes`);
                 loadEmotes();
               }
 
               if (completed) {
-                // Download completed
                 setTimeout(() => {
                   downloadProgress.classList.add('hidden');
                   chrome.runtime.onMessage.removeListener(progressListener);
-                  loadEmotes(); // Final reload
+                  loadEmotes();
                   showToast('Emotes downloaded successfully');
                 }, 1000);
               }
-            }
-
-            // Handle channel completion for better feedback
-            if (message.type === 'channelCompleted') {
-              const { username, emoteCount } = message;
-              console.log(`[Popup] Channel ${username} completed with ${emoteCount} emotes`);
-              loadEmotes(); // Refresh display after each channel
             }
           };
 
@@ -781,46 +811,28 @@ document.addEventListener('DOMContentLoaded', () => {
         progressCount.textContent = '0/0';
 
         // Listen for progress updates
-        // Listen for progress updates from the automatic download
         const progressListener = (message) => {
           if (message.type === 'downloadProgress') {
-            const { current, total, currentEmote, completed, newEmote, channel, batch, percentage } = message;
-            const progressPercent = percentage || (total > 0 ? (current / total) * 100 : 0);
+            const { current, total, currentEmote, completed, newEmote } = message;
+            const percentage = total > 0 ? (current / total) * 100 : 0;
 
-            progressFill.style.width = `${progressPercent}%`;
+            progressFill.style.width = `${percentage}%`;
             progressCount.textContent = `${current}/${total}`;
+            progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
 
-            let progressMessage = 'Downloading emotes...';
-            if (currentEmote) {
-              progressMessage = `${currentEmote}`;
-              if (channel) progressMessage += ` (${channel})`;
-              if (batch) progressMessage += ` - Batch ${batch}`;
-            }
-            progressText.textContent = progressMessage;
-
-            // Real-time emote display - reload emotes when new one is downloaded
             if (newEmote) {
-              console.log(`[Popup] New emote downloaded: ${newEmote}, reloading emotes`);
               loadEmotes();
             }
 
             if (completed) {
-              // Download completed
               setTimeout(() => {
                 downloadButton.disabled = false;
                 downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
                 downloadProgress.classList.add('hidden');
                 chrome.runtime.onMessage.removeListener(progressListener);
-                loadEmotes(); // Final reload
+                loadEmotes();
               }, 1000);
             }
-          }
-
-          // Handle channel completion for better feedback
-          if (message.type === 'channelCompleted') {
-            const { username, emoteCount } = message;
-            console.log(`[Popup] Channel ${username} completed with ${emoteCount} emotes`);
-            loadEmotes(); // Refresh display after each channel
           }
         };
 
@@ -831,7 +843,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
         chrome.runtime.sendMessage({ type: 'downloadEmotes' }, (response) => {
           if (response && response.success) {
-            showToast('Emotes downloaded successfully');
+            if (response.message === "All emotes up to date") {
+              showToast('All emotes are up to date - no new downloads needed');
+            } else {
+              showToast('Emotes downloaded successfully');
+            }
             loadEmotes(); // Reload emotes
             searchInput.value = ''; // Clear search
             searchTerm = '';
@@ -1367,7 +1383,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function checkDownloadStatus() {
     chrome.storage.local.get(['downloadInProgress', 'downloadProgress'], (result) => {
       if (result.downloadInProgress) {
-        // Download is in progress, show progress bar
         downloadButton.disabled = true;
         downloadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Downloading...</span>';
         downloadProgress.classList.remove('hidden');
@@ -1375,26 +1390,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (result.downloadProgress) {
           const { current, total, currentEmote } = result.downloadProgress;
           const percentage = total > 0 ? (current / total) * 100 : 0;
-
           progressFill.style.width = `${percentage}%`;
           progressCount.textContent = `${current}/${total}`;
           progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
         }
 
-        // Start polling for progress updates
         startProgressPolling();
-      } else if (result.downloadProgress && result.downloadProgress.completed) {
-        // Download completed, refresh the UI
+      } else if (result.downloadProgress?.completed) {
         loadEmotes();
         showToast('Emotes downloaded successfully');
-
-        // Clear completed status
         chrome.storage.local.remove(['downloadProgress']);
-      } else if (result.downloadProgress && result.downloadProgress.error) {
-        // Download failed
+      } else if (result.downloadProgress?.error) {
         showToast(`Download failed: ${result.downloadProgress.error}`, 'error');
-
-        // Clear error status
         chrome.storage.local.remove(['downloadProgress']);
       }
     });
@@ -1404,40 +1411,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const pollInterval = setInterval(() => {
       chrome.storage.local.get(['downloadInProgress', 'downloadProgress'], (result) => {
         if (!result.downloadInProgress) {
-          // Download finished
           clearInterval(pollInterval);
           downloadButton.disabled = false;
           downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
           downloadProgress.classList.add('hidden');
 
-          if (result.downloadProgress) {
-            if (result.downloadProgress.completed) {
-              loadEmotes();
-              showToast('Emotes downloaded successfully');
-            } else if (result.downloadProgress.error) {
-              showToast(`Download failed: ${result.downloadProgress.error}`, 'error');
-            }
+          if (result.downloadProgress?.completed) {
+            loadEmotes();
+            showToast('Emotes downloaded successfully');
+          } else if (result.downloadProgress?.error) {
+            showToast(`Download failed: ${result.downloadProgress.error}`, 'error');
           }
 
-          // Clear progress status
           chrome.storage.local.remove(['downloadProgress']);
         } else if (result.downloadProgress) {
-          // Update progress and check for real-time updates
-          const { current, total, currentEmote, channel, batch } = result.downloadProgress;
+          const { current, total, currentEmote } = result.downloadProgress;
           const percentage = total > 0 ? (current / total) * 100 : 0;
-
           progressFill.style.width = `${percentage}%`;
           progressCount.textContent = `${current}/${total}`;
+          progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
 
-          let progressMessage = 'Downloading emotes...';
-          if (currentEmote) {
-            progressMessage = `${currentEmote}`;
-            if (channel) progressMessage += ` (${channel})`;
-            if (batch) progressMessage += ` - Batch ${batch}`;
-          }
-          progressText.textContent = progressMessage;
-
-          // Refresh emotes periodically during download for real-time display
           if (current > 0 && current % 5 === 0) {
             loadEmotes();
           }
@@ -1460,49 +1453,33 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
-    // Handle real-time download progress updates
+    // Handle download progress updates
     if (message.type === 'downloadProgress') {
-      const { current, total, currentEmote, newEmote, completed, channel, batch, percentage } = message;
+      const { current, total, currentEmote, newEmote, completed } = message;
 
-      // Update progress if UI is visible
       if (!downloadProgress.classList.contains('hidden')) {
-        const progressPercent = percentage || (total > 0 ? (current / total) * 100 : 0);
-        progressFill.style.width = `${progressPercent}%`;
-        progressCount.textContent = `${current}/${total} (${progressPercent}%)`;
-
-        let progressMessage = 'Downloading emotes...';
-        if (currentEmote) {
-          progressMessage = `${currentEmote}`;
-          if (channel) progressMessage += ` (${channel})`;
-          if (batch) progressMessage += ` - Batch ${batch}`;
-        }
-        progressText.textContent = progressMessage;
+        const percentage = total > 0 ? (current / total) * 100 : 0;
+        progressFill.style.width = `${percentage}%`;
+        progressCount.textContent = `${current}/${total}`;
+        progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
       }
 
-      // Real-time emote display
       if (newEmote) {
-        console.log(`[Popup] Real-time update: New emote ${newEmote} downloaded`);
         loadEmotes();
       }
 
-      // Handle completion
       if (completed) {
         setTimeout(() => {
-          if (!downloadProgress.classList.contains('hidden')) {
-            downloadProgress.classList.add('hidden');
-          }
+          downloadProgress.classList.add('hidden');
           loadEmotes();
           showToast('Download completed successfully');
         }, 1000);
       }
     }
 
-    // Handle channel completion
-    if (message.type === 'channelCompleted') {
-      const { username, emoteCount } = message;
-      console.log(`[Popup] Channel ${username} completed with ${emoteCount} emotes`);
-      showToast(`${username} emotes ready (${emoteCount} emotes)`);
-      loadEmotes();
+    // Handle toast notifications from background script
+    if (message.type === 'showToast') {
+      showToast(message.message, message.toastType || 'success');
     }
   });
 
