@@ -282,62 +282,102 @@ async function downloadEmotes() {
       }
     });
 
-    // Download new emotes with failed emote retry queue
-    const failedQueue = [];
+    // Concurrent download implementation with batching
+    const BATCH_SIZE = 15; // Download 15 emotes concurrently
+    const BATCH_DELAY = 200; // 200ms delay between batches
 
-    // First pass: download all emotes, add failures to queue
+    // Prepare all emotes for download with metadata
+    const allEmotesToDownload = [];
     for (const channelData of channelEmotes) {
-      console.log(`[Download] Processing ${channelData.username}: ${Object.keys(channelData.emotes).length} new emotes`);
+      console.log(`[Download] Preparing ${channelData.username}: ${Object.keys(channelData.emotes).length} new emotes`);
 
       for (const [key, url] of Object.entries(channelData.emotes)) {
-        try {
-          // Use manual timeout that's more tolerant of browser state changes
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => {
-            controller.abort();
-          }, 20000); // 20 second timeout for first attempt
+        allEmotesToDownload.push({
+          key,
+          url,
+          channel: channelData.username,
+          channelId: channelData.channelId
+        });
+      }
+    }
 
-          const response = await fetch(url, {
-            signal: controller.signal,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-          });
-          clearTimeout(timeoutId);
+    console.log(`[Download] Starting concurrent download of ${allEmotesToDownload.length} emotes in batches of ${BATCH_SIZE}`);
 
-          if (response.ok) {
-            const blob = await response.blob();
-            if (blob.size > 0) {
-              // Store blob directly in IndexedDB (no base64 conversion needed)
-              await emoteDB.storeEmote(key, url, blob, {
-                channel: channelData.username,
-                channelId: channelData.channelId
-              });
+    // Function to download a single emote
+    const downloadSingleEmote = async (emoteData) => {
+      const { key, url, channel, channelId } = emoteData;
 
-              globalEmoteMapping[key] = url;
-              console.log(`[Download] Stored ${key} in IndexedDB (${blob.size} bytes)`);
-            } else {
-              throw new Error("Empty blob received");
-            }
-          } else {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for concurrent downloads
+
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
           }
-        } catch (error) {
-          // Add to failed queue for retry later
-          failedQueue.push({ key, url, channel: channelData.username, error: error.message });
-          console.log(`[Download] Added ${key} to retry queue (${error.message})`);
+        });
+        clearTimeout(timeoutId);
+
+        if (response.ok) {
+          const blob = await response.blob();
+          if (blob.size > 0) {
+            await emoteDB.storeEmote(key, url, blob, {
+              channel: channel,
+              channelId: channelId
+            });
+
+            globalEmoteMapping[key] = url;
+            console.log(`[Download] ✓ ${key} (${blob.size} bytes)`);
+            return { success: true, key, url, channel };
+          } else {
+            throw new Error("Empty blob received");
+          }
+        } else {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+      } catch (error) {
+        console.log(`[Download] ✗ ${key}: ${error.message}`);
+        return { success: false, key, url, channel, error: error.message };
+      }
+    };
+
+    // Process emotes in concurrent batches
+    const failedQueue = [];
+    let currentBatch = 0;
+
+    for (let i = 0; i < allEmotesToDownload.length; i += BATCH_SIZE) {
+      const batch = allEmotesToDownload.slice(i, i + BATCH_SIZE);
+      currentBatch++;
+
+      console.log(`[Download] Processing batch ${currentBatch}/${Math.ceil(allEmotesToDownload.length / BATCH_SIZE)} (${batch.length} emotes)`);
+
+      // Download batch concurrently
+      const batchResults = await Promise.allSettled(
+        batch.map(emoteData => downloadSingleEmote(emoteData))
+      );
+
+      // Process results
+      for (const result of batchResults) {
+        if (result.status === 'fulfilled') {
+          const emoteResult = result.value;
+          if (!emoteResult.success) {
+            failedQueue.push(emoteResult);
+          }
+        } else {
+          console.error(`[Download] Batch promise rejected:`, result.reason);
         }
 
         downloadState.current++;
 
-        // Update progress every 5 emotes (only store URL mapping, not image data)
-        if (downloadState.current % 5 === 0) {
+        // Update progress after each emote
+        if (downloadState.current % 3 === 0 || downloadState.current === downloadState.total) {
           await chrome.storage.local.set({
             emoteMapping: globalEmoteMapping,
             downloadProgress: {
               current: downloadState.current,
               total: downloadState.total,
-              currentEmote: key
+              currentEmote: `Batch ${currentBatch} completed`
             }
           });
 
@@ -346,32 +386,34 @@ async function downloadEmotes() {
               type: 'downloadProgress',
               current: downloadState.current,
               total: downloadState.total,
-              currentEmote: key,
-              newEmote: key
+              currentEmote: `Downloading batch ${currentBatch}...`,
+              newEmote: true
             });
           } catch (e) {
             // Popup is closed, continue silently
           }
         }
+      }
 
-        // Small delay to prevent overwhelming
-        if (downloadState.current % 10 === 0) {
-          await new Promise(resolve => setTimeout(resolve, 300));
-        }
+      // Small delay between batches to be respectful to servers
+      if (i + BATCH_SIZE < allEmotesToDownload.length) {
+        await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
       }
     }
 
-    // Second pass: retry failed emotes
-    if (failedQueue.length > 0) {
-      console.log(`[Download] Retrying ${failedQueue.length} failed emotes...`);
+    console.log(`[Download] Concurrent download completed. ${failedQueue.length} failures to retry.`);
 
-      for (const { key, url, channel } of failedQueue) {
+    // Second pass: retry failed emotes with smaller concurrent batches
+    if (failedQueue.length > 0) {
+      console.log(`[Download] Retrying ${failedQueue.length} failed emotes with smaller batches...`);
+
+      const RETRY_BATCH_SIZE = 5; // Smaller batches for retries
+      const retryDownload = async (emoteData) => {
+        const { key, url, channel } = emoteData;
+
         try {
-          // Longer timeout for retry attempts
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => {
-            controller.abort();
-          }, 30000); // 30 second timeout for retries
+          const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s timeout for retries
 
           const response = await fetch(url, {
             signal: controller.signal,
@@ -384,29 +426,43 @@ async function downloadEmotes() {
           if (response.ok) {
             const blob = await response.blob();
             if (blob.size > 0) {
-              // Store successful retry in IndexedDB
               await emoteDB.storeEmote(key, url, blob, {
                 channel: channel,
                 retried: true
               });
 
               globalEmoteMapping[key] = url;
-              console.log(`[Download] Successfully retried ${key}`);
+              console.log(`[Download] ✓ Retry successful: ${key}`);
+              return { success: true, key };
             }
           } else {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
           }
         } catch (error) {
-          // Final failure - just store URL mapping
+          console.log(`[Download] ✗ Retry failed: ${key} - ${error.message}`);
+          // Still store URL mapping for fallback
           globalEmoteMapping[key] = url;
-          console.log(`[Download] Final failure for ${key}: ${error.message}`);
+          return { success: false, key, error: error.message };
         }
+      };
 
-        // Longer delay between retry attempts
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      // Process retry queue in smaller concurrent batches
+      for (let i = 0; i < failedQueue.length; i += RETRY_BATCH_SIZE) {
+        const retryBatch = failedQueue.slice(i, i + RETRY_BATCH_SIZE);
+
+        console.log(`[Download] Retry batch ${Math.floor(i/RETRY_BATCH_SIZE) + 1}/${Math.ceil(failedQueue.length/RETRY_BATCH_SIZE)} (${retryBatch.length} emotes)`);
+
+        await Promise.allSettled(
+          retryBatch.map(emoteData => retryDownload(emoteData))
+        );
+
+        // Longer delay between retry batches
+        if (i + RETRY_BATCH_SIZE < failedQueue.length) {
+          await new Promise(resolve => setTimeout(resolve, 800));
+        }
       }
 
-      console.log(`[Download] Completed retry queue processing`);
+      console.log(`[Download] Completed concurrent retry processing`);
     }
 
     // Final storage update (images are now in IndexedDB, only store metadata)
@@ -452,27 +508,161 @@ async function downloadEmotes() {
   }
 }
 
-// Function to insert emote into messenger.com
+// Function to insert emote into messenger.com using drag and drop
 async function insertEmoteIntoMessenger(tabId, emoteUrl, emoteTrigger) {
-  console.log(`[Mojify] Attempting to insert emote ${emoteTrigger} into tab ${tabId}`);
+  console.log(`[Mojify] Attempting to insert emote ${emoteTrigger} into tab ${tabId} using drag and drop`);
 
   try {
-    // Execute script to directly insert emote using the new method
+    // First, get the emote blob from IndexedDB
+    const emoteData = await emoteDB.getEmote(emoteTrigger);
+    let imageBlob = null;
+
+    if (emoteData && emoteData.blob) {
+      imageBlob = emoteData.blob;
+      console.log(`[Mojify] Using cached blob for ${emoteTrigger}`);
+    } else {
+      // Fallback: fetch the image if not in IndexedDB
+      console.log(`[Mojify] Fetching ${emoteTrigger} from URL: ${emoteUrl}`);
+      const response = await fetch(emoteUrl);
+      if (response.ok) {
+        imageBlob = await response.blob();
+      } else {
+        throw new Error(`Failed to fetch emote: ${response.status}`);
+      }
+    }
+
+    // Execute script to drag and drop the emote
     const result = await chrome.scripting.executeScript({
       target: { tabId },
-      func: insertEmoteDirectly,
-      args: [emoteUrl, emoteTrigger]
+      func: insertEmoteWithDragDrop,
+      args: [imageBlob, emoteTrigger, emoteUrl]
     });
 
     if (result && result[0] && result[0].result) {
-      console.log(`[Mojify] Successfully inserted emote ${emoteTrigger}`);
+      console.log(`[Mojify] Successfully inserted emote ${emoteTrigger} via drag and drop`);
       return { success: true };
     } else {
-      throw new Error('Emote insertion failed');
+      throw new Error('Drag and drop insertion failed');
     }
   } catch (error) {
     console.error("[Mojify] Error inserting emote:", error);
     return { success: false, error: error.message };
+  }
+}
+
+// Injected function for drag and drop emote insertion
+function insertEmoteWithDragDrop(imageBlob, emoteTrigger, emoteUrl) {
+  console.log("Mojify: Starting drag and drop insertion for:", emoteTrigger);
+
+  try {
+    // Find messenger input field
+    const inputSelectors = [
+      '[contenteditable="true"][role="textbox"]',
+      'div[contenteditable="true"]',
+      '[role="textbox"][aria-label*="message" i]',
+      '[role="textbox"][data-testid*="composer" i]',
+      'div[aria-label*="message" i]',
+      '.x1ed109x.x1orsw6y.x78zum5.x1q0g3np.x1a02dak.x1yrsyyn',
+      '[class*="composer"] [contenteditable="true"]'
+    ];
+
+    let inputField = null;
+    for (const selector of inputSelectors) {
+      const elements = document.querySelectorAll(selector);
+      for (const element of elements) {
+        if (element.offsetParent !== null && element.isContentEditable) {
+          inputField = element;
+          break;
+        }
+      }
+      if (inputField) break;
+    }
+
+    if (!inputField) {
+      console.error("[Mojify] No messenger input field found");
+      return false;
+    }
+
+    console.log("[Mojify] Found input field:", inputField);
+
+    // Create a File object from the blob
+    const file = new File([imageBlob], `${emoteTrigger}.webp`, {
+      type: imageBlob.type || 'image/webp'
+    });
+
+    // Create DataTransfer object for drag and drop
+    const dataTransfer = new DataTransfer();
+    dataTransfer.files.add ? dataTransfer.files.add(file) : dataTransfer.items.add(file);
+
+    // Focus the input field
+    inputField.focus();
+    inputField.click();
+
+    // Create and dispatch drag events
+    const dragStartEvent = new DragEvent('dragstart', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: dataTransfer
+    });
+
+    const dragOverEvent = new DragEvent('dragover', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: dataTransfer
+    });
+
+    const dropEvent = new DragEvent('drop', {
+      bubbles: true,
+      cancelable: true,
+      dataTransfer: dataTransfer
+    });
+
+    // Simulate drag and drop sequence
+    document.dispatchEvent(dragStartEvent);
+
+    setTimeout(() => {
+      inputField.dispatchEvent(dragOverEvent);
+
+      setTimeout(() => {
+        inputField.dispatchEvent(dropEvent);
+
+        // Also try paste event as fallback
+        setTimeout(() => {
+          const pasteEvent = new ClipboardEvent('paste', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: dataTransfer
+          });
+          inputField.dispatchEvent(pasteEvent);
+        }, 100);
+
+      }, 100);
+    }, 100);
+
+    // Alternative approach: try input event with files
+    setTimeout(() => {
+      const inputEvent = new Event('input', {
+        bubbles: true,
+        cancelable: true
+      });
+
+      // Try to set files property if available
+      if (inputField.files !== undefined) {
+        Object.defineProperty(inputField, 'files', {
+          value: dataTransfer.files,
+          configurable: true
+        });
+      }
+
+      inputField.dispatchEvent(inputEvent);
+    }, 200);
+
+    console.log("[Mojify] Drag and drop events dispatched for:", emoteTrigger);
+    return true;
+
+  } catch (error) {
+    console.error("[Mojify] Error in drag and drop insertion:", error);
+    return false;
   }
 }
 
