@@ -498,6 +498,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (result.channelIds) {
         channelIdsInput.value = result.channelIds.join('\n');
       }
+
+      // Update related UI components
+      updateChannelManagement();
+      updateStorageInfo();
     });
   }
 
@@ -519,29 +523,82 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     chrome.storage.local.set({ channelIds }, () => {
-      showToast('Channel IDs saved successfully');
+      if (channelIds.length === 0) {
+        // Channel IDs were cleared
+        showToast('Channel IDs cleared');
 
-      // Automatically download emotes after saving channel IDs
-      setTimeout(() => {
-        // Show loading state
-        saveButton.disabled = true;
-        saveButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Downloading...</span>';
+        // Clear any existing download progress
+        downloadProgress.classList.add('hidden');
 
-        chrome.runtime.sendMessage({ type: 'downloadEmotes' }, (response) => {
-          // Reset button state
-          saveButton.disabled = false;
-          saveButton.innerHTML = '<i class="fas fa-save"></i> <span>Save</span>';
-
-          if (response && response.success) {
-            showToast('Emotes downloaded successfully');
-            loadEmotes(); // Reload emotes
-            searchInput.value = ''; // Clear search
-            searchTerm = '';
-          } else {
-            showToast('Error downloading emotes', 'error');
-          }
+        // Clear storage data
+        chrome.storage.local.remove(['downloadInProgress', 'downloadProgress'], () => {
+          loadEmotes(); // Reload emotes (will show empty state)
+          updateChannelManagement();
+          updateStorageInfo();
         });
-      }, 500); // Small delay to show the save success message first
+      } else {
+        // Channel IDs were saved
+        showToast('Channel IDs saved - emotes will download automatically');
+
+        // Set up progress monitoring for the automatic download that will be triggered by storage listener
+        setTimeout(() => {
+          // Show loading state and progress
+          downloadProgress.classList.remove('hidden');
+          progressFill.style.width = '0%';
+          progressText.textContent = 'Starting automatic download...';
+          progressCount.textContent = '0/0';
+
+          // Listen for progress updates from the automatic download
+          const progressListener = (message) => {
+            if (message.type === 'downloadProgress') {
+              const { current, total, currentEmote, completed } = message;
+              const percentage = total > 0 ? (current / total) * 100 : 0;
+
+              progressFill.style.width = `${percentage}%`;
+              progressCount.textContent = `${current}/${total}`;
+              progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
+
+              if (completed) {
+                // Download completed
+                setTimeout(() => {
+                  downloadProgress.classList.add('hidden');
+                  chrome.runtime.onMessage.removeListener(progressListener);
+                  loadEmotes(); // Reload emotes
+                  showToast('Emotes downloaded successfully');
+                }, 1000);
+              }
+            }
+          };
+
+          chrome.runtime.onMessage.addListener(progressListener);
+
+          // Start polling for progress in case popup closes and reopens
+          startProgressPolling();
+        }, 500); // Small delay to show the save success message first
+      }
+    });
+  });
+
+  // Clear all storage
+  clearAllStorageBtn.addEventListener('click', () => {
+    if (!confirm('Are you sure you want to clear all emote data and channel IDs? This action cannot be undone.')) {
+      return;
+    }
+
+    // Clear all storage including channelIds - this will trigger automatic cleanup via storage listener
+    chrome.storage.local.clear(() => {
+      // Also clear the channel IDs input field
+      channelIdsInput.value = '';
+
+      // Hide progress if showing
+      downloadProgress.classList.add('hidden');
+
+      // Reset UI
+      loadEmotes();
+      updateChannelManagement();
+      updateStorageInfo();
+
+      showToast('All data cleared successfully');
     });
   });
 
@@ -1188,6 +1245,21 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }, 1000);
   }
+
+  // Listen for automatic download notifications from background script
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'automaticDownloadStarted') {
+      showToast(`Starting automatic download for ${message.channelIds.length} channel(s)`);
+
+      // Show progress UI if not already shown
+      if (downloadProgress.classList.contains('hidden')) {
+        downloadProgress.classList.remove('hidden');
+        progressFill.style.width = '0%';
+        progressText.textContent = 'Starting automatic download...';
+        progressCount.textContent = '0/0';
+      }
+    }
+  });
 
   // Initialize
   function init() {

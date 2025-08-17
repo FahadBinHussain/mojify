@@ -32,7 +32,7 @@ async function get7TVEmotes(channelId) {
 
 async function downloadEmotes() {
   try {
-    console.log("[DEBUG] Starting emote URL collection (lazy loading)...");
+    console.log("[DEBUG] Starting emote download with image data...");
 
     const { channelIds } = await chrome.storage.local.get(['channelIds']);
     console.log("[DEBUG] Retrieved channelIds from storage:", channelIds);
@@ -42,20 +42,40 @@ async function downloadEmotes() {
       return { success: false, error: "No channel IDs configured" };
     }
 
-    console.log("Collecting emote URLs for channels:", channelIds);
+    console.log("Downloading emotes with image data for channels:", channelIds);
 
     // New structure: each channel has its own emotes
     const channels = [];
     const globalEmoteMapping = {};
+    const emoteImageData = {}; // Store actual image data
     let totalEmotesCount = 0;
+    const channelEmotes = [];
+
+    // First, collect all emote URLs
+    console.log("[DEBUG] Getting emotes for each channel...");
+    for (const channelId of channelIds) {
+      console.log(`[DEBUG] Fetching emotes for channel: ${channelId}`);
+      try {
+        const result = await get7TVEmotes(channelId);
+        console.log(`[DEBUG] Got result for ${channelId}:`, { username: result.username, emoteCount: Object.keys(result.emotes).length });
+
+        channelEmotes.push({ channelId, username: result.username, emotes: result.emotes });
+        totalEmotesCount += Object.keys(result.emotes).length;
+      } catch (error) {
+        console.error(`[DEBUG] Error fetching emotes for ${channelId}:`, error);
+        // Continue with other channels
+      }
+    }
+
+    console.log(`[DEBUG] Total emotes to download: ${totalEmotesCount}`);
 
     // Store download state in storage for popup to check
     await chrome.storage.local.set({
       downloadInProgress: true,
       downloadProgress: {
         current: 0,
-        total: channelIds.length,
-        currentEmote: 'Fetching channel data...'
+        total: totalEmotesCount,
+        currentEmote: null
       }
     });
 
@@ -64,75 +84,173 @@ async function downloadEmotes() {
       chrome.runtime.sendMessage({
         type: 'downloadProgress',
         current: 0,
-        total: channelIds.length,
-        currentEmote: 'Fetching channel data...'
+        total: totalEmotesCount,
+        currentEmote: null
       });
     } catch (error) {
-      console.log("[DEBUG] Could not send progress message");
+      console.log("[DEBUG] Could not send progress message (popup might be closed) - continuing download");
     }
 
-    // Collect emote URLs from each channel (fast)
-    for (let i = 0; i < channelIds.length; i++) {
-      const channelId = channelIds[i];
-      console.log(`[DEBUG] Fetching emotes for channel: ${channelId}`);
+    let globalDownloadedCount = 0;
 
+    // Function to download a single emote
+    async function downloadSingleEmote(key, url) {
       try {
-        const result = await get7TVEmotes(channelId);
-        console.log(`[DEBUG] Got ${Object.keys(result.emotes).length} emotes for ${result.username}`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
 
-        // Store channel info with emote URLs only (no image data)
-        channels.push({
-          id: channelId,
-          username: result.username,
-          emotes: result.emotes // Just URLs
+        const response = await fetch(url, {
+          signal: controller.signal,
+          method: 'GET'
         });
+        clearTimeout(timeoutId);
 
-        // Add to global mapping for backward compatibility
-        Object.entries(result.emotes).forEach(([key, url]) => {
-          globalEmoteMapping[key] = url;
-        });
+        if (response.ok) {
+          const blob = await response.blob();
 
-        totalEmotesCount += Object.keys(result.emotes).length;
+          if (blob.size === 0) {
+            throw new Error("Empty blob received");
+          }
 
-        // Update progress
-        try {
-          await chrome.storage.local.set({
-            downloadProgress: {
-              current: i + 1,
-              total: channelIds.length,
-              currentEmote: `Processed ${result.username}`
+          const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          });
+
+          return {
+            key,
+            success: true,
+            data: {
+              url: url,
+              data: base64,
+              type: blob.type,
+              size: blob.size
             }
-          });
-
-          chrome.runtime.sendMessage({
-            type: 'downloadProgress',
-            current: i + 1,
-            total: channelIds.length,
-            currentEmote: `Processed ${result.username}`
-          });
-        } catch (error) {
-          console.log("[DEBUG] Could not send progress update");
+          };
+        } else {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-
       } catch (error) {
-        console.error(`[DEBUG] Error fetching emotes for ${channelId}:`, error);
-        // Continue with other channels
+        console.error(`[DEBUG] Failed to download ${key}:`, error.message);
+        return {
+          key,
+          success: false,
+          data: { url: url }
+        };
       }
     }
 
-    // Store the data (URLs only, very fast)
+    // Process downloads in batches
+    async function processBatch(batch) {
+      const results = await Promise.all(
+        batch.map(async ({ key, url }) => {
+          try {
+            return await downloadSingleEmote(key, url);
+          } catch (error) {
+            console.warn(`[DEBUG] Failed to download ${key}:`, error.message);
+            return {
+              key,
+              success: false,
+              data: { url: url }
+            };
+          }
+        })
+      );
+      return results;
+    }
+
+    // Download with concurrency
+    const BATCH_SIZE = 20; // Download 20 emotes concurrently
+
+    for (const { channelId, username, emotes } of channelEmotes) {
+      console.log(`Processing channel: ${username} (${Object.keys(emotes).length} emotes)`);
+
+      const emotesWithData = {};
+      let downloadedCount = 0;
+
+      // Create batches for concurrent processing
+      const emoteEntries = Object.entries(emotes);
+      const batches = [];
+
+      for (let i = 0; i < emoteEntries.length; i += BATCH_SIZE) {
+        batches.push(emoteEntries.slice(i, i + BATCH_SIZE).map(([key, url]) => ({ key, url })));
+      }
+
+      // Process batches
+      for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+        const batch = batches[batchIndex];
+        const results = await processBatch(batch);
+
+        // Process results
+        for (const result of results) {
+          if (result.success) {
+            emotesWithData[result.key] = result.data;
+            emoteImageData[result.key] = result.data;
+            downloadedCount++;
+          } else {
+            emotesWithData[result.key] = result.data;
+            emoteImageData[result.key] = result.data;
+          }
+
+          globalDownloadedCount++;
+
+          // Update progress
+          try {
+            await chrome.storage.local.set({
+              downloadProgress: {
+                current: globalDownloadedCount,
+                total: totalEmotesCount,
+                currentEmote: result.key
+              }
+            });
+
+            chrome.runtime.sendMessage({
+              type: 'downloadProgress',
+              current: globalDownloadedCount,
+              total: totalEmotesCount,
+              currentEmote: result.key
+            });
+          } catch (error) {
+            console.log("[DEBUG] Could not send progress update");
+          }
+        }
+
+        // Small delay between batches
+        if (batchIndex < batches.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+
+      console.log(`Downloaded ${downloadedCount}/${emoteEntries.length} images for ${username}`);
+
+      // Store channel info with emotes including image data
+      channels.push({
+        id: channelId,
+        username: username,
+        emotes: emotesWithData
+      });
+
+      // Also maintain a global mapping for backward compatibility
+      Object.entries(emotesWithData).forEach(([key, emoteData]) => {
+        globalEmoteMapping[key] = emoteData.url;
+      });
+    }
+
+    // Store all data
     await chrome.storage.local.set({
-      emoteMapping: globalEmoteMapping, // URLs only
-      channels: channels, // URLs only
-      emoteImageData: {} // Clear any old image data
+      emoteMapping: globalEmoteMapping, // For backward compatibility (URLs only)
+      channels: channels, // New structure with image data
+      emoteImageData: emoteImageData // Global image data mapping
     });
 
     // Mark download as complete
     await chrome.storage.local.set({
       downloadInProgress: false,
       downloadProgress: {
-        current: channelIds.length,
-        total: channelIds.length,
+        current: totalEmotesCount,
+        total: totalEmotesCount,
         currentEmote: null,
         completed: true
       }
@@ -142,17 +260,18 @@ async function downloadEmotes() {
     try {
       chrome.runtime.sendMessage({
         type: 'downloadProgress',
-        current: channelIds.length,
-        total: channelIds.length,
+        current: totalEmotesCount,
+        total: totalEmotesCount,
         currentEmote: null,
         completed: true
       });
     } catch (error) {
-      console.log("[DEBUG] Could not send final progress message");
+      console.log("[DEBUG] Could not send final progress message - download still completed");
     }
 
-    console.log(`Emote URL collection completed. Total emotes: ${totalEmotesCount}`);
-    return { success: true, totalEmotes: totalEmotesCount };
+    console.log("Emote mapping updated with image data. Total emotes:", Object.keys(emoteImageData).length);
+    console.log("[DEBUG] Download completed successfully");
+    return { success: true, totalEmotes: Object.keys(emoteImageData).length };
 
   } catch (error) {
     console.error("[DEBUG] Error in downloadEmotes:", error);
@@ -730,5 +849,64 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       });
 
     return true; // Indicates that the response is sent asynchronously
+  }
+});
+
+// Add storage change listener to automatically download emotes when channel IDs are saved
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.channelIds) {
+    const newChannelIds = changes.channelIds.newValue;
+    const oldChannelIds = changes.channelIds.oldValue;
+
+    // Check if channel IDs actually changed
+    if (JSON.stringify(newChannelIds) !== JSON.stringify(oldChannelIds)) {
+      console.log("[Mojify] Channel IDs changed:", {
+        old: oldChannelIds,
+        new: newChannelIds
+      });
+
+      // If channel IDs were cleared or set to empty
+      if (!newChannelIds || newChannelIds.length === 0) {
+        console.log("[Mojify] Channel IDs cleared, cleaning up storage");
+
+        // Clear all emote-related data
+        chrome.storage.local.remove([
+          'emoteMapping',
+          'channels',
+          'emoteImageData',
+          'downloadInProgress',
+          'downloadProgress'
+        ]).then(() => {
+          console.log("[Mojify] Storage cleaned up successfully");
+        }).catch((error) => {
+          console.error("[Mojify] Error cleaning up storage:", error);
+        });
+      }
+      // If new channel IDs were added
+      else if (newChannelIds.length > 0) {
+        console.log("[Mojify] New channel IDs detected, automatically starting download:", newChannelIds);
+
+        // Notify popup that automatic download is starting
+        try {
+          chrome.runtime.sendMessage({
+            type: 'automaticDownloadStarted',
+            channelIds: newChannelIds
+          });
+        } catch (error) {
+          console.log("[Mojify] Could not send automatic download notification (popup might be closed)");
+        }
+
+        // Start download automatically
+        downloadEmotes().then((result) => {
+          if (result.success) {
+            console.log("[Mojify] Automatic download completed successfully");
+          } else {
+            console.error("[Mojify] Automatic download failed:", result.error);
+          }
+        }).catch((error) => {
+          console.error("[Mojify] Automatic download error:", error);
+        });
+      }
+    }
   }
 });
