@@ -107,6 +107,8 @@ const emoteDB = {
   }
 };
 
+
+
 async function get7TVEmotes(channelId) {
   const url = `${TWITCH_API_BASE_URL}/${channelId}`;
   try {
@@ -168,11 +170,46 @@ let downloadState = {
   startTime: null
 };
 
+// Reset download state on service worker startup
+async function resetDownloadState() {
+  console.log('[Service Worker] Resetting download state on startup');
+
+  downloadState.isDownloading = false;
+  downloadState.current = 0;
+  downloadState.total = 0;
+  downloadState.startTime = null;
+
+  try {
+    await chrome.storage.local.set({
+      downloadInProgress: false,
+      downloadProgress: {
+        current: 0,
+        total: 0,
+        completed: false,
+        reset: true
+      }
+    });
+    console.log('[Service Worker] Download state reset successfully');
+  } catch (error) {
+    console.error('[Service Worker] Error resetting download state:', error);
+  }
+}
+
+// Initialize service worker
+(async function initServiceWorker() {
+  try {
+    await resetDownloadState();
+    console.log('[Service Worker] Initialization complete');
+  } catch (error) {
+    console.error('[Service Worker] Initialization error:', error);
+  }
+})();
+
 async function downloadEmotes() {
   // Check if already downloading
   if (downloadState.isDownloading) {
     console.log("[Download] Already downloading, skipping");
-    return { success: false, error: "Download already in progress" };
+    return { success: true, message: "Download already in progress", skipped: true };
   }
 
   try {
@@ -499,10 +536,14 @@ async function downloadEmotes() {
     console.error("[Download] Error:", error);
     downloadState.isDownloading = false;
 
-    await chrome.storage.local.set({
-      downloadInProgress: false,
-      downloadProgress: { error: error.message }
-    });
+    try {
+      await chrome.storage.local.set({
+        downloadInProgress: false,
+        downloadProgress: { error: error.message }
+      });
+    } catch (storageError) {
+      console.error("[Download] Error updating storage:", storageError);
+    }
 
     return { success: false, error: error.message };
   }
@@ -1209,13 +1250,18 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 
         // Notify popup of completion
         try {
-          chrome.runtime.sendMessage({
-            type: 'showToast',
-            message: result.success ?
-              `Emotes downloaded successfully (${result.totalEmotes} total)` :
-              `Download failed: ${result.error}`,
-            toastType: result.success ? 'success' : 'error'
-          });
+          if (result.skipped) {
+            // Don't show notification for skipped downloads
+            console.log('[Auto-Download] Download was already in progress, skipped notification');
+          } else {
+            chrome.runtime.sendMessage({
+              type: 'showToast',
+              message: result.success ?
+                `Emotes downloaded successfully (${result.totalEmotes} total)` :
+                `Download failed: ${result.error}`,
+              toastType: result.success ? 'success' : 'error'
+            });
+          }
         } catch (e) {
           // Popup closed, continue silently
         }
@@ -1257,16 +1303,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Handle downloading emotes
   if (request.type === 'downloadEmotes') {
     downloadEmotes()
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: error.message }));
+      .then(result => {
+        if (sendResponse) sendResponse(result);
+      })
+      .catch(error => {
+        if (sendResponse) sendResponse({ success: false, error: error.message });
+      });
     return true; // Keep message channel open for async response
   }
 
   // Handle emote insertion
   if (request.type === 'insertEmote') {
     insertEmoteIntoMessenger(sender.tab.id, request.emoteUrl, request.emoteTrigger)
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: error.message }));
+      .then(result => {
+        if (sendResponse) sendResponse(result);
+      })
+      .catch(error => {
+        if (sendResponse) sendResponse({ success: false, error: error.message });
+      });
     return true; // Keep message channel open for async response
   }
 });
