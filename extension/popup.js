@@ -225,6 +225,10 @@ document.addEventListener('DOMContentLoaded', () => {
   function loadEmotes() {
     chrome.storage.local.get(['emoteMapping', 'channels', 'emoteImageData'], (result) => {
       console.log('Loaded data:', result);
+      console.log('Image data keys:', result.emoteImageData ? Object.keys(result.emoteImageData).length : 0);
+
+      // Store image data globally for easy access
+      window.emoteImageData = result.emoteImageData || {};
 
       if (result.emoteMapping && Object.keys(result.emoteMapping).length > 0) {
         allEmotes = result.emoteMapping;
@@ -232,16 +236,50 @@ document.addEventListener('DOMContentLoaded', () => {
 
         console.log('All emotes count:', Object.keys(allEmotes).length);
         console.log('Channels count:', channels.length);
+        console.log('Image data count:', Object.keys(window.emoteImageData).length);
+
+        // Merge image data into channels for easier access
+        if (channels.length > 0) {
+          channels.forEach(channel => {
+            if (channel.emotes) {
+              Object.keys(channel.emotes).forEach(emoteKey => {
+                const imageData = window.emoteImageData[emoteKey];
+                if (imageData && imageData.data) {
+                  // Update channel emote with base64 data for immediate display
+                  channel.emotes[emoteKey] = {
+                    url: channel.emotes[emoteKey],
+                    imageData: imageData
+                  };
+                } else {
+                  // Keep as string URL if no image data
+                  channel.emotes[emoteKey] = {
+                    url: channel.emotes[emoteKey],
+                    imageData: null
+                  };
+                }
+              });
+            }
+          });
+        }
 
         // If we have emotes but no channels (for backward compatibility)
         if (channels.length === 0) {
           chrome.storage.local.get(['channelIds'], (result) => {
             if (result.channelIds && result.channelIds.length > 0) {
               // Create a single channel with all emotes
+              const processedEmotes = {};
+              Object.keys(allEmotes).forEach(emoteKey => {
+                const imageData = window.emoteImageData[emoteKey];
+                processedEmotes[emoteKey] = {
+                  url: allEmotes[emoteKey],
+                  imageData: imageData || null
+                };
+              });
+
               channels = [{
                 id: 'all',
                 username: 'All Emotes',
-                emotes: allEmotes
+                emotes: processedEmotes
               }];
               console.log('Created fallback channel with all emotes');
             }
@@ -253,7 +291,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
           // Log channel data
           channels.forEach(channel => {
-            console.log(`Channel ${channel.username} has ${Object.keys(channel.emotes || {}).length} emotes`);
+            const emoteCount = Object.keys(channel.emotes || {}).length;
+            const imageDataCount = Object.values(channel.emotes || {}).filter(e => e.imageData).length;
+            console.log(`Channel ${channel.username} has ${emoteCount} emotes, ${imageDataCount} with image data`);
           });
 
           updateEmoteCount();
@@ -345,12 +385,15 @@ document.addEventListener('DOMContentLoaded', () => {
       console.log(`Showing search results: ${emotesToShow.length} emotes (${startIndex}-${endIndex} of ${displayedEmotes.length})`);
 
       emotesToShow.forEach(key => {
-        const emoteUrl = allEmotes[key];
+        const emoteData = allEmotes[key];
+        const emoteUrl = typeof emoteData === 'string' ? emoteData : emoteData.url;
         const emoteName = key.replace(/:/g, '');
 
         const emoteItem = document.createElement('div');
         emoteItem.className = 'emote-item';
         emoteItem.setAttribute('data-emote-key', key);
+
+        // Set initial content
         emoteItem.innerHTML = `
           <div class="emote-img-container">
             <img src="${emoteUrl}" alt="${emoteName}" class="emote-img">
@@ -358,8 +401,58 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="emote-details">
             <div class="emote-name">${emoteName}</div>
             <div class="emote-trigger">${key}</div>
+            <div class="emote-test-info" style="font-size: 10px; color: #666; margin-top: 2px;">
+              URL: ${String(emoteUrl).substring(0, 30)}...<br>
+              Loading image data...
+            </div>
           </div>
         `;
+
+        // Get image data and update asynchronously
+        chrome.storage.local.get(['emoteImageData'], (result) => {
+          const imageData = result.emoteImageData?.[key];
+          const hasImageData = imageData?.data && imageData.data.startsWith('data:');
+          const testInfo = imageData ? `Data: ${hasImageData ? 'YES' : 'NO'}, Size: ${imageData.size || 'Unknown'}, Type: ${imageData.type || 'Unknown'}` : 'No data';
+
+          // Update test info
+          const testInfoElement = emoteItem.querySelector('.emote-test-info');
+          if (testInfoElement) {
+            testInfoElement.innerHTML = `
+              URL: ${String(emoteUrl).substring(0, 30)}...<br>
+              ${testInfo}
+            `;
+          }
+
+          // Update image source if we have base64 data
+          const img = emoteItem.querySelector('.emote-img');
+          if (img && hasImageData) {
+            img.src = imageData.data;
+          }
+
+          // Add error handling for images
+          if (img) {
+            img.addEventListener('error', () => {
+              console.error(`[Popup] Image load failed for ${key}, falling back to URL`);
+              if (img.src !== emoteUrl) {
+                img.src = emoteUrl;
+              } else {
+                console.error(`[Popup] Both base64 and URL failed for ${key}`);
+                img.style.backgroundColor = '#ff6b6b';
+                img.style.color = 'white';
+                img.style.fontSize = '10px';
+                img.alt = 'Failed to load';
+              }
+            });
+
+            img.addEventListener('load', () => {
+              console.log(`[Popup] Image loaded successfully for ${key}`, {
+                src: img.src.substring(0, 50) + '...',
+                naturalWidth: img.naturalWidth,
+                naturalHeight: img.naturalHeight
+              });
+            });
+          }
+        });
 
         // Add click event to insert emote
         emoteItem.addEventListener('click', () => {
@@ -418,21 +511,59 @@ document.addEventListener('DOMContentLoaded', () => {
         const channelEmoteKeys = Object.keys(channel.emotes);
         console.log(`Channel ${channel.username} emote keys:`, channelEmoteKeys);
 
-        Object.entries(channel.emotes).forEach(([key, url]) => {
+        Object.entries(channel.emotes).forEach(([key, emoteData]) => {
           const emoteName = key.replace(/:/g, '');
+          const url = typeof emoteData === 'string' ? emoteData : emoteData.url;
+          const imageData = typeof emoteData === 'object' ? emoteData.imageData : null;
 
           const emoteItem = document.createElement('div');
           emoteItem.className = 'emote-item';
           emoteItem.setAttribute('data-emote-key', key);
+
+          // Determine which image source to use
+          const hasImageData = imageData?.data && imageData.data.startsWith('data:');
+          const imageSrc = hasImageData ? imageData.data : url;
+          const testInfo = imageData ? `Data: ${hasImageData ? 'YES' : 'NO'}, Size: ${imageData.size || 'Unknown'}, Type: ${imageData.type || 'Unknown'}` : 'No data';
+
+          // Set content with proper image source
           emoteItem.innerHTML = `
             <div class="emote-img-container">
-              <img src="${url}" alt="${emoteName}" class="emote-img">
+              <img src="${imageSrc}" alt="${emoteName}" class="emote-img">
             </div>
             <div class="emote-details">
               <div class="emote-name">${emoteName}</div>
               <div class="emote-trigger">${key}</div>
+              <div class="emote-test-info" style="font-size: 10px; color: #666; margin-top: 2px;">
+                URL: ${String(url).substring(0, 30)}...<br>
+                ${testInfo}
+              </div>
             </div>
           `;
+
+          // Add error handling for images
+          const img = emoteItem.querySelector('.emote-img');
+          if (img) {
+            img.addEventListener('error', () => {
+              console.error(`[Popup] Image load failed for ${key}, falling back to URL`);
+              if (img.src !== url) {
+                img.src = url;
+              } else {
+                console.error(`[Popup] Both base64 and URL failed for ${key}`);
+                img.style.backgroundColor = '#ff6b6b';
+                img.style.color = 'white';
+                img.style.fontSize = '10px';
+                img.alt = 'Failed to load';
+              }
+            });
+
+            img.addEventListener('load', () => {
+              console.log(`[Popup] Image loaded successfully for ${key}`, {
+                src: img.src.substring(0, 50) + '...',
+                naturalWidth: img.naturalWidth,
+                naturalHeight: img.naturalHeight
+              });
+            });
+          }
 
           // Add click event to insert emote
           emoteItem.addEventListener('click', () => {
@@ -551,22 +682,42 @@ document.addEventListener('DOMContentLoaded', () => {
           // Listen for progress updates from the automatic download
           const progressListener = (message) => {
             if (message.type === 'downloadProgress') {
-              const { current, total, currentEmote, completed } = message;
-              const percentage = total > 0 ? (current / total) * 100 : 0;
+              const { current, total, currentEmote, completed, newEmote, channel, batch, percentage } = message;
+              const progressPercent = percentage || (total > 0 ? (current / total) * 100 : 0);
 
-              progressFill.style.width = `${percentage}%`;
+              progressFill.style.width = `${progressPercent}%`;
               progressCount.textContent = `${current}/${total}`;
-              progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
+
+              let progressMessage = 'Downloading emotes...';
+              if (currentEmote) {
+                progressMessage = `${currentEmote}`;
+                if (channel) progressMessage += ` (${channel})`;
+                if (batch) progressMessage += ` - Batch ${batch}`;
+              }
+              progressText.textContent = progressMessage;
+
+              // Real-time emote display - reload emotes when new one is downloaded
+              if (newEmote) {
+                console.log(`[Popup] New emote downloaded: ${newEmote}, reloading emotes`);
+                loadEmotes();
+              }
 
               if (completed) {
                 // Download completed
                 setTimeout(() => {
                   downloadProgress.classList.add('hidden');
                   chrome.runtime.onMessage.removeListener(progressListener);
-                  loadEmotes(); // Reload emotes
+                  loadEmotes(); // Final reload
                   showToast('Emotes downloaded successfully');
                 }, 1000);
               }
+            }
+
+            // Handle channel completion for better feedback
+            if (message.type === 'channelCompleted') {
+              const { username, emoteCount } = message;
+              console.log(`[Popup] Channel ${username} completed with ${emoteCount} emotes`);
+              loadEmotes(); // Refresh display after each channel
             }
           };
 
@@ -630,14 +781,28 @@ document.addEventListener('DOMContentLoaded', () => {
         progressCount.textContent = '0/0';
 
         // Listen for progress updates
+        // Listen for progress updates from the automatic download
         const progressListener = (message) => {
           if (message.type === 'downloadProgress') {
-            const { current, total, currentEmote, completed } = message;
-            const percentage = total > 0 ? (current / total) * 100 : 0;
+            const { current, total, currentEmote, completed, newEmote, channel, batch, percentage } = message;
+            const progressPercent = percentage || (total > 0 ? (current / total) * 100 : 0);
 
-            progressFill.style.width = `${percentage}%`;
+            progressFill.style.width = `${progressPercent}%`;
             progressCount.textContent = `${current}/${total}`;
-            progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
+
+            let progressMessage = 'Downloading emotes...';
+            if (currentEmote) {
+              progressMessage = `${currentEmote}`;
+              if (channel) progressMessage += ` (${channel})`;
+              if (batch) progressMessage += ` - Batch ${batch}`;
+            }
+            progressText.textContent = progressMessage;
+
+            // Real-time emote display - reload emotes when new one is downloaded
+            if (newEmote) {
+              console.log(`[Popup] New emote downloaded: ${newEmote}, reloading emotes`);
+              loadEmotes();
+            }
 
             if (completed) {
               // Download completed
@@ -646,8 +811,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
                 downloadProgress.classList.add('hidden');
                 chrome.runtime.onMessage.removeListener(progressListener);
+                loadEmotes(); // Final reload
               }, 1000);
             }
+          }
+
+          // Handle channel completion for better feedback
+          if (message.type === 'channelCompleted') {
+            const { username, emoteCount } = message;
+            console.log(`[Popup] Channel ${username} completed with ${emoteCount} emotes`);
+            loadEmotes(); // Refresh display after each channel
           }
         };
 
@@ -819,6 +992,21 @@ document.addEventListener('DOMContentLoaded', () => {
             setDebugResult(`Drag and drop test failed: ${error}`, 'error');
           }
         });
+      });
+    });
+
+    // Test basic functionality
+    const testBasicBtn = document.getElementById('debug-test-basic');
+    testBasicBtn.addEventListener('click', () => {
+      setDebugResult('Testing basic functionality...', 'loading');
+
+      chrome.runtime.sendMessage({ type: 'testBasicFunctionality' }, (response) => {
+        if (response && response.success) {
+          setDebugResult('Basic functionality test passed: ' + response.message, 'success');
+        } else {
+          const error = response && response.error ? response.error : response.message || 'Test failed';
+          setDebugResult(`Basic functionality test failed: ${error}`, 'error');
+        }
       });
     });
 
@@ -1234,13 +1422,25 @@ document.addEventListener('DOMContentLoaded', () => {
           // Clear progress status
           chrome.storage.local.remove(['downloadProgress']);
         } else if (result.downloadProgress) {
-          // Update progress
-          const { current, total, currentEmote } = result.downloadProgress;
+          // Update progress and check for real-time updates
+          const { current, total, currentEmote, channel, batch } = result.downloadProgress;
           const percentage = total > 0 ? (current / total) * 100 : 0;
 
           progressFill.style.width = `${percentage}%`;
           progressCount.textContent = `${current}/${total}`;
-          progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
+
+          let progressMessage = 'Downloading emotes...';
+          if (currentEmote) {
+            progressMessage = `${currentEmote}`;
+            if (channel) progressMessage += ` (${channel})`;
+            if (batch) progressMessage += ` - Batch ${batch}`;
+          }
+          progressText.textContent = progressMessage;
+
+          // Refresh emotes periodically during download for real-time display
+          if (current > 0 && current % 5 === 0) {
+            loadEmotes();
+          }
         }
       });
     }, 1000);
@@ -1258,6 +1458,51 @@ document.addEventListener('DOMContentLoaded', () => {
         progressText.textContent = 'Starting automatic download...';
         progressCount.textContent = '0/0';
       }
+    }
+
+    // Handle real-time download progress updates
+    if (message.type === 'downloadProgress') {
+      const { current, total, currentEmote, newEmote, completed, channel, batch, percentage } = message;
+
+      // Update progress if UI is visible
+      if (!downloadProgress.classList.contains('hidden')) {
+        const progressPercent = percentage || (total > 0 ? (current / total) * 100 : 0);
+        progressFill.style.width = `${progressPercent}%`;
+        progressCount.textContent = `${current}/${total} (${progressPercent}%)`;
+
+        let progressMessage = 'Downloading emotes...';
+        if (currentEmote) {
+          progressMessage = `${currentEmote}`;
+          if (channel) progressMessage += ` (${channel})`;
+          if (batch) progressMessage += ` - Batch ${batch}`;
+        }
+        progressText.textContent = progressMessage;
+      }
+
+      // Real-time emote display
+      if (newEmote) {
+        console.log(`[Popup] Real-time update: New emote ${newEmote} downloaded`);
+        loadEmotes();
+      }
+
+      // Handle completion
+      if (completed) {
+        setTimeout(() => {
+          if (!downloadProgress.classList.contains('hidden')) {
+            downloadProgress.classList.add('hidden');
+          }
+          loadEmotes();
+          showToast('Download completed successfully');
+        }, 1000);
+      }
+    }
+
+    // Handle channel completion
+    if (message.type === 'channelCompleted') {
+      const { username, emoteCount } = message;
+      console.log(`[Popup] Channel ${username} completed with ${emoteCount} emotes`);
+      showToast(`${username} emotes ready (${emoteCount} emotes)`);
+      loadEmotes();
     }
   });
 
