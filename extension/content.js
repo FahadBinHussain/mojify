@@ -1,3 +1,9 @@
+// ===== CONTENT SCRIPT INJECTION TEST =====
+console.error("🚀 MOJIFY CONTENT SCRIPT LOADED!", window.location.href);
+console.error("🚀 MOJIFY TIMESTAMP:", new Date().toISOString());
+console.error("🚀 MOJIFY User Agent:", navigator.userAgent.substring(0, 50));
+alert("Mojify content script loaded on " + window.location.href);
+
 let emoteMapping = {};
 
 // IndexedDB wrapper for emote storage (same as background.js)
@@ -41,30 +47,47 @@ const emoteDB = {
   }
 };
 
-// Debug mode
+// Debug mode - force to true
 const DEBUG = true;
 
 // Helper function to log debug messages
 function debugLog(...args) {
-  if (DEBUG) {
-    console.log("[Mojify Debug]", ...args);
-  }
+  console.log("[Mojify Debug]", ...args);
 }
 
-// Load emote mapping from storage
-chrome.storage.local.get(['emoteMapping'], (result) => {
-  if (result.emoteMapping) {
-    emoteMapping = result.emoteMapping;
-    debugLog("Loaded emote mapping with", Object.keys(emoteMapping).length, "emotes");
-  } else {
-    debugLog("No emote mapping found in storage");
-  }
-});
+// Load emote mapping from storage - retry mechanism
+function loadEmoteMapping() {
+  chrome.storage.local.get(['emoteMapping'], (result) => {
+    if (result.emoteMapping) {
+      emoteMapping = result.emoteMapping;
+      debugLog("Loaded emote mapping with", Object.keys(emoteMapping).length, "emotes");
+      debugLog("Sample emotes:", Object.keys(emoteMapping).slice(0, 5));
+      debugLog("Full emote mapping:", emoteMapping);
+    } else {
+      debugLog("No emote mapping found in storage");
+      // Retry after a short delay in case background script is still initializing
+      setTimeout(() => {
+        chrome.storage.local.get(['emoteMapping'], (retryResult) => {
+          if (retryResult.emoteMapping) {
+            emoteMapping = retryResult.emoteMapping;
+            debugLog("Retry loaded emote mapping with", Object.keys(emoteMapping).length, "emotes");
+          } else {
+            debugLog("No emotes available after retry - user may need to configure channels");
+          }
+        });
+      }, 2000);
+    }
+  });
+}
+
+// Initial load
+loadEmoteMapping();
 
 chrome.storage.onChanged.addListener((changes, namespace) => {
   if (changes.emoteMapping) {
     emoteMapping = changes.emoteMapping.newValue;
     debugLog("Updated emote mapping with", Object.keys(emoteMapping).length, "emotes");
+    debugLog("Updated sample emotes:", Object.keys(emoteMapping).slice(0, 5));
   }
 });
 
@@ -225,43 +248,193 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // Auto-replace emote codes as user types
-let typedText = '';
-const MAX_BUFFER = 30;
+let typingBuffer = '';
+let lastInputTime = 0;
+let isProcessingEmote = false;
 
-document.addEventListener('input', (event) => {
+// Function to handle input events
+async function handleInputEvent(event) {
   const { target } = event;
-  if (target.isContentEditable || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') {
-    if (event.data) {
-      typedText += event.data;
-    } else if (event.inputType === 'deleteContentBackward') {
-      typedText = typedText.slice(0, -1);
-    }
-    if (typedText.length > MAX_BUFFER) {
-      typedText = typedText.slice(-MAX_BUFFER);
-    }
 
-    const words = typedText.split(/\s+/);
-    const lastWord = words[words.length - 1];
+  // ALWAYS log input events to verify listener is working
+  console.error("🎯 MOJIFY INPUT EVENT:", event.type, target.tagName, target.className, "data:", event.data);
+  console.error("🎯 MOJIFY PROCESSING:", isProcessingEmote ? "BLOCKED" : "ACTIVE");
 
-    if (emoteMapping && emoteMapping[lastWord]) {
-      const emoteUrl = emoteMapping[lastWord];
-      const emoteImg = `<img src="${emoteUrl}" alt="${lastWord}" style="height: 1.5em; vertical-align: middle;" />`;
+  if (isProcessingEmote) return;
 
-      if (target.isContentEditable) {
-        const range = window.getSelection().getRangeAt(0);
-        range.setStart(range.startContainer, range.startOffset - lastWord.length);
-        range.deleteContents();
-        range.insertNode(range.createContextualFragment(emoteImg));
-        range.collapse(false);
-      } else {
-        const value = target.value;
-        const selectionStart = target.selectionStart;
-        const newValue = value.slice(0, selectionStart - lastWord.length) + emoteImg + value.slice(selectionStart);
-        target.value = newValue;
+  // Only process in text fields
+  if (!(target.isContentEditable || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
+    return;
+  }
+
+  // Get current text content
+  const currentText = target.isContentEditable ?
+    (target.textContent || target.innerText || '') :
+    target.value;
+
+  debugLog("Input event - current text:", currentText);
+  debugLog("Input event - event data:", event.data);
+  debugLog("Input event - input type:", event.inputType);
+
+  // Look for emote pattern in the last 50 characters
+  const recentText = currentText.slice(-50);
+  debugLog("Recent text for emote detection:", recentText);
+
+  const emotePattern = /:([a-zA-Z0-9_!]+):/g;
+  let match;
+
+  console.error("🔍 MOJIFY PATTERN SEARCH in:", recentText);
+  console.error("🔍 MOJIFY REGEX:", emotePattern);
+
+  // Find the last complete emote command
+  while ((match = emotePattern.exec(recentText)) !== null) {
+    const emoteName = match[1];
+    const fullCommand = match[0];
+
+    console.error("🎯 MOJIFY FOUND MATCH:", fullCommand, "emoteName:", emoteName);
+    console.error("🎯 MOJIFY Available keys sample:", emoteMapping ? Object.keys(emoteMapping).slice(0, 5) : "No mapping");
+
+    // Check both with and without colons since emotes might be stored either way
+    const hasEmoteWithoutColons = emoteMapping && emoteMapping[emoteName];
+    const hasEmoteWithColons = emoteMapping && emoteMapping[fullCommand];
+
+    console.error("🎯 MOJIFY Check '" + emoteName + "':", hasEmoteWithoutColons ? "YES" : "NO");
+    console.error("🎯 MOJIFY Check '" + fullCommand + "':", hasEmoteWithColons ? "YES" : "NO");
+
+    // Check if this emote exists in our mapping (try both formats)
+    if (hasEmoteWithoutColons || hasEmoteWithColons) {
+      // Determine which emote key to use for insertion
+      const emoteKeyForInsertion = hasEmoteWithoutColons ? emoteName : fullCommand;
+
+      console.error("✅ MOJIFY MATCH FOUND! Command:", fullCommand, "-> using key:", emoteKeyForInsertion);
+      console.error("✅ MOJIFY STARTING REPLACEMENT PROCESS...");
+
+      isProcessingEmote = true;
+
+      try {
+        // For contenteditable (like messenger), remove the text and insert emote
+        if (target.isContentEditable) {
+          const selection = window.getSelection();
+          const range = selection.getRangeAt(0);
+
+          // Find the emote command text to remove
+          const textNode = range.startContainer;
+          const offset = range.startOffset;
+
+          // Look backwards from cursor to find the emote command
+          let searchText = '';
+          let node = textNode;
+          let searchOffset = offset;
+
+          while (node && searchText.length < 50) {
+            if (node.nodeType === Node.TEXT_NODE) {
+              const nodeText = node.textContent;
+              const startPos = node === textNode ? Math.max(0, searchOffset - 20) : 0;
+              const endPos = node === textNode ? searchOffset : nodeText.length;
+              searchText = nodeText.slice(startPos, endPos) + searchText;
+
+              if (searchText.includes(fullCommand)) {
+                const commandStart = searchText.lastIndexOf(fullCommand);
+                const actualStart = startPos + commandStart;
+
+                // Create range to select the emote command
+                const deleteRange = document.createRange();
+                deleteRange.setStart(node, actualStart);
+                deleteRange.setEnd(node, actualStart + fullCommand.length);
+                deleteRange.deleteContents();
+
+                // Insert the emote using existing function with the correct key
+                await insertEmote(emoteKeyForInsertion);
+                break;
+              }
+            }
+
+            // Move to previous node
+            if (node.previousSibling) {
+              node = node.previousSibling;
+              searchOffset = node.textContent ? node.textContent.length : 0;
+            } else {
+              node = node.parentNode;
+              searchOffset = 0;
+            }
+          }
+        } else {
+          // For regular input/textarea fields
+          const commandIndex = currentText.lastIndexOf(fullCommand);
+          if (commandIndex !== -1) {
+            const newValue = currentText.substring(0, commandIndex) +
+                            `[${emoteKeyForInsertion}]` +
+                            currentText.substring(commandIndex + fullCommand.length);
+            target.value = newValue;
+            target.selectionStart = target.selectionEnd = commandIndex + emoteKeyForInsertion.length + 2;
+          }
+        }
+
+      } catch (error) {
+        debugLog("Error processing emote:", error);
+      } finally {
+        isProcessingEmote = false;
       }
-      typedText = '';
+
+      // Stop processing after first match
+      break;
     }
   }
-});
+}
 
+// Add multiple event listeners to catch different input types
+document.addEventListener('input', handleInputEvent);
+document.addEventListener('keyup', handleInputEvent);
+document.addEventListener('textInput', handleInputEvent);
+document.addEventListener('compositionend', handleInputEvent);
+
+// Also listen on document body with event delegation
+document.body.addEventListener('input', handleInputEvent, true);
+document.body.addEventListener('keyup', handleInputEvent, true);
+
+console.error("✅ MOJIFY CONTENT SCRIPT FULLY LOADED");
+console.error("✅ MOJIFY MULTIPLE INPUT LISTENERS ATTACHED");
 debugLog("Mojify content script loaded");
+
+// Add startup check and ensure emotes are loaded
+setTimeout(() => {
+  debugLog("=== STARTUP CHECK ===");
+  debugLog("Current URL:", window.location.href);
+  debugLog("EmoteMapping exists:", !!emoteMapping);
+  debugLog("EmoteMapping keys count:", emoteMapping ? Object.keys(emoteMapping).length : 0);
+  debugLog("First 5 emote keys:", emoteMapping ? Object.keys(emoteMapping).slice(0, 5) : []);
+
+  // Test if we can detect messenger input
+  const messengerInput = findMessengerInputField();
+  debugLog("Messenger input found:", !!messengerInput);
+  if (messengerInput) {
+    debugLog("Messenger input type:", messengerInput.tagName, messengerInput.className);
+  }
+
+  // If no emotes loaded, try again
+  if (!emoteMapping || Object.keys(emoteMapping).length === 0) {
+    debugLog("No emotes loaded, attempting reload...");
+    loadEmoteMapping();
+  }
+
+  // Add test for specific emotes that user might try
+  if (emoteMapping && (emoteMapping['AlienPls'] || emoteMapping[':AlienPls:'])) {
+    debugLog("✓ AlienPls emote found in mapping");
+  } else if (emoteMapping && (emoteMapping['!join'] || emoteMapping[':!join:'])) {
+    debugLog("✓ !join emote found in mapping");
+  } else {
+    debugLog("✗ Test emotes NOT found - available emotes:", Object.keys(emoteMapping || {}).slice(0, 10));
+  }
+}, 1000);
+
+// Additional check after longer delay
+setTimeout(() => {
+  debugLog("=== EXTENDED CHECK ===");
+  debugLog("Final emote count:", emoteMapping ? Object.keys(emoteMapping).length : 0);
+  if (!emoteMapping || Object.keys(emoteMapping).length === 0) {
+    debugLog("⚠️ Still no emotes loaded. User may need to:");
+    debugLog("1. Open extension popup");
+    debugLog("2. Add channel IDs in Settings");
+    debugLog("3. Click 'Refresh Emotes'");
+  }
+}, 5000);
