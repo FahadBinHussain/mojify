@@ -1735,6 +1735,215 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+// Initialize emote mapping on startup
+async function initializeEmoteMapping() {
+  console.log("[Mojify] Initializing emote mapping on startup...");
+
+  try {
+    // Get stored emote mapping
+    const result = await chrome.storage.local.get(['emoteMapping', 'channels']);
+
+    if (result.emoteMapping && Object.keys(result.emoteMapping).length > 0) {
+      console.log("[Mojify] Found existing emote mapping with", Object.keys(result.emoteMapping).length, "emotes");
+      console.log("[Mojify] Sample emotes:", Object.keys(result.emoteMapping).slice(0, 5));
+    } else {
+      console.log("[Mojify] No emote mapping found - user needs to add channels");
+    }
+
+    if (result.channels && result.channels.length > 0) {
+      console.log("[Mojify] Found", result.channels.length, "configured channels");
+    } else {
+      console.log("[Mojify] No channels configured");
+    }
+  } catch (error) {
+    console.error("[Mojify] Error initializing emote mapping:", error);
+  }
+}
+
+// Extension startup listeners
+chrome.runtime.onStartup.addListener(() => {
+  console.log("[Mojify] Extension startup detected");
+  initializeEmoteMapping();
+});
+
+chrome.runtime.onInstalled.addListener((details) => {
+  console.log("[Mojify] Extension installed/updated:", details.reason);
+  initializeEmoteMapping();
+});
+
+// Text detection and auto-replace functionality
+async function detectAndReplaceEmotes(tabId) {
+  try {
+    // Get current emote mapping
+    const result = await chrome.storage.local.get(['emoteMapping']);
+    if (!result.emoteMapping || Object.keys(result.emoteMapping).length === 0) {
+      console.log("[Mojify] No emotes available for auto-replace");
+      return;
+    }
+
+    const emoteMapping = result.emoteMapping;
+    console.log("[Mojify] Auto-replace checking with", Object.keys(emoteMapping).length, "emotes");
+
+    // Inject detection script into the current tab
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      function: () => {
+        // Get focused element text content
+        const activeElement = document.activeElement;
+        if (!activeElement) return null;
+
+        let textContent = '';
+        if (activeElement.isContentEditable) {
+          textContent = activeElement.textContent || activeElement.innerText || '';
+        } else if (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT') {
+          textContent = activeElement.value || '';
+        } else {
+          return null;
+        }
+
+        // Look for emote pattern in the last 50 characters
+        const recentText = textContent.slice(-50);
+        const emotePattern = /:([a-zA-Z0-9_!]+):/g;
+        const matches = [...recentText.matchAll(emotePattern)];
+
+        if (matches.length > 0) {
+          const lastMatch = matches[matches.length - 1];
+          const emoteName = lastMatch[1];
+          const fullCommand = lastMatch[0];
+
+          return {
+            emoteName: emoteName,
+            fullCommand: fullCommand,
+            textContent: textContent,
+            elementType: activeElement.tagName,
+            isContentEditable: activeElement.isContentEditable
+          };
+        }
+
+        return null;
+      }
+    });
+
+    if (results && results[0] && results[0].result) {
+      const detection = results[0].result;
+      console.log("[Mojify] Detected emote command:", detection.fullCommand);
+
+      // Check if emote exists (try both with and without colons)
+      const hasEmoteWithoutColons = emoteMapping[detection.emoteName];
+      const hasEmoteWithColons = emoteMapping[detection.fullCommand];
+
+      if (hasEmoteWithoutColons || hasEmoteWithColons) {
+        const emoteKey = hasEmoteWithoutColons ? detection.emoteName : detection.fullCommand;
+        console.log("[Mojify] Found matching emote, attempting to replace:", emoteKey);
+
+        // Clear the emote command text and insert emote
+        await chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          function: (fullCommand) => {
+            const activeElement = document.activeElement;
+            if (!activeElement) return false;
+
+            if (activeElement.isContentEditable) {
+              const textContent = activeElement.textContent || activeElement.innerText || '';
+              const commandIndex = textContent.lastIndexOf(fullCommand);
+
+              if (commandIndex !== -1) {
+                // Create selection to remove the emote command
+                const selection = window.getSelection();
+                const range = document.createRange();
+
+                // Find the text node containing the command
+                const walker = document.createTreeWalker(
+                  activeElement,
+                  NodeFilter.SHOW_TEXT,
+                  null,
+                  false
+                );
+
+                let textNode;
+                let currentPos = 0;
+
+                while (textNode = walker.nextNode()) {
+                  const nodeLength = textNode.textContent.length;
+                  if (currentPos + nodeLength > commandIndex) {
+                    const startOffset = commandIndex - currentPos;
+                    const endOffset = Math.min(startOffset + fullCommand.length, nodeLength);
+
+                    range.setStart(textNode, startOffset);
+                    range.setEnd(textNode, endOffset);
+                    range.deleteContents();
+
+                    // Position cursor at deletion point
+                    range.collapse(true);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                    return true;
+                  }
+                  currentPos += nodeLength;
+                }
+              }
+            } else if (activeElement.tagName === 'TEXTAREA' || activeElement.tagName === 'INPUT') {
+              const value = activeElement.value;
+              const commandIndex = value.lastIndexOf(fullCommand);
+              if (commandIndex !== -1) {
+                const newValue = value.substring(0, commandIndex) + value.substring(commandIndex + fullCommand.length);
+                activeElement.value = newValue;
+                activeElement.selectionStart = activeElement.selectionEnd = commandIndex;
+                return true;
+              }
+            }
+            return false;
+          },
+          args: [detection.fullCommand]
+        });
+
+        // Insert the emote using existing function
+        const emoteUrl = emoteMapping[emoteKey];
+        await insertEmoteIntoMessenger(tabId, emoteUrl, emoteKey);
+      }
+    }
+  } catch (error) {
+    console.error("[Mojify] Error in auto-replace:", error);
+  }
+}
+
+// Set up input monitoring for active tabs
+let monitoringTabs = new Set();
+
+async function startMonitoringTab(tabId) {
+  if (monitoringTabs.has(tabId)) return;
+
+  try {
+    // Inject input listener
+    await chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      function: () => {
+        if (window.mojifyInputListener) return; // Already injected
+
+        window.mojifyInputListener = async (event) => {
+          // Only trigger on colon character to complete emote commands
+          if (event.data === ':') {
+            setTimeout(() => {
+              chrome.runtime.sendMessage({
+                type: 'checkForEmotes',
+                tabId: chrome.runtime.id
+              });
+            }, 50); // Small delay to ensure text is updated
+          }
+        };
+
+        document.addEventListener('input', window.mojifyInputListener);
+        console.log("[Mojify] Input monitoring started on tab");
+      }
+    });
+
+    monitoringTabs.add(tabId);
+    console.log("[Mojify] Started monitoring tab:", tabId);
+  } catch (error) {
+    console.error("[Mojify] Error setting up tab monitoring:", error);
+  }
+}
+
 // Message handler
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   // Handle downloading emotes
@@ -1752,4 +1961,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true; // Keep message channel open for async response
   }
+
+  // Handle emote detection trigger
+  if (request.type === 'checkForEmotes') {
+    detectAndReplaceEmotes(sender.tab.id)
+      .then(() => sendResponse({ success: true }))
+      .catch(error => {
+        console.error("[Mojify] Error in checkForEmotes:", error);
+        sendResponse({ success: false, error: error.message });
+      });
+    return true; // Keep message channel open for async response
+  }
 });
+
+// Auto-start monitoring when tabs become active
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  try {
+    const tab = await chrome.tabs.get(activeInfo.tabId);
+    if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+      await startMonitoringTab(activeInfo.tabId);
+    }
+  } catch (error) {
+    console.error("[Mojify] Error setting up active tab monitoring:", error);
+  }
+});
+
+// Monitor tab updates
+chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+    monitoringTabs.delete(tabId); // Reset monitoring for this tab
+    await startMonitoringTab(tabId);
+  }
+});
+
+// Initialize on script load as well (for service worker reactivation)
+initializeEmoteMapping();
