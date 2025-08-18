@@ -371,8 +371,6 @@ async function downloadEmotes() {
     let totalFailedDownloads = 0;
     let consecutiveTimeouts = 0;
     let throttlingDetected = false;
-    let circuitBreakerOpen = false;
-    let circuitBreakerTimeout = null;
 
     // Connection pool management
     const activeConnections = new Set();
@@ -526,19 +524,8 @@ async function downloadEmotes() {
       } catch (error) {
         const responseTime = Date.now() - startTime;
         totalFailedDownloads++;
-
-        // Classify error type for better handling
-        let errorType = 'unknown';
-        if (error.name === 'AbortError') {
-          errorType = 'timeout';
-        } else if (error.message.includes('Failed to fetch')) {
-          errorType = 'network';
-        } else if (error.message.includes('HTTP')) {
-          errorType = 'http';
-        }
-
-        console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms, type: ${errorType})`);
-        return { success: false, key, url, channel, error: error.message, responseTime, errorType };
+console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
+        return { success: false, key, url, channel, error: error.message, responseTime };
       }
     };
 
@@ -556,48 +543,26 @@ async function downloadEmotes() {
 
       const batchStartTime = Date.now();
 
-      // Circuit breaker: pause downloads if severe throttling detected
-      if (circuitBreakerOpen) {
-        console.log(`[Download] Circuit breaker OPEN - pausing for recovery`);
-        await new Promise(resolve => setTimeout(resolve, 10000)); // 10 second pause
-        circuitBreakerOpen = false;
-        console.log(`[Download] Circuit breaker CLOSED - resuming downloads`);
-      }
+      // Limit concurrent connections for better stability
+      const connectionLimitedBatch = [];
+      for (const emoteData of batch) {
+        if (activeConnections.size < MAX_CONCURRENT_CONNECTIONS) {
+          const connectionId = `${emoteData.key}_${Date.now()}`;
+          activeConnections.add(connectionId);
 
-      // Micro-batching for better reliability with throttling
-      const MICRO_BATCH_SIZE = throttlingDetected ? 3 : Math.min(8, batch.length);
-      const batchResults = [];
+          const downloadPromise = downloadSingleEmote(emoteData, currentBatch, totalBatches)
+            .finally(() => activeConnections.delete(connectionId));
 
-      for (let mb = 0; mb < batch.length; mb += MICRO_BATCH_SIZE) {
-        const microBatch = batch.slice(mb, mb + MICRO_BATCH_SIZE);
-        console.log(`[Download] Processing micro-batch ${Math.floor(mb/MICRO_BATCH_SIZE) + 1}/${Math.ceil(batch.length/MICRO_BATCH_SIZE)} (${microBatch.length} emotes)`);
-
-        const connectionLimitedBatch = [];
-        for (const emoteData of microBatch) {
-          if (activeConnections.size < MAX_CONCURRENT_CONNECTIONS) {
-            const connectionId = `${emoteData.key}_${Date.now()}`;
-            activeConnections.add(connectionId);
-
-            const downloadPromise = downloadSingleEmote(emoteData, currentBatch, totalBatches)
-              .finally(() => activeConnections.delete(connectionId));
-
-            connectionLimitedBatch.push(downloadPromise);
-          } else {
-            // Queue for next micro-batch if too many connections
-            await new Promise(resolve => setTimeout(resolve, 100));
-            connectionLimitedBatch.push(downloadSingleEmote(emoteData, currentBatch, totalBatches));
-          }
-        }
-
-        // Download micro-batch concurrently
-        const microResults = await Promise.allSettled(connectionLimitedBatch);
-        batchResults.push(...microResults);
-
-        // Small delay between micro-batches if throttling detected
-        if (throttlingDetected && mb + MICRO_BATCH_SIZE < batch.length) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+          connectionLimitedBatch.push(downloadPromise);
+        } else {
+          // Queue for next micro-batch if too many connections
+          await new Promise(resolve => setTimeout(resolve, 50));
+          connectionLimitedBatch.push(downloadSingleEmote(emoteData, currentBatch, totalBatches));
         }
       }
+
+      // Download batch concurrently with connection limiting
+      const batchResults = await Promise.allSettled(connectionLimitedBatch);
 
       // Analyze batch performance
       let batchFailures = 0;
@@ -615,9 +580,9 @@ async function downloadEmotes() {
             failedQueue.push(emoteResult);
             batchFailures++;
 
-            // Detect throttling pattern: timeouts/network errors after successful downloads
-            if (emoteResult.errorType === 'timeout' ||
-                (emoteResult.errorType === 'network' && emoteResult.responseTime > 25000)) {
+            // Detect throttling pattern: timeouts after successful downloads
+            if (emoteResult.error && emoteResult.error.includes('Failed to fetch') &&
+                emoteResult.responseTime > 30000) {
               timeoutCount++;
             }
           } else {
@@ -677,27 +642,13 @@ async function downloadEmotes() {
       }
 
       // Detect server throttling pattern: successful downloads followed by timeouts
-      const throttlingPattern = successfulInBatch > 0 && timeoutCount > 0 &&
-                               (timeoutCount >= successfulInBatch || timeoutCount > 3);
-
-      if (throttlingPattern) {
+      if (successfulInBatch > 0 && timeoutCount > 0 &&timeoutCount >= successfulInBatch){
         throttlingDetected = true;
         consecutiveTimeouts += timeoutCount;
         console.warn(`[Download] Throttling detected! ${successfulInBatch} succeeded, then ${timeoutCount} timeouts`);
-
-        // Circuit breaker: open if severe throttling (more than 12 consecutive timeouts)
-        if (consecutiveTimeouts > 12) {
-          circuitBreakerOpen = true;
-          console.error(`[Download] CIRCUIT BREAKER OPEN - severe throttling detected (${consecutiveTimeouts} timeouts)`);
-        }
-      } else if (timeoutCount === 0 && batchFailureRate < 0.2) {
-        consecutiveTimeouts = Math.max(0, consecutiveTimeouts - 3); // Faster recovery on good batches
-        if (consecutiveTimeouts === 0) {
-          throttlingDetected = false;
-          console.log(`[Download] Throttling recovered - normal operation resumed`);
-        }
-      } else if (timeoutCount > 0) {
-        consecutiveTimeouts += Math.floor(timeoutCount / 2); // Partial increase for mixed results
+      } else if (timeoutCount === 0) {
+        consecutiveTimeouts = 0;
+        throttlingDetected = false;
       }
 
       // Calculate and store batch performance metrics
@@ -718,15 +669,9 @@ async function downloadEmotes() {
       // Aggressive throttling response
       if (throttlingDetected || consecutiveTimeouts > 5) {
         BATCH_SIZE = MIN_BATCH_SIZE;
-        BATCH_DELAY = Math.max(BATCH_DELAY * 2, 1500);
+        BATCH_DELAY = Math.max(BATCH_DELAY * 2, 1000);
         console.log(`[Download] AGGRESSIVE: Throttling detected, reducing to ${BATCH_SIZE} batch size and ${BATCH_DELAY}ms delay`);
         consecutiveHighFailureBatches = 0; // Reset other counter
-      }
-      // Circuit breaker response
-      else if (circuitBreakerOpen) {
-        BATCH_SIZE = 1; // Single emote batches during recovery
-        BATCH_DELAY = 5000; // Very long delays
-        console.log(`[Download] CIRCUIT BREAKER: Using single emote batches with 5s delays`);
       }
       // Adaptive optimization based on performance
       else if (batchFailureRate > 0.3) { // High failure rate
@@ -761,11 +706,6 @@ async function downloadEmotes() {
         if (throttlingDetected) {
           progressiveDelay = Math.max(progressiveDelay * 3, 2000);
           console.log(`[Download] Throttling delay: ${progressiveDelay}ms`);
-        }
-        // Extreme delays during circuit breaker
-        if (circuitBreakerOpen) {
-          progressiveDelay = Math.max(progressiveDelay * 5, 8000);
-          console.log(`[Download] Circuit breaker delay: ${progressiveDelay}ms`);
         }
 
         await new Promise(resolve => setTimeout(resolve, Math.min(progressiveDelay, 5000)));
@@ -810,7 +750,7 @@ async function downloadEmotes() {
     if (failedQueue.length > 0) {
       console.log(`[Download] Retrying ${failedQueue.length} failed emotes with smaller batches...`);
 
-      const RETRY_BATCH_SIZE = throttlingDetected ? 2 : 3; // Even smaller batches if throttling detected
+      const RETRY_BATCH_SIZE = 5; // Smaller batches for retries
       const retryDownload = async (emoteData, retryAttempt = 1) => {
         const { key, url, channel } = emoteData;
 
@@ -870,14 +810,8 @@ async function downloadEmotes() {
 
         // Exponential backoff delay between retry batches
         if (i + retryBatchSize < failedQueue.length) {
-          let exponentialDelay = 1500 + (retryBatchNum * 600) + Math.min(retryBatchNum * retryBatchNum * 300, 3000);
-
-          // Much longer delays if throttling was detected
-          if (throttlingDetected) {
-            exponentialDelay = Math.max(exponentialDelay * 2, 3000);
-          }
-
-          await new Promise(resolve => setTimeout(resolve, exponentialDelay));
+          const exponentialDelay = 800 + (retryBatchNum * 400) + Math.min(retryBatchNum * retryBatchNum * 200, 2000);
+await new Promise(resolve => setTimeout(resolve, exponentialDelay));
         }
       }
 
