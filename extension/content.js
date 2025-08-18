@@ -8,41 +8,32 @@ let emoteMapping = {};
 
 // IndexedDB wrapper for emote storage (same as background.js)
 const emoteDB = {
-  db: null,
-  dbName: 'MojifyEmoteDB',
-  version: 1,
-
-  async init() {
+  async getEmote(key) {
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, this.version);
-
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve();
-      };
-
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        if (!db.objectStoreNames.contains('emotes')) {
-          const emotesStore = db.createObjectStore('emotes', { keyPath: 'key' });
-          emotesStore.createIndex('channel', 'channel', { unique: false });
-          emotesStore.createIndex('url', 'url', { unique: false });
+      chrome.runtime.sendMessage({
+        action: 'getEmote',
+        key: key
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+        } else {
+          resolve(response);
         }
-      };
+      });
     });
   },
 
-  async getEmote(key) {
-    if (!this.db) await this.init();
-
+  async getAllEmotes() {
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emotes'], 'readonly');
-      const store = transaction.objectStore('emotes');
-      const request = store.get(key);
-
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      chrome.runtime.sendMessage({
+        action: 'getAllEmotes'
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(chrome.runtime.lastError);
+        } else {
+          resolve(response || []);
+        }
+      });
     });
   }
 };
@@ -166,49 +157,98 @@ async function insertEmote(emoteTrigger) {
         const emoteUrl = emoteMapping[emoteTrigger];
         debugLog("Emote URL:", emoteUrl);
 
-        // Get cached image data from IndexedDB only
+        // Get cached image data from background script IndexedDB
+        let dataUrl;
         let blob;
         let mimeType;
 
-        // Initialize IndexedDB if needed
-        if (!emoteDB.db) {
-            await emoteDB.init();
-        }
-
         // Try both formats - with and without colons
-        let cachedEmote = await emoteDB.getEmote(emoteTrigger);
-        if (!cachedEmote && !emoteTrigger.startsWith(':')) {
-            cachedEmote = await emoteDB.getEmote(':' + emoteTrigger + ':');
+        debugLog("Looking for emote with key:", emoteTrigger);
+
+        debugLog("Step 1: Starting emote lookup process");
+
+        let cachedEmote;
+        try {
+            debugLog("Step 2: Attempting first lookup");
+            cachedEmote = await emoteDB.getEmote(emoteTrigger);
+            debugLog("Step 3: First lookup result:", cachedEmote ? "FOUND" : "NOT FOUND");
+
+            if (!cachedEmote && !emoteTrigger.startsWith(':')) {
+                const colonKey = ':' + emoteTrigger + ':';
+                debugLog("Step 4: Trying with colons:", colonKey);
+                cachedEmote = await emoteDB.getEmote(colonKey);
+                debugLog("Step 5: Second lookup result:", cachedEmote ? "FOUND" : "NOT FOUND");
+            }
+
+            debugLog("Step 6: Skipping getAllEmotes debug to avoid hanging");
+        } catch (error) {
+            debugLog("❌ Error in lookup phase:", error);
+            return { success: false, error: 'Failed to access emote storage: ' + error.message };
         }
 
-        if (cachedEmote && cachedEmote.blob) {
-            debugLog("✅ Using cached blob from IndexedDB - FAST!");
-            blob = cachedEmote.blob;
-            mimeType = cachedEmote.type || 'image/png';
+        debugLog("Step 9: Processing cached emote:", cachedEmote);
+
+        if (cachedEmote && cachedEmote.dataUrl) {
+            debugLog("Step 10: ✅ Using cached data URL from IndexedDB - FAST!");
+            try {
+                dataUrl = cachedEmote.dataUrl;
+                debugLog("Step 11: Data URL length:", dataUrl.length);
+
+                // Convert data URL to blob for file creation
+                debugLog("Step 12: Converting data URL to blob");
+                const base64Data = dataUrl.split(',')[1];
+                const mimeMatch = dataUrl.match(/data:([^;]+)/);
+                mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+                debugLog("Step 13: Detected MIME type:", mimeType);
+
+                const byteCharacters = atob(base64Data);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+                blob = new Blob([byteArray], { type: mimeType });
+
+                debugLog("Step 14: Converted data URL to blob:", blob.size, "bytes, type:", mimeType);
+            } catch (conversionError) {
+                debugLog("❌ Error converting data URL to blob:", conversionError);
+                return { success: false, error: 'Failed to convert emote data: ' + conversionError.message };
+            }
         } else {
-            debugLog("❌ Emote not found in IndexedDB cache");
+            debugLog("❌ Emote not found in IndexedDB cache or missing dataUrl");
+            if (cachedEmote) {
+                debugLog("Cached emote exists but missing dataUrl. Has keys:", Object.keys(cachedEmote));
+            }
             return { success: false, error: 'Emote not cached. Please download emotes first.' };
         }
 
         // Create File object
-        const fileName = mimeType.includes('gif') ? `${emoteTrigger}.gif` : `${emoteTrigger}.png`;
-        const file = new File([blob], fileName, { type: mimeType });
-        debugLog("Created file:", fileName, file.size, "bytes");
+        debugLog("Step 15: Creating file object");
+        try {
+            const fileName = mimeType.includes('gif') ? `${emoteTrigger}.gif` : `${emoteTrigger}.png`;
+            const file = new File([blob], fileName, { type: mimeType });
+            debugLog("Step 16: Created file:", fileName, file.size, "bytes");
 
-        // Find messenger input field
-        const inputField = findMessengerInputField();
-        if (!inputField) {
-            debugLog("Could not find message input field");
-            return { success: false, error: 'Could not find message input field' };
+            // Find messenger input field
+            debugLog("Step 17: Looking for messenger input field");
+            const inputField = findMessengerInputField();
+            if (!inputField) {
+                debugLog("❌ Could not find message input field");
+                return { success: false, error: 'Could not find message input field' };
+            }
+
+            debugLog("Step 18: Found input field:", inputField.tagName, inputField.className);
+
+            // Simulate file drop (exact same as example extension)
+            debugLog("Step 19: About to simulate file drop...");
+            simulateFileDrop(file, inputField);
+            debugLog("Step 20: File drop simulated - insertion should be complete");
+
+            return { success: true };
+        } catch (fileError) {
+            debugLog("❌ Error in file creation/insertion phase:", fileError);
+            return { success: false, error: 'Failed to create or insert file: ' + fileError.message };
         }
-
-        debugLog("Found input field:", inputField.tagName, inputField.className);
-
-        // Simulate file drop (exact same as example extension)
-        simulateFileDrop(file, inputField);
-        debugLog("File drop simulated");
-
-        return { success: true };
 
     } catch (error) {
         debugLog("Error inserting emote:", error);
