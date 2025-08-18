@@ -166,43 +166,28 @@ async function insertEmote(emoteTrigger) {
         const emoteUrl = emoteMapping[emoteTrigger];
         debugLog("Emote URL:", emoteUrl);
 
-        // Check if we have cached image data in IndexedDB
+        // Get cached image data from IndexedDB only
         let blob;
         let mimeType;
 
-        try {
-            // Initialize IndexedDB if needed
-            if (!emoteDB.db) {
-                await emoteDB.init();
-            }
+        // Initialize IndexedDB if needed
+        if (!emoteDB.db) {
+            await emoteDB.init();
+        }
 
-            // Try both formats - with and without colons
-            let cachedEmote = await emoteDB.getEmote(emoteTrigger);
-            if (!cachedEmote && !emoteTrigger.startsWith(':')) {
-                cachedEmote = await emoteDB.getEmote(':' + emoteTrigger + ':');
-            }
-            if (cachedEmote && cachedEmote.blob) {
-                debugLog("✅ Using cached blob from IndexedDB - FAST!");
-                blob = cachedEmote.blob;
-                mimeType = cachedEmote.type || 'image/png';
-            } else {
-                debugLog("⏳ Downloading image data...");
-                const response = await fetch(emoteUrl);
-                if (!response.ok) {
-                    throw new Error(`Failed to fetch emote: ${response.status}`);
-                }
-                blob = await response.blob();
-                mimeType = blob.type || 'image/png';
-                debugLog("Downloaded fresh image data");
-            }
-        } catch (error) {
-            debugLog("Error accessing IndexedDB, falling back to direct download:", error);
-            const response = await fetch(emoteUrl);
-            if (!response.ok) {
-                throw new Error(`Failed to fetch emote: ${response.status}`);
-            }
-            blob = await response.blob();
-            mimeType = blob.type || 'image/png';
+        // Try both formats - with and without colons
+        let cachedEmote = await emoteDB.getEmote(emoteTrigger);
+        if (!cachedEmote && !emoteTrigger.startsWith(':')) {
+            cachedEmote = await emoteDB.getEmote(':' + emoteTrigger + ':');
+        }
+
+        if (cachedEmote && cachedEmote.blob) {
+            debugLog("✅ Using cached blob from IndexedDB - FAST!");
+            blob = cachedEmote.blob;
+            mimeType = cachedEmote.type || 'image/png';
+        } else {
+            debugLog("❌ Emote not found in IndexedDB cache");
+            return { success: false, error: 'Emote not cached. Please download emotes first.' };
         }
 
         // Create File object
