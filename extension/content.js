@@ -176,13 +176,17 @@ async function insertEmote(emoteTrigger) {
                 await emoteDB.init();
             }
 
-            const cachedEmote = await emoteDB.getEmote(emoteTrigger);
+            // Try both formats - with and without colons
+            let cachedEmote = await emoteDB.getEmote(emoteTrigger);
+            if (!cachedEmote && !emoteTrigger.startsWith(':')) {
+                cachedEmote = await emoteDB.getEmote(':' + emoteTrigger + ':');
+            }
             if (cachedEmote && cachedEmote.blob) {
-                debugLog("Using cached blob from IndexedDB");
+                debugLog("✅ Using cached blob from IndexedDB - FAST!");
                 blob = cachedEmote.blob;
                 mimeType = cachedEmote.type || 'image/png';
             } else {
-                debugLog("Downloading image data...");
+                debugLog("⏳ Downloading image data...");
                 const response = await fetch(emoteUrl);
                 if (!response.ok) {
                     throw new Error(`Failed to fetch emote: ${response.status}`);
