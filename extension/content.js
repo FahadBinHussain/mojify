@@ -2,7 +2,7 @@
 console.error("🚀 MOJIFY CONTENT SCRIPT LOADED!", window.location.href);
 console.error("🚀 MOJIFY TIMESTAMP:", new Date().toISOString());
 console.error("🚀 MOJIFY User Agent:", navigator.userAgent.substring(0, 50));
-alert("Mojify content script loaded on " + window.location.href);
+
 
 let emoteMapping = {};
 
@@ -285,9 +285,7 @@ let isProcessingEmote = false;
 async function handleInputEvent(event) {
   const { target } = event;
 
-  // ALWAYS log input events to verify listener is working
-  console.error("🎯 MOJIFY INPUT EVENT:", event.type, target.tagName, target.className, "data:", event.data);
-  console.error("🎯 MOJIFY PROCESSING:", isProcessingEmote ? "BLOCKED" : "ACTIVE");
+  // Check if processing is blocked
 
   if (isProcessingEmote) return;
 
@@ -312,31 +310,27 @@ async function handleInputEvent(event) {
   const emotePattern = /:([a-zA-Z0-9_!]+):/g;
   let match;
 
-  console.error("🔍 MOJIFY PATTERN SEARCH in:", recentText);
-  console.error("🔍 MOJIFY REGEX:", emotePattern);
+
 
   // Find the last complete emote command
   while ((match = emotePattern.exec(recentText)) !== null) {
     const emoteName = match[1];
     const fullCommand = match[0];
 
-    console.error("🎯 MOJIFY FOUND MATCH:", fullCommand, "emoteName:", emoteName);
-    console.error("🎯 MOJIFY Available keys sample:", emoteMapping ? Object.keys(emoteMapping).slice(0, 5) : "No mapping");
+
 
     // Check both with and without colons since emotes might be stored either way
     const hasEmoteWithoutColons = emoteMapping && emoteMapping[emoteName];
     const hasEmoteWithColons = emoteMapping && emoteMapping[fullCommand];
 
-    console.error("🎯 MOJIFY Check '" + emoteName + "':", hasEmoteWithoutColons ? "YES" : "NO");
-    console.error("🎯 MOJIFY Check '" + fullCommand + "':", hasEmoteWithColons ? "YES" : "NO");
+
 
     // Check if this emote exists in our mapping (try both formats)
     if (hasEmoteWithoutColons || hasEmoteWithColons) {
       // Determine which emote key to use for insertion
       const emoteKeyForInsertion = hasEmoteWithoutColons ? emoteName : fullCommand;
 
-      console.error("✅ MOJIFY MATCH FOUND! Command:", fullCommand, "-> using key:", emoteKeyForInsertion);
-      console.error("✅ MOJIFY STARTING REPLACEMENT PROCESS...");
+
 
       isProcessingEmote = true;
 
@@ -421,8 +415,7 @@ document.addEventListener('compositionend', handleInputEvent);
 document.body.addEventListener('input', handleInputEvent, true);
 document.body.addEventListener('keyup', handleInputEvent, true);
 
-console.error("✅ MOJIFY CONTENT SCRIPT FULLY LOADED");
-console.error("✅ MOJIFY MULTIPLE INPUT LISTENERS ATTACHED");
+
 debugLog("Mojify content script loaded");
 
 // Add startup check and ensure emotes are loaded
