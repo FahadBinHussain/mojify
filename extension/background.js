@@ -216,6 +216,15 @@ async function downloadEmotes() {
     downloadState.isDownloading = true;
     downloadState.startTime = Date.now();
 
+    // Reset performance metrics
+    downloadState.performanceMetrics = {
+      totalBytes: 0,
+      avgResponseTime: 0,
+      successRate: 0,
+      batchTimes: [],
+      memoryUsage: []
+    };
+
     console.log("[Download] Starting emote download");
 
     const { channelIds } = await chrome.storage.local.get(['channelIds']);
@@ -319,11 +328,88 @@ async function downloadEmotes() {
       }
     });
 
-    // Concurrent download implementation with batching
-    const BATCH_SIZE = 15; // Download 15 emotes concurrently
-    const BATCH_DELAY = 200; // 200ms delay between batches
+    // Intelligent pre-loading and cache optimization
+    const urlCache = new Map(); // Cache for URL analysis
+    const sizeEstimates = new Map(); // Size estimates for prioritization
 
-    // Prepare all emotes for download with metadata
+    // Analyze URLs for optimization hints
+    const analyzeUrls = (emotes) => {
+      emotes.forEach(emote => {
+        const url = new URL(emote.url);
+        const pathSegments = url.pathname.split('/');
+
+        // Extract format and potential size info from URL
+        const format = pathSegments[pathSegments.length - 1].split('.').pop()?.toLowerCase();
+        const sizeHint = url.searchParams.get('size') || '1x';
+
+        // Estimate download priority (smaller files first for quick wins)
+        let priority = 1;
+        if (format === 'webp') priority += 0.5; // WebP is typically smaller
+        if (sizeHint.includes('1x') || sizeHint.includes('28')) priority += 0.3;
+        if (url.hostname.includes('cdn')) priority += 0.2; // CDN likely faster
+
+        sizeEstimates.set(emote.key, {
+          format,
+          sizeHint,
+          priority,
+          url: emote.url
+        });
+      });
+    };
+
+    // Adaptive concurrent download implementation with optimized batching
+    let BATCH_SIZE = 10; // Start with smaller batches to avoid throttling
+    let BATCH_DELAY = 200; // Start with longer delay
+    const MIN_BATCH_SIZE = 2; // Minimum batch size for heavily throttled connections
+    const MAX_BATCH_SIZE = 15; // Maximum batch size (reduced to prevent throttling)
+    const BASE_TIMEOUT = 15000; // Base timeout in milliseconds
+
+    // Performance tracking for adaptive optimization
+    let batchFailureRates = [];
+    let avgResponseTimes = [];
+    let totalSuccessfulDownloads = 0;
+    let totalFailedDownloads = 0;
+    let consecutiveTimeouts = 0;
+    let throttlingDetected = false;
+    let circuitBreakerOpen = false;
+    let circuitBreakerTimeout = null;
+
+    // Connection pool management
+    const activeConnections = new Set();
+    const MAX_CONCURRENT_CONNECTIONS = 15;
+
+    // Memory optimization tracking
+    let memoryCheckInterval = null;
+
+    // Start memory monitoring
+    const startMemoryMonitoring = () => {
+      if (typeof performance !== 'undefined' && performance.memory) {
+        memoryCheckInterval = setInterval(() => {
+          const memInfo = {
+            used: performance.memory.usedJSHeapSize,
+            total: performance.memory.totalJSHeapSize,
+            limit: performance.memory.jsHeapSizeLimit,
+            timestamp: Date.now()
+          };
+          downloadState.performanceMetrics.memoryUsage.push(memInfo);
+
+          // Keep only last 10 memory readings
+          if (downloadState.performanceMetrics.memoryUsage.length > 10) {
+            downloadState.performanceMetrics.memoryUsage.shift();
+          }
+
+          // Log warning if memory usage is high
+          const usagePercent = (memInfo.used / memInfo.limit) * 100;
+          if (usagePercent > 80) {
+            console.warn(`[Download] High memory usage: ${usagePercent.toFixed(1)}%`);
+          }
+        }, 5000);
+      }
+    };
+
+    startMemoryMonitoring();
+
+    // Prepare all emotes for download with metadata and optimization
     const allEmotesToDownload = [];
     for (const channelData of channelEmotes) {
       console.log(`[Download] Preparing ${channelData.username}: ${Object.keys(channelData.emotes).length} new emotes`);
@@ -338,21 +424,70 @@ async function downloadEmotes() {
       }
     }
 
-    console.log(`[Download] Starting concurrent download of ${allEmotesToDownload.length} emotes in batches of ${BATCH_SIZE}`);
+    // Analyze URLs for intelligent optimization
+    analyzeUrls(allEmotesToDownload);
 
-    // Function to download a single emote
-    const downloadSingleEmote = async (emoteData) => {
+    // Sort emotes by priority (smaller/faster downloads first for quick progress)
+    allEmotesToDownload.sort((a, b) => {
+      const aPriority = sizeEstimates.get(a.key)?.priority || 1;
+      const bPriority = sizeEstimates.get(b.key)?.priority || 1;
+      return bPriority - aPriority; // Higher priority first
+    });
+
+    console.log(`[Download] Starting concurrent download of ${allEmotesToDownload.length} emotes in batches of ${BATCH_SIZE} (prioritized by size/speed)`);
+
+    // Function to download a single emote with adaptive timeout and caching
+    const downloadSingleEmote = async (emoteData, batchNumber, totalBatches) => {
       const { key, url, channel, channelId } = emoteData;
+      const startTime = Date.now();
 
       try {
+        // Check cache first for URL analysis
+        let cacheEntry = urlCache.get(url);
+        if (!cacheEntry) {
+          cacheEntry = { attempts: 0, lastAttempt: 0, avgResponseTime: 0 };
+          urlCache.set(url, cacheEntry);
+        }
+
+        // Calculate adaptive timeout based on multiple factors
+        const progressFactor = Math.min(batchNumber / totalBatches, 1);
+        const avgFailureRate = batchFailureRates.length > 0 ?
+          batchFailureRates.reduce((a, b) => a + b, 0) / batchFailureRates.length : 0;
+
+        // Factor in URL-specific performance history
+        const urlPerformanceFactor = cacheEntry.avgResponseTime > 5000 ? 1.5 : 1.0;
+        const attemptFactor = Math.min(cacheEntry.attempts * 0.2, 1.0);
+
+        // Scale timeout: start at base, increase for later batches and higher failure rates
+        const adaptiveTimeout = BASE_TIMEOUT +
+          (progressFactor * 8000) + // Add up to 8s for batch progression
+          (avgFailureRate * 10000) + // Add up to 10s for high failure rates
+          (urlPerformanceFactor * 3000) + // Add time for slow URLs
+          (attemptFactor * 2000); // Add time for previously failed URLs
+
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for concurrent downloads
+        const timeoutId = setTimeout(() => controller.abort(), adaptiveTimeout);
+
+        // Enhanced headers for better cache control and performance
+        const headers = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'image/webp,image/avif,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+          'Accept-Encoding': 'gzip, deflate, br'
+        };
+
+        // Use cache-control strategically based on batch progression
+        if (batchNumber <= 3) {
+          headers['Cache-Control'] = 'no-cache'; // Fresh data for early batches
+        } else {
+          headers['Cache-Control'] = 'max-age=300'; // Allow some caching for later batches
+        }
+
+        cacheEntry.attempts++;
+        cacheEntry.lastAttempt = Date.now();
 
         const response = await fetch(url, {
           signal: controller.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-          }
+          headers
         });
         clearTimeout(timeoutId);
 
@@ -365,8 +500,23 @@ async function downloadEmotes() {
             });
 
             globalEmoteMapping[key] = url;
-            console.log(`[Download] ✓ ${key} (${blob.size} bytes)`);
-            return { success: true, key, url, channel };
+            const responseTime = Date.now() - startTime;
+
+            // Update URL cache with successful response time
+            cacheEntry.avgResponseTime = cacheEntry.avgResponseTime === 0 ?
+              responseTime : (cacheEntry.avgResponseTime + responseTime) / 2;
+
+            // Update performance metrics
+            downloadState.performanceMetrics.totalBytes += blob.size;
+            totalSuccessfulDownloads++;
+
+            // Update size estimates with actual data
+            if (sizeEstimates.has(key)) {
+              sizeEstimates.get(key).actualSize = blob.size;
+            }
+
+            console.log(`[Download] ✓ ${key} (${blob.size} bytes, ${responseTime}ms, attempt ${cacheEntry.attempts})`);
+            return { success: true, key, url, channel, responseTime, size: blob.size };
           } else {
             throw new Error("Empty blob received");
           }
@@ -374,35 +524,114 @@ async function downloadEmotes() {
           throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
       } catch (error) {
-        console.log(`[Download] ✗ ${key}: ${error.message}`);
-        return { success: false, key, url, channel, error: error.message };
+        const responseTime = Date.now() - startTime;
+        totalFailedDownloads++;
+
+        // Classify error type for better handling
+        let errorType = 'unknown';
+        if (error.name === 'AbortError') {
+          errorType = 'timeout';
+        } else if (error.message.includes('Failed to fetch')) {
+          errorType = 'network';
+        } else if (error.message.includes('HTTP')) {
+          errorType = 'http';
+        }
+
+        console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms, type: ${errorType})`);
+        return { success: false, key, url, channel, error: error.message, responseTime, errorType };
       }
     };
 
-    // Process emotes in concurrent batches
+    // Process emotes in adaptive concurrent batches
     const failedQueue = [];
     let currentBatch = 0;
+    const totalBatches = Math.ceil(allEmotesToDownload.length / BATCH_SIZE);
+    let consecutiveHighFailureBatches = 0;
 
     for (let i = 0; i < allEmotesToDownload.length; i += BATCH_SIZE) {
       const batch = allEmotesToDownload.slice(i, i + BATCH_SIZE);
       currentBatch++;
 
-      console.log(`[Download] Processing batch ${currentBatch}/${Math.ceil(allEmotesToDownload.length / BATCH_SIZE)} (${batch.length} emotes)`);
+      console.log(`[Download] Processing batch ${currentBatch}/${totalBatches} (${batch.length} emotes, batch size: ${BATCH_SIZE}, delay: ${BATCH_DELAY}ms)`);
 
-      // Download batch concurrently
-      const batchResults = await Promise.allSettled(
-        batch.map(emoteData => downloadSingleEmote(emoteData))
-      );
+      const batchStartTime = Date.now();
 
-      // Process results
+      // Circuit breaker: pause downloads if severe throttling detected
+      if (circuitBreakerOpen) {
+        console.log(`[Download] Circuit breaker OPEN - pausing for recovery`);
+        await new Promise(resolve => setTimeout(resolve, 10000)); // 10 second pause
+        circuitBreakerOpen = false;
+        console.log(`[Download] Circuit breaker CLOSED - resuming downloads`);
+      }
+
+      // Micro-batching for better reliability with throttling
+      const MICRO_BATCH_SIZE = throttlingDetected ? 3 : Math.min(8, batch.length);
+      const batchResults = [];
+
+      for (let mb = 0; mb < batch.length; mb += MICRO_BATCH_SIZE) {
+        const microBatch = batch.slice(mb, mb + MICRO_BATCH_SIZE);
+        console.log(`[Download] Processing micro-batch ${Math.floor(mb/MICRO_BATCH_SIZE) + 1}/${Math.ceil(batch.length/MICRO_BATCH_SIZE)} (${microBatch.length} emotes)`);
+
+        const connectionLimitedBatch = [];
+        for (const emoteData of microBatch) {
+          if (activeConnections.size < MAX_CONCURRENT_CONNECTIONS) {
+            const connectionId = `${emoteData.key}_${Date.now()}`;
+            activeConnections.add(connectionId);
+
+            const downloadPromise = downloadSingleEmote(emoteData, currentBatch, totalBatches)
+              .finally(() => activeConnections.delete(connectionId));
+
+            connectionLimitedBatch.push(downloadPromise);
+          } else {
+            // Queue for next micro-batch if too many connections
+            await new Promise(resolve => setTimeout(resolve, 100));
+            connectionLimitedBatch.push(downloadSingleEmote(emoteData, currentBatch, totalBatches));
+          }
+        }
+
+        // Download micro-batch concurrently
+        const microResults = await Promise.allSettled(connectionLimitedBatch);
+        batchResults.push(...microResults);
+
+        // Small delay between micro-batches if throttling detected
+        if (throttlingDetected && mb + MICRO_BATCH_SIZE < batch.length) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+
+      // Analyze batch performance
+      let batchFailures = 0;
+      let batchResponseTimes = [];
+      let batchTotalBytes = 0;
+
+      // Process results and detect throttling patterns
+      let timeoutCount = 0;
+      let successfulInBatch = 0;
+
       for (const result of batchResults) {
         if (result.status === 'fulfilled') {
           const emoteResult = result.value;
           if (!emoteResult.success) {
             failedQueue.push(emoteResult);
+            batchFailures++;
+
+            // Detect throttling pattern: timeouts/network errors after successful downloads
+            if (emoteResult.errorType === 'timeout' ||
+                (emoteResult.errorType === 'network' && emoteResult.responseTime > 25000)) {
+              timeoutCount++;
+            }
+          } else {
+            successfulInBatch++;
+          }
+          if (emoteResult.responseTime) {
+            batchResponseTimes.push(emoteResult.responseTime);
+          }
+          if (emoteResult.size) {
+            batchTotalBytes += emoteResult.size;
           }
         } else {
           console.error(`[Download] Batch promise rejected:`, result.reason);
+          batchFailures++;
         }
 
         downloadState.current++;
@@ -432,30 +661,172 @@ async function downloadEmotes() {
         }
       }
 
-      // Small delay between batches to be respectful to servers
+      // Record batch completion time
+      const batchDuration = Date.now() - batchStartTime;
+      downloadState.performanceMetrics.batchTimes.push({
+        batchNumber: currentBatch,
+        duration: batchDuration,
+        emoteCount: batch.length,
+        failures: batchFailures,
+        totalBytes: batchTotalBytes
+      });
+
+      // Keep only last 10 batch records
+      if (downloadState.performanceMetrics.batchTimes.length > 10) {
+        downloadState.performanceMetrics.batchTimes.shift();
+      }
+
+      // Detect server throttling pattern: successful downloads followed by timeouts
+      const throttlingPattern = successfulInBatch > 0 && timeoutCount > 0 &&
+                               (timeoutCount >= successfulInBatch || timeoutCount > 3);
+
+      if (throttlingPattern) {
+        throttlingDetected = true;
+        consecutiveTimeouts += timeoutCount;
+        console.warn(`[Download] Throttling detected! ${successfulInBatch} succeeded, then ${timeoutCount} timeouts`);
+
+        // Circuit breaker: open if severe throttling (more than 12 consecutive timeouts)
+        if (consecutiveTimeouts > 12) {
+          circuitBreakerOpen = true;
+          console.error(`[Download] CIRCUIT BREAKER OPEN - severe throttling detected (${consecutiveTimeouts} timeouts)`);
+        }
+      } else if (timeoutCount === 0 && batchFailureRate < 0.2) {
+        consecutiveTimeouts = Math.max(0, consecutiveTimeouts - 3); // Faster recovery on good batches
+        if (consecutiveTimeouts === 0) {
+          throttlingDetected = false;
+          console.log(`[Download] Throttling recovered - normal operation resumed`);
+        }
+      } else if (timeoutCount > 0) {
+        consecutiveTimeouts += Math.floor(timeoutCount / 2); // Partial increase for mixed results
+      }
+
+      // Calculate and store batch performance metrics
+      const batchFailureRate = batchFailures / batch.length;
+      batchFailureRates.push(batchFailureRate);
+
+      if (batchResponseTimes.length > 0) {
+        const avgResponseTime = batchResponseTimes.reduce((a, b) => a + b, 0) / batchResponseTimes.length;
+        avgResponseTimes.push(avgResponseTime);
+      }
+
+      // Keep only last 5 batches for rolling average
+      if (batchFailureRates.length > 5) batchFailureRates.shift();
+      if (avgResponseTimes.length > 5) avgResponseTimes.shift();
+
+      console.log(`[Download] Batch ${currentBatch} stats: ${batchFailureRate.toFixed(2)} failure rate, ${batchResponseTimes.length > 0 ? Math.round(batchResponseTimes.reduce((a, b) => a + b, 0) / batchResponseTimes.length) : 'N/A'}ms avg response`);
+
+      // Aggressive throttling response
+      if (throttlingDetected || consecutiveTimeouts > 5) {
+        BATCH_SIZE = MIN_BATCH_SIZE;
+        BATCH_DELAY = Math.max(BATCH_DELAY * 2, 1500);
+        console.log(`[Download] AGGRESSIVE: Throttling detected, reducing to ${BATCH_SIZE} batch size and ${BATCH_DELAY}ms delay`);
+        consecutiveHighFailureBatches = 0; // Reset other counter
+      }
+      // Circuit breaker response
+      else if (circuitBreakerOpen) {
+        BATCH_SIZE = 1; // Single emote batches during recovery
+        BATCH_DELAY = 5000; // Very long delays
+        console.log(`[Download] CIRCUIT BREAKER: Using single emote batches with 5s delays`);
+      }
+      // Adaptive optimization based on performance
+      else if (batchFailureRate > 0.3) { // High failure rate
+        consecutiveHighFailureBatches++;
+
+        if (consecutiveHighFailureBatches >= 1 && BATCH_SIZE > MIN_BATCH_SIZE) {
+          BATCH_SIZE = Math.max(MIN_BATCH_SIZE, Math.floor(BATCH_SIZE * 0.6));
+          BATCH_DELAY = Math.min(BATCH_DELAY * 1.8, 3000);
+          console.log(`[Download] Reducing batch size to ${BATCH_SIZE} and increasing delay to ${BATCH_DELAY}ms due to failures`);
+        }
+      } else if (batchFailureRate < 0.1 && consecutiveHighFailureBatches === 0 && !throttlingDetected) {
+        // Low failure rate and no recent issues - can try to optimize
+        if (avgResponseTimes.length > 0) {
+          const avgResponseTime = avgResponseTimes.reduce((a, b) => a + b, 0) / avgResponseTimes.length;
+          if (avgResponseTime < 5000 && BATCH_SIZE < MAX_BATCH_SIZE) {
+            BATCH_SIZE = Math.min(MAX_BATCH_SIZE, BATCH_SIZE + 1);
+            BATCH_DELAY = Math.max(200, Math.floor(BATCH_DELAY * 0.95));
+            console.log(`[Download] Increasing batch size to ${BATCH_SIZE} and reducing delay to ${BATCH_DELAY}ms due to good performance`);
+          }
+        }
+        consecutiveHighFailureBatches = 0;
+      } else {
+        consecutiveHighFailureBatches = Math.max(0, consecutiveHighFailureBatches - 1);
+      }
+
+      // Adaptive delay between batches
       if (i + BATCH_SIZE < allEmotesToDownload.length) {
-        await new Promise(resolve => setTimeout(resolve, BATCH_DELAY));
+        // Calculate progressive delay with aggressive throttling response
+        let progressiveDelay = BATCH_DELAY + (currentBatch * 30) + (batchFailureRate * 1000);
+
+        // Much longer delays if throttling detected
+        if (throttlingDetected) {
+          progressiveDelay = Math.max(progressiveDelay * 3, 2000);
+          console.log(`[Download] Throttling delay: ${progressiveDelay}ms`);
+        }
+        // Extreme delays during circuit breaker
+        if (circuitBreakerOpen) {
+          progressiveDelay = Math.max(progressiveDelay * 5, 8000);
+          console.log(`[Download] Circuit breaker delay: ${progressiveDelay}ms`);
+        }
+
+        await new Promise(resolve => setTimeout(resolve, Math.min(progressiveDelay, 5000)));
+
+        // Memory optimization: Clear completed downloads from memory periodically
+        if (currentBatch % 5 === 0) {
+          // Clear old batch performance data to free memory
+          if (downloadState.performanceMetrics.batchTimes.length > 5) {
+            downloadState.performanceMetrics.batchTimes = downloadState.performanceMetrics.batchTimes.slice(-5);
+          }
+
+          // Force garbage collection hint for memory optimization
+          if (typeof global !== 'undefined' && global.gc) {
+            global.gc();
+          }
+        }
       }
     }
 
+    // Stop memory monitoring
+    if (memoryCheckInterval) {
+      clearInterval(memoryCheckInterval);
+    }
+
+    // Calculate final performance metrics
+    const totalDownloads = totalSuccessfulDownloads + totalFailedDownloads;
+    downloadState.performanceMetrics.successRate = totalDownloads > 0 ?
+      (totalSuccessfulDownloads / totalDownloads) * 100 : 0;
+
+    if (avgResponseTimes.length > 0) {
+      downloadState.performanceMetrics.avgResponseTime =
+        avgResponseTimes.reduce((a, b) => a + b, 0) / avgResponseTimes.length;
+    }
+
     console.log(`[Download] Concurrent download completed. ${failedQueue.length} failures to retry.`);
+    console.log(`[Download] Performance: ${downloadState.performanceMetrics.successRate.toFixed(1)}% success rate, ${Math.round(downloadState.performanceMetrics.avgResponseTime)}ms avg response, ${Math.round(downloadState.performanceMetrics.totalBytes / 1024)}KB total`);
+
+    // Clear active connections tracking
+    activeConnections.clear();
 
     // Second pass: retry failed emotes with smaller concurrent batches
     if (failedQueue.length > 0) {
       console.log(`[Download] Retrying ${failedQueue.length} failed emotes with smaller batches...`);
 
-      const RETRY_BATCH_SIZE = 5; // Smaller batches for retries
-      const retryDownload = async (emoteData) => {
+      const RETRY_BATCH_SIZE = throttlingDetected ? 2 : 3; // Even smaller batches if throttling detected
+      const retryDownload = async (emoteData, retryAttempt = 1) => {
         const { key, url, channel } = emoteData;
 
         try {
+          // Exponential timeout for retries: 20s, 30s, 45s for multiple attempts
+          const retryTimeout = 20000 + (retryAttempt * 10000) + Math.min(retryAttempt * retryAttempt * 5000, 25000);
+
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 25000); // 25s timeout for retries
+          const timeoutId = setTimeout(() => controller.abort(), retryTimeout);
 
           const response = await fetch(url, {
             signal: controller.signal,
             headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache'
             }
           });
           clearTimeout(timeoutId);
@@ -483,23 +854,49 @@ async function downloadEmotes() {
         }
       };
 
-      // Process retry queue in smaller concurrent batches
-      for (let i = 0; i < failedQueue.length; i += RETRY_BATCH_SIZE) {
-        const retryBatch = failedQueue.slice(i, i + RETRY_BATCH_SIZE);
+      // Process retry queue in smaller concurrent batches with exponential backoff
+      const retryBatchSize = Math.max(2, Math.floor(RETRY_BATCH_SIZE * 0.7)); // Smaller retry batches
 
-        console.log(`[Download] Retry batch ${Math.floor(i/RETRY_BATCH_SIZE) + 1}/${Math.ceil(failedQueue.length/RETRY_BATCH_SIZE)} (${retryBatch.length} emotes)`);
+      for (let i = 0; i < failedQueue.length; i += retryBatchSize) {
+        const retryBatch = failedQueue.slice(i, i + retryBatchSize);
+        const retryBatchNum = Math.floor(i/retryBatchSize) + 1;
+        const totalRetryBatches = Math.ceil(failedQueue.length/retryBatchSize);
+
+        console.log(`[Download] Retry batch ${retryBatchNum}/${totalRetryBatches} (${retryBatch.length} emotes)`);
 
         await Promise.allSettled(
-          retryBatch.map(emoteData => retryDownload(emoteData))
+          retryBatch.map(emoteData => retryDownload(emoteData, retryBatchNum))
         );
 
-        // Longer delay between retry batches
-        if (i + RETRY_BATCH_SIZE < failedQueue.length) {
-          await new Promise(resolve => setTimeout(resolve, 800));
+        // Exponential backoff delay between retry batches
+        if (i + retryBatchSize < failedQueue.length) {
+          let exponentialDelay = 1500 + (retryBatchNum * 600) + Math.min(retryBatchNum * retryBatchNum * 300, 3000);
+
+          // Much longer delays if throttling was detected
+          if (throttlingDetected) {
+            exponentialDelay = Math.max(exponentialDelay * 2, 3000);
+          }
+
+          await new Promise(resolve => setTimeout(resolve, exponentialDelay));
         }
       }
 
       console.log(`[Download] Completed concurrent retry processing`);
+
+      // Final performance report with cache analysis
+      const finalMetrics = downloadState.performanceMetrics;
+      const cacheStats = {
+        totalUrls: urlCache.size,
+        avgAttempts: Array.from(urlCache.values()).reduce((sum, entry) => sum + entry.attempts, 0) / urlCache.size,
+        slowUrls: Array.from(urlCache.values()).filter(entry => entry.avgResponseTime > 5000).length
+      };
+
+      console.log(`[Download] Final metrics - Success rate: ${finalMetrics.successRate.toFixed(1)}%, Total data: ${Math.round(finalMetrics.totalBytes / 1024)}KB, Avg response: ${Math.round(finalMetrics.avgResponseTime)}ms`);
+      console.log(`[Download] Cache stats - ${cacheStats.totalUrls} URLs cached, ${cacheStats.avgAttempts.toFixed(1)} avg attempts, ${cacheStats.slowUrls} slow URLs`);
+
+      // Clear cache to free memory
+      urlCache.clear();
+      sizeEstimates.clear();
     }
 
     // Final storage update (images are now in IndexedDB, only store metadata)
