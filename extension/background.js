@@ -31,7 +31,7 @@ const emoteDB = {
     });
   },
 
-  async storeEmote(key, url, blob, metadata = {}) {
+  async storeEmote(key, url, dataUrl, metadata = {}) {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
@@ -41,9 +41,8 @@ const emoteDB = {
       const emoteData = {
         key: key,
         url: url,
-        blob: blob,
-        type: blob.type,
-        size: blob.size,
+        html: `<img src="${dataUrl}">`,
+        dataUrl: dataUrl,
         timestamp: Date.now(),
         ...metadata
       };
@@ -492,7 +491,14 @@ async function downloadEmotes() {
         if (response.ok) {
           const blob = await response.blob();
           if (blob.size > 0) {
-            await emoteDB.storeEmote(key, url, blob, {
+            // Convert blob to base64 data URL
+            const dataUrl = await new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.readAsDataURL(blob);
+            });
+
+            await emoteDB.storeEmote(key, url, dataUrl, {
               channel: channel,
               channelId: channelId
             });
@@ -1908,6 +1914,23 @@ async function detectAndReplaceEmotes(tabId) {
 }
 
 // Set up input monitoring for active tabs
+// Message handlers for content script communication
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'getEmote') {
+    emoteDB.getEmote(request.key)
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse(null));
+    return true; // Keep the message channel open for async response
+  }
+
+  if (request.action === 'getAllEmotes') {
+    emoteDB.getAllEmotes()
+      .then(result => sendResponse(result))
+      .catch(error => sendResponse([]));
+    return true; // Keep the message channel open for async response
+  }
+});
+
 let monitoringTabs = new Set();
 
 async function startMonitoringTab(tabId) {
