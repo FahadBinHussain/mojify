@@ -20,7 +20,8 @@
     "https://*.discord.com/*",
     "https://*.discordapp.com/*",
     "https://*.facebook.com/*",
-    "https://*.telegram.org/*"
+    "https://*.telegram.org/*",
+    "https://*.whatsapp.com/*"
   ],
   "background": {
     "service_worker": "background.js"

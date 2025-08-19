@@ -163,12 +163,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const currentTab = tabs[0];
 
+      // Detect platform and show warnings
+      let currentPlatform = null;
+      if (currentTab.url.includes('messenger.com')) currentPlatform = 'messenger';
+      else if (currentTab.url.includes('discord.com') || currentTab.url.includes('discordapp.com')) currentPlatform = 'discord';
+      else if (currentTab.url.includes('facebook.com')) currentPlatform = 'facebook';
+      else if (currentTab.url.includes('telegram.org')) currentPlatform = 'telegram';
+      else if (currentTab.url.includes('web.whatsapp.com')) currentPlatform = 'whatsapp';
+
+      // Show platform-specific warnings
+      showPlatformWarning(currentPlatform, currentTab.url);
+
       // Check if the current tab is on a supported platform
-      const isSupportedPlatform = currentTab.url.includes('messenger.com') ||
-                                 currentTab.url.includes('discord.com') ||
-                                 currentTab.url.includes('discordapp.com') ||
-                                 currentTab.url.includes('facebook.com') ||
-                                 currentTab.url.includes('telegram.org');
+      const isSupportedPlatform = currentPlatform !== null;
 
       if (!isSupportedPlatform) {
         showToast('This feature only works on supported platforms', 'error');
@@ -187,6 +194,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <li><code>discord.com</code></li>
               <li><code>facebook.com</code></li>
               <li><code>telegram.org</code></li>
+              <li><code>web.whatsapp.com</code> (Note: GIFs may not work due to WhatsApp limitations)</li>
             </ul>
           </div>
         `;
@@ -251,7 +259,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="diagnostic-header">
                   <h3>Insertion Failed</h3>
                   <p>Error: ${error}</p>
-                  <p>Make sure you're on a supported platform (Messenger, Discord, Facebook, or Telegram) and try clicking in the message input field first</p>
+                  <p>Make sure you're on a supported platform (Messenger, Discord, Facebook, Telegram, or WhatsApp) and try clicking in the message input field first</p>
                   <p>You can try reloading the page and trying again</p>
                 </div>
               `;
@@ -1551,6 +1559,41 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Show platform-specific warnings
+  function showPlatformWarning(platform, url) {
+    // Remove any existing warning
+    const existingWarning = document.querySelector('.platform-warning');
+    if (existingWarning) {
+      existingWarning.remove();
+    }
+
+    if (platform === 'whatsapp') {
+      const warningDiv = document.createElement('div');
+      warningDiv.className = 'platform-warning';
+      warningDiv.style.cssText = `
+        background-color: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 4px;
+        padding: 10px;
+        margin: 10px 0;
+        color: #856404;
+        font-size: 12px;
+        text-align: center;
+      `;
+      warningDiv.innerHTML = `
+        <strong>⚠️ WhatsApp Limitation:</strong><br>
+        GIFs may not work properly due to WhatsApp's restrictions.<br>
+        This is a WhatsApp limitation, not an extension issue.
+      `;
+
+      // Insert after the tabs
+      const tabsContainer = document.querySelector('.tabs');
+      if (tabsContainer) {
+        tabsContainer.parentNode.insertBefore(warningDiv, tabsContainer.nextSibling);
+      }
+    }
+  }
+
   // Initialize
   function init() {
     initTabs();
@@ -1559,6 +1602,21 @@ document.addEventListener('DOMContentLoaded', () => {
     addButtonEffects();
     initDebugSection();
     checkDownloadStatus();
+
+    // Check current platform and show warnings
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs.length > 0) {
+        const currentTab = tabs[0];
+        let currentPlatform = null;
+        if (currentTab.url.includes('messenger.com')) currentPlatform = 'messenger';
+        else if (currentTab.url.includes('discord.com') || currentTab.url.includes('discordapp.com')) currentPlatform = 'discord';
+        else if (currentTab.url.includes('facebook.com')) currentPlatform = 'facebook';
+        else if (currentTab.url.includes('telegram.org')) currentPlatform = 'telegram';
+        else if (currentTab.url.includes('web.whatsapp.com')) currentPlatform = 'whatsapp';
+
+        showPlatformWarning(currentPlatform, currentTab.url);
+      }
+    });
   }
 
   init();
