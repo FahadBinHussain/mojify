@@ -1581,15 +1581,21 @@ document.addEventListener('DOMContentLoaded', () => {
         text-align: center;
       `;
       warningDiv.innerHTML = `
-        <strong>⚠️ WhatsApp Limitation:</strong><br>
+        <strong>WhatsApp Limitation:</strong><br>
         GIFs may not work properly due to WhatsApp's restrictions.<br>
         This is a WhatsApp limitation, not an extension issue.
       `;
 
-      // Insert after the tabs
-      const tabsContainer = document.querySelector('.tabs');
-      if (tabsContainer) {
-        tabsContainer.parentNode.insertBefore(warningDiv, tabsContainer.nextSibling);
+      // Insert above the emotes container
+      const emotesContainer = document.querySelector('.emotes-container');
+      if (emotesContainer) {
+        emotesContainer.parentNode.insertBefore(warningDiv, emotesContainer);
+      } else {
+        // Fallback: insert after the emote stats
+        const emoteStats = document.querySelector('.emote-stats');
+        if (emoteStats && emoteStats.parentNode) {
+          emoteStats.parentNode.insertBefore(warningDiv, emoteStats.nextSibling);
+        }
       }
     }
   }
