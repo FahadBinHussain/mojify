@@ -82,9 +82,9 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
   }
 });
 
-// Find messenger input field (copied from example)
-function findMessengerInputField() {
-    const possibleSelectors = [
+// Platform-specific input field selectors
+const platformSelectors = {
+    messenger: [
         'div[aria-label="Message"][contenteditable="true"][data-lexical-editor="true"]',
         '.xzsf02u.notranslate[contenteditable="true"][role="textbox"]',
         '.notranslate[contenteditable="true"][data-lexical-editor="true"]',
@@ -98,9 +98,39 @@ function findMessengerInputField() {
         'div[role="textbox"][spellcheck="true"]',
         'form [contenteditable="true"]',
         '[contenteditable="true"]'
-    ];
+    ],
+    discord: [
+        'div[role="textbox"][data-slate-editor="true"]',
+        'div[contenteditable="true"][role="textbox"][data-slate-editor="true"]',
+        '[aria-label="Message #"][role="textbox"]',
+        'div[class*="slateTextArea"][role="textbox"]',
+        'div[data-slate-node="element"][contenteditable="true"]',
+        'div[contenteditable="true"][data-slate-editor="true"]',
+        '[contenteditable="true"][data-slate-editor="true"]',
+        'div[role="textbox"][contenteditable="true"]'
+    ]
+};
 
-    for (const selector of possibleSelectors) {
+// Detect current platform
+function getCurrentPlatform() {
+    const hostname = window.location.hostname;
+    if (hostname.includes('messenger.com')) return 'messenger';
+    if (hostname.includes('discord.com') || hostname.includes('discordapp.com')) return 'discord';
+    return null;
+}
+
+// Find input field for any supported platform
+function findInputField() {
+    const platform = getCurrentPlatform();
+    if (!platform) {
+        debugLog("Unsupported platform:", window.location.hostname);
+        return null;
+    }
+
+    const selectors = platformSelectors[platform];
+    debugLog("Searching for input field on platform:", platform);
+
+    for (const selector of selectors) {
         const elements = document.querySelectorAll(selector);
         if (elements.length > 0) {
             if (elements.length > 1) {
@@ -113,17 +143,82 @@ function findMessengerInputField() {
                         bestElement = el;
                     }
                 }
-                if (bestElement) return bestElement;
+                if (bestElement) {
+                    debugLog("Found input field using selector:", selector, "on platform:", platform);
+                    return bestElement;
+                }
             } else {
+                debugLog("Found input field using selector:", selector, "on platform:", platform);
                 return elements[0];
             }
         }
     }
+
+    debugLog("No input field found for platform:", platform);
     return null;
+}
+
+// Legacy function for backward compatibility
+function findMessengerInputField() {
+    return findInputField();
+}
+
+// Platform-specific file insertion methods
+function insertFileOnPlatform(file, targetElement, platform) {
+    debugLog("Inserting file on platform:", platform);
+
+    if (platform === 'discord') {
+        // Discord-specific insertion method
+        return insertFileOnDiscord(file, targetElement);
+    } else if (platform === 'messenger') {
+        // Messenger uses drag and drop
+        return simulateFileDrop(file, targetElement);
+    } else {
+        // Fallback to drag and drop
+        return simulateFileDrop(file, targetElement);
+    }
+}
+
+// Discord-specific file insertion
+function insertFileOnDiscord(file, targetElement) {
+    debugLog("Using Discord-specific insertion method");
+
+    // Try multiple Discord insertion methods
+    try {
+        // Method 1: Try paste event with files
+        const pasteEvent = new ClipboardEvent('paste', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: new DataTransfer()
+        });
+        pasteEvent.clipboardData.items.add(file);
+        const pasteResult = targetElement.dispatchEvent(pasteEvent);
+        debugLog("Discord paste method result:", pasteResult);
+
+        // Method 2: Try input event
+        const inputEvent = new InputEvent('input', {
+            bubbles: true,
+            cancelable: true,
+            data: null,
+            inputType: 'insertFromPaste'
+        });
+        const inputResult = targetElement.dispatchEvent(inputEvent);
+        debugLog("Discord input method result:", inputResult);
+
+        // Method 3: Fallback to drag and drop
+        simulateFileDrop(file, targetElement);
+
+        return true;
+    } catch (error) {
+        debugLog("Discord insertion error:", error);
+        // Fallback to standard method
+        return simulateFileDrop(file, targetElement);
+    }
 }
 
 // Simulate file drop (exact copy from example)
 function simulateFileDrop(file, targetElement) {
+    debugLog("Using drag and drop method");
     const dataTransfer = new DataTransfer();
     dataTransfer.items.add(file);
 
@@ -133,7 +228,8 @@ function simulateFileDrop(file, targetElement) {
             cancelable: true,
             dataTransfer
         });
-        targetElement.dispatchEvent(event);
+        const result = targetElement.dispatchEvent(event);
+        debugLog(`${eventType} event result:`, result);
     });
 }
 
@@ -142,11 +238,13 @@ async function insertEmote(emoteTrigger) {
     debugLog("=== INSERTING EMOTE ===", emoteTrigger);
 
     try {
-        // Check if we're on messenger.com
-        if (!window.location.href.includes('messenger.com')) {
-            debugLog("Not on messenger.com");
-            return { success: false, error: 'This feature only works on messenger.com' };
+        // Check if we're on a supported platform
+        const platform = getCurrentPlatform();
+        if (!platform) {
+            debugLog("Not on a supported platform:", window.location.hostname);
+            return { success: false, error: 'This feature only works on supported platforms (Messenger, Discord)' };
         }
+        debugLog("Platform detected:", platform);
 
         // Get emote URL
         if (!emoteMapping || !emoteMapping[emoteTrigger]) {
@@ -229,20 +327,20 @@ async function insertEmote(emoteTrigger) {
             const file = new File([blob], fileName, { type: mimeType });
             debugLog("Step 16: Created file:", fileName, file.size, "bytes");
 
-            // Find messenger input field
-            debugLog("Step 17: Looking for messenger input field");
-            const inputField = findMessengerInputField();
+            // Find input field for current platform
+            debugLog("Step 17: Looking for input field on platform:", getCurrentPlatform());
+            const inputField = findInputField();
             if (!inputField) {
-                debugLog("❌ Could not find message input field");
-                return { success: false, error: 'Could not find message input field' };
+                debugLog("❌ Could not find input field");
+                return { success: false, error: 'Could not find input field on this platform' };
             }
 
             debugLog("Step 18: Found input field:", inputField.tagName, inputField.className);
 
-            // Simulate file drop (exact same as example extension)
-            debugLog("Step 19: About to simulate file drop...");
-            simulateFileDrop(file, inputField);
-            debugLog("Step 20: File drop simulated - insertion should be complete");
+            // Use platform-specific insertion method
+            debugLog("Step 19: About to insert file using platform-specific method...");
+            const insertResult = insertFileOnPlatform(file, inputField, platform);
+            debugLog("Step 20: File insertion result:", insertResult, "- insertion should be complete");
 
             return { success: true };
         } catch (fileError) {
@@ -426,11 +524,13 @@ setTimeout(() => {
   debugLog("EmoteMapping keys count:", emoteMapping ? Object.keys(emoteMapping).length : 0);
   debugLog("First 5 emote keys:", emoteMapping ? Object.keys(emoteMapping).slice(0, 5) : []);
 
-  // Test if we can detect messenger input
-  const messengerInput = findMessengerInputField();
-  debugLog("Messenger input found:", !!messengerInput);
-  if (messengerInput) {
-    debugLog("Messenger input type:", messengerInput.tagName, messengerInput.className);
+  // Test if we can detect input field for current platform
+  const platform = getCurrentPlatform();
+  const inputField = findInputField();
+  debugLog("Platform:", platform);
+  debugLog("Input field found:", !!inputField);
+  if (inputField) {
+    debugLog("Input field type:", inputField.tagName, inputField.className);
   }
 
   // If no emotes loaded, try again
