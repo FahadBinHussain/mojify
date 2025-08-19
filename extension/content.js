@@ -732,7 +732,7 @@ async function insertEmoteFromSuggestion(emoteKey, inputElement) {
         const platform = getCurrentPlatform();
         if (!platform) return;
 
-        // For contenteditable elements, replace the colon text
+        // For contenteditable elements, replace the colon text first
         if (inputElement.isContentEditable) {
             const selection = window.getSelection();
             if (selection.rangeCount > 0) {
@@ -749,14 +749,11 @@ async function insertEmoteFromSuggestion(emoteKey, inputElement) {
                         deleteRange.setStart(textNode, colonIndex);
                         deleteRange.setEnd(textNode, range.startOffset);
                         deleteRange.deleteContents();
-
-                        // Insert the emote
-                        await insertEmote(emoteKey);
                     }
                 }
             }
         } else {
-            // For regular input fields
+            // For regular input fields, remove the partial emote text
             const text = inputElement.value;
             const cursorPos = inputElement.selectionStart;
             const colonIndex = text.lastIndexOf(':', cursorPos);
@@ -764,12 +761,17 @@ async function insertEmoteFromSuggestion(emoteKey, inputElement) {
             if (colonIndex !== -1) {
                 const beforeColon = text.substring(0, colonIndex);
                 const afterCursor = text.substring(cursorPos);
-                inputElement.value = beforeColon + `[${emoteKey}]` + afterCursor;
+                inputElement.value = beforeColon + afterCursor;
 
-                const newPos = beforeColon.length + emoteKey.length + 2;
+                // Set cursor position after the removed text
+                const newPos = beforeColon.length;
                 inputElement.setSelectionRange(newPos, newPos);
             }
         }
+
+        // Always use remote insertion for all platforms
+        await insertEmote(emoteKey);
+
     } catch (error) {
         debugLog("Error inserting emote from suggestion:", error);
     }
