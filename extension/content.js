@@ -254,7 +254,9 @@ function updateDiscordMinibar() {
         if (discordBuffer.length > 1) {
             const query = discordBuffer.substring(1); // Remove the ':'
             debugLog("Discord interceptor showing suggestions for query:", query);
-            showDiscordEmoteSuggestions(query);
+            showDiscordEmoteSuggestions(query).catch(error => {
+                debugLog("Error showing Discord suggestions:", error);
+            });
         }
     } else {
         discordMinibar.style.opacity = '0';
@@ -378,7 +380,7 @@ function setupDiscordTextInterceptor() {
 }
 
 // Discord-specific emote suggestion functions
-function showDiscordEmoteSuggestions(query) {
+async function showDiscordEmoteSuggestions(query) {
     debugLog("showDiscordEmoteSuggestions called with query:", query);
     const suggestionBar = document.getElementById('mojify-suggestion-bar') || createEmoteSuggestionBar();
     const emoteList = document.getElementById('mojify-emote-list');
@@ -407,8 +409,27 @@ function showDiscordEmoteSuggestions(query) {
     // Clear previous suggestions
     emoteList.innerHTML = '';
 
-    // Add emote suggestions - use exact same code as regular suggestions
-    filteredEmotes.forEach((emoteKey, index) => {
+    // Load all emote data first, then render all at once
+    const emotePromises = filteredEmotes.map(async (emoteKey) => {
+        if (typeof emoteDB !== 'undefined') {
+            try {
+                const cachedEmote = await emoteDB.getEmote(emoteKey);
+                return { key: emoteKey, data: cachedEmote };
+            } catch (error) {
+                return { key: emoteKey, data: null };
+            }
+        }
+        return { key: emoteKey, data: null };
+    });
+
+    // Wait for all emotes to load
+    const emotesData = await Promise.all(emotePromises);
+
+    // Render all emotes at once
+    emotesData.forEach(({ key: emoteKey, data: cachedEmote }) => {
+        // Only render if we have valid emote data
+        if (!cachedEmote || !cachedEmote.dataUrl) return;
+
         const emoteItem = document.createElement('div');
         emoteItem.style.cssText = `
             cursor: pointer;
@@ -422,42 +443,14 @@ function showDiscordEmoteSuggestions(query) {
             min-width: 56px;
         `;
 
-        // Try to get cached emote for preview
+        // Create image with data already loaded
         const emoteImg = document.createElement('img');
         emoteImg.style.cssText = `
             width: 40px;
             height: 40px;
             object-fit: contain;
         `;
-
-        // Load emote preview if available
-        if (typeof emoteDB !== 'undefined') {
-            emoteDB.getEmote(emoteKey).then(cachedEmote => {
-                if (cachedEmote && cachedEmote.dataUrl) {
-                    emoteImg.src = cachedEmote.dataUrl;
-                } else {
-                    // Fallback to placeholder icon
-                    emoteImg.style.display = 'none';
-                    const placeholderIcon = document.createElement('i');
-                    placeholderIcon.className = 'fas fa-smile';
-                    placeholderIcon.style.cssText = `
-                        font-size: 24px;
-                        color: #9ca3af;
-                    `;
-                    emoteItem.appendChild(placeholderIcon);
-                }
-            }).catch(() => {
-                // Fallback to placeholder icon
-                emoteImg.style.display = 'none';
-                const placeholderIcon = document.createElement('i');
-                placeholderIcon.className = 'fas fa-smile';
-                placeholderIcon.style.cssText = `
-                    font-size: 24px;
-                    color: #9ca3af;
-                `;
-                emoteItem.appendChild(placeholderIcon);
-            });
-        }
+        emoteImg.src = cachedEmote.dataUrl;
 
         emoteItem.appendChild(emoteImg);
 
