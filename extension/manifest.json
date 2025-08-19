@@ -16,7 +16,9 @@
   ],
   "host_permissions": [
     "https://7tv.io/*",
-    "https://*.messenger.com/*"
+    "https://*.messenger.com/*",
+    "https://*.discord.com/*",
+    "https://*.discordapp.com/*"
   ],
   "background": {
     "service_worker": "background.js"

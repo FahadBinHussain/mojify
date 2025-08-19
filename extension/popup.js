@@ -163,9 +163,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const currentTab = tabs[0];
 
-      // Check if the current tab is messenger.com
-      if (!currentTab.url.includes('messenger.com')) {
-        showToast('This feature only works on messenger.com', 'error');
+      // Check if the current tab is on a supported platform
+      const isSupportedPlatform = currentTab.url.includes('messenger.com') ||
+                                 currentTab.url.includes('discord.com') ||
+                                 currentTab.url.includes('discordapp.com');
+
+      if (!isSupportedPlatform) {
+        showToast('This feature only works on supported platforms', 'error');
         if (emoteElement) resetEmoteLoadingState(emoteElement);
 
         // Add diagnostic info
@@ -173,9 +177,13 @@ document.addEventListener('DOMContentLoaded', () => {
         diagInfo.className = 'diagnostic-info';
         diagInfo.innerHTML = `
           <div class="diagnostic-header">
-            <h3>Not on Messenger</h3>
+            <h3>Unsupported Platform</h3>
             <p>Current URL: <code>${currentTab.url}</code></p>
-            <p>This feature only works on <code>messenger.com</code></p>
+            <p>This feature works on:</p>
+            <ul>
+              <li><code>messenger.com</code></li>
+              <li><code>discord.com</code></li>
+            </ul>
           </div>
         `;
 
@@ -239,7 +247,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="diagnostic-header">
                   <h3>Insertion Failed</h3>
                   <p>Error: ${error}</p>
-                  <p>Make sure you're on messenger.com and try clicking in the message input field first</p>
+                  <p>Make sure you're on a supported platform (Messenger or Discord) and try clicking in the message input field first</p>
                   <p>You can try reloading the page and trying again</p>
                 </div>
               `;
