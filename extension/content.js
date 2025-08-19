@@ -973,6 +973,11 @@ let currentPartialTextInfo = null;
 
 // Show emote suggestions
 function showEmoteSuggestions(query, inputElement) {
+    // Skip regular suggestions on Discord - use interceptor instead
+    if (getCurrentPlatform() === 'discord') {
+        return;
+    }
+
     const suggestionBar = document.getElementById('mojify-suggestion-bar') || createEmoteSuggestionBar();
     const emoteList = document.getElementById('mojify-emote-list');
 
@@ -1669,6 +1674,10 @@ async function handleInputEvent(event) {
 // Handle emote suggestions
 function handleEmoteSuggestions(event, target, currentText) {
   try {
+    // Skip regular emote suggestions on Discord - use interceptor instead
+    if (getCurrentPlatform() === 'discord') {
+      return;
+    }
     // Get cursor position
     let cursorPos;
     if (target.isContentEditable) {
