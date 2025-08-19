@@ -34,6 +34,12 @@
 
   let emoteMapping = {};
 
+  // Discord-specific variables for text interceptor
+  let discordState = 'NORMAL'; // 'NORMAL' or 'INTERCEPTING'
+  let discordBuffer = '';
+  let discordMinibar = null;
+  let discordEditor = null;
+
 // IndexedDB wrapper for emote storage (same as background.js)
 const emoteDB = {
   async getEmote(key) {
@@ -186,6 +192,340 @@ function getCurrentPlatform() {
     if (hostname.includes('web.telegram.org') || hostname.includes('telegram.org')) return 'telegram';
     if (hostname.includes('web.whatsapp.com')) return 'whatsapp';
     return null;
+}
+
+// Discord-specific text interceptor functions
+function findReactProps(dom) {
+    const key = Object.keys(dom).find(key => key.startsWith('__reactFiber$'));
+    if (!key) return null;
+    let fiber = dom[key];
+    while (fiber) {
+        if (fiber.memoizedProps && typeof fiber.memoizedProps.setQuery === 'function') {
+            return fiber.memoizedProps;
+        }
+        fiber = fiber.return;
+    }
+    return null;
+}
+
+function createDiscordMinibar() {
+    if (document.getElementById('discord-text-interceptor-minibar')) {
+        return document.getElementById('discord-text-interceptor-minibar');
+    }
+
+    const bar = document.createElement('div');
+    bar.id = 'discord-text-interceptor-minibar';
+    bar.style.cssText = `
+        position: absolute;
+        background-color: #2b2d31;
+        color: #dbdee1;
+        border: 1px solid #1e1f22;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-family: 'gg sans', 'Noto Sans', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        font-size: 1rem;
+        z-index: 9999;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.1s ease-in-out;
+    `;
+    document.body.appendChild(bar);
+    return bar;
+}
+
+function updateDiscordMinibar() {
+    if (!discordMinibar) return;
+
+    if (discordState === 'INTERCEPTING') {
+        discordMinibar.textContent = discordBuffer;
+        discordMinibar.style.opacity = '1';
+
+        if (discordEditor) {
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                const rect = range.getBoundingClientRect();
+                discordMinibar.style.left = `${rect.left + window.scrollX}px`;
+                discordMinibar.style.top = `${rect.top + window.scrollY - discordMinibar.offsetHeight - 4}px`;
+            }
+        }
+
+        // Trigger emote suggestions based on the buffer
+        if (discordBuffer.length > 1) {
+            const query = discordBuffer.substring(1); // Remove the ':'
+            debugLog("Discord interceptor showing suggestions for query:", query);
+            showDiscordEmoteSuggestions(query);
+        }
+    } else {
+        discordMinibar.style.opacity = '0';
+        hideDiscordSuggestions();
+    }
+}
+
+function flushDiscordBuffer() {
+    if (!discordEditor) return;
+
+    const props = findReactProps(discordEditor);
+    if (props && discordBuffer.length > 0) {
+        props.setQuery(props.query + discordBuffer);
+    }
+    resetDiscordState();
+}
+
+function resetDiscordState() {
+    discordState = 'NORMAL';
+    discordBuffer = '';
+    updateDiscordMinibar();
+    hideDiscordSuggestions();
+}
+
+function setupDiscordTextInterceptor() {
+    console.log("[Mojify] Discord text interceptor v1.0 loaded. Waiting for editor.");
+
+    const bodyObserver = new MutationObserver(() => {
+        const editor = document.querySelector('div[role="textbox"][data-slate-editor="true"]');
+        if (editor && !editor.dataset.mojifyAttached) {
+            editor.dataset.mojifyAttached = 'true';
+            discordEditor = editor;
+            discordMinibar = createDiscordMinibar();
+            console.log("%c[Mojify] Discord editor found! Attaching text interceptor.", "color: green; font-weight: bold;");
+
+            editor.addEventListener('keydown', (event) => {
+                if (discordState === 'NORMAL') {
+                    if (event.key === ':') {
+                        event.preventDefault();
+                        discordState = 'INTERCEPTING';
+                        discordBuffer = ':';
+                        updateDiscordMinibar();
+                    }
+                    return;
+                }
+
+                if (discordState === 'INTERCEPTING') {
+                    // Handle double colon case
+                    if (discordBuffer === ':' && event.key === ':') {
+                        console.log("[Mojify] Double colon detected. Flushing and allowing pass-through.");
+                        flushDiscordBuffer();
+                        return;
+                    }
+
+                    event.preventDefault();
+
+                    switch (event.key) {
+                        case 'Backspace':
+                            discordBuffer = discordBuffer.slice(0, -1);
+                            if (discordBuffer.length === 0) {
+                                resetDiscordState();
+                            } else {
+                                updateDiscordMinibar();
+                            }
+                            break;
+
+                        case 'Enter':
+                        case ' ':
+                        case 'Tab':
+                            flushDiscordBuffer();
+                            const props = findReactProps(editor);
+                            if (props) props.setQuery(props.query + event.key);
+                            break;
+
+                        case 'Escape':
+                            resetDiscordState();
+                            break;
+
+                        default:
+                            if (event.key.length === 1) {
+                                discordBuffer += event.key;
+                                updateDiscordMinibar();
+                            }
+                            break;
+                    }
+                }
+            }, true);
+
+            editor.addEventListener('blur', () => {
+                if (discordState === 'INTERCEPTING') {
+                    flushDiscordBuffer();
+                }
+            }, true);
+
+            bodyObserver.disconnect();
+        }
+    });
+
+    bodyObserver.observe(document.body, { childList: true, subtree: true });
+}
+
+// Discord-specific emote suggestion functions
+function showDiscordEmoteSuggestions(query) {
+    debugLog("showDiscordEmoteSuggestions called with query:", query);
+    const suggestionBar = document.getElementById('mojify-suggestion-bar') || createEmoteSuggestionBar();
+    const emoteList = document.getElementById('mojify-emote-list');
+
+    if (!emoteMapping || Object.keys(emoteMapping).length === 0) {
+        debugLog("No emote mapping available for Discord suggestions");
+        hideDiscordSuggestions();
+        return;
+    }
+
+    // Filter emotes based on query
+    const filteredEmotes = Object.keys(emoteMapping).filter(key => {
+        const cleanKey = key.replace(/:/g, '').toLowerCase();
+        const cleanQuery = query.toLowerCase();
+        return cleanKey.includes(cleanQuery);
+    }).slice(0, 6); // Limit to 6 suggestions
+
+    if (filteredEmotes.length === 0) {
+        debugLog("No filtered emotes found for query:", query);
+        hideDiscordSuggestions();
+        return;
+    }
+
+    debugLog("Found filtered emotes:", filteredEmotes);
+
+    // Clear previous suggestions
+    emoteList.innerHTML = '';
+
+    // Add emote suggestions
+    filteredEmotes.forEach((emoteKey, index) => {
+        const emoteItem = document.createElement('div');
+        emoteItem.style.cssText = `
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            flex-shrink: 0;
+            min-width: 56px;
+        `;
+
+        // First set fallback text
+        emoteItem.textContent = emoteKey.replace(/:/g, '');
+        emoteItem.style.fontSize = '12px';
+        emoteItem.style.color = '#b9bbbe';
+
+        debugLog("Discord suggestions: Loading emote", emoteKey);
+
+        // Try to get cached emote for preview
+        emoteDB.getEmote(emoteKey).then(result => {
+            debugLog("Discord suggestions: Emote result for", emoteKey, result ? "found" : "not found");
+            if (result) {
+                let imageUrl;
+
+                // Check if result is already a blob URL or base64 data URL
+                if (typeof result === 'string') {
+                    if (result.startsWith('blob:') || result.startsWith('data:')) {
+                        imageUrl = result;
+                    } else {
+                        // Assume it's a regular URL
+                        imageUrl = result;
+                    }
+                } else if (result instanceof Blob) {
+                    // Convert blob to object URL
+                    imageUrl = URL.createObjectURL(result);
+                } else {
+                    debugLog("Discord suggestions: Unknown result type for", emoteKey, typeof result);
+                    return;
+                }
+
+                // Clear text content
+                emoteItem.textContent = '';
+
+                const img = document.createElement('img');
+                img.src = imageUrl;
+                img.style.cssText = `
+                    width: 40px;
+                    height: 40px;
+                    object-fit: contain;
+                    transition: transform 0.2s ease;
+                `;
+
+                img.onload = () => {
+                    debugLog("Discord suggestions: Image loaded for", emoteKey);
+                    emoteItem.appendChild(img);
+                };
+
+                img.onerror = () => {
+                    debugLog("Discord suggestions: Image failed to load for", emoteKey);
+                    // Restore text fallback if image fails
+                    emoteItem.textContent = emoteKey.replace(/:/g, '');
+                };
+
+                emoteItem.addEventListener('mouseenter', () => {
+                    if (img.parentNode) {
+                        img.style.transform = 'scale(1.2)';
+                    }
+                    emoteItem.style.background = 'rgba(79, 84, 92, 0.16)';
+                });
+
+                emoteItem.addEventListener('mouseleave', () => {
+                    if (img.parentNode) {
+                        img.style.transform = 'scale(1)';
+                    }
+                    emoteItem.style.background = 'transparent';
+                });
+            }
+        }).catch((error) => {
+            debugLog("Discord suggestions: Error getting emote", emoteKey, error);
+            // Text fallback is already set above
+        });
+
+        // Click handler for Discord interceptor
+        emoteItem.addEventListener('click', () => {
+            insertEmoteFromDiscordInterceptor(emoteKey);
+        });
+
+        emoteList.appendChild(emoteItem);
+    });
+
+    // Position and show the suggestion bar near the Discord minibar
+    if (discordMinibar) {
+        const minibarRect = discordMinibar.getBoundingClientRect();
+        suggestionBar.style.left = `${minibarRect.left + window.scrollX}px`;
+        suggestionBar.style.top = `${minibarRect.bottom + window.scrollY + 4}px`;
+    }
+
+    suggestionBar.style.display = 'block';
+    debugLog("Discord suggestion bar displayed with", filteredEmotes.length, "emotes");
+}
+
+function hideDiscordSuggestions() {
+    const suggestionBar = document.getElementById('mojify-suggestion-bar');
+    if (suggestionBar) {
+        suggestionBar.style.display = 'none';
+    }
+}
+
+function hideSuggestions() {
+    // Don't hide suggestions if Discord interceptor is active
+    if (getCurrentPlatform() === 'discord' && discordState === 'INTERCEPTING') {
+        debugLog("Discord interceptor active - preventing suggestion hiding");
+        return;
+    }
+
+    debugLog("Hiding suggestions - Discord state:", discordState);
+    const suggestionBar = document.getElementById('mojify-suggestion-bar');
+    if (suggestionBar) {
+        suggestionBar.style.display = 'none';
+    }
+    // Clear partial text info when hiding suggestions
+    currentPartialTextInfo = null;
+}
+
+async function insertEmoteFromDiscordInterceptor(emoteKey) {
+    try {
+        // Clear the current buffer and minibar
+        resetDiscordState();
+
+        // Insert the emote
+        await insertEmote(emoteKey, discordEditor);
+
+        debugLog(`Inserted emote from Discord interceptor: ${emoteKey}`);
+    } catch (error) {
+        debugLog("Error inserting emote from Discord interceptor:", error);
+    }
 }
 
 // Find input field for any supported platform
@@ -733,15 +1073,7 @@ function showEmoteSuggestions(query, inputElement) {
     suggestionBar.style.display = 'block';
 }
 
-// Hide suggestions
-function hideSuggestions() {
-    const suggestionBar = document.getElementById('mojify-suggestion-bar');
-    if (suggestionBar) {
-        suggestionBar.style.display = 'none';
-    }
-    // Clear partial text info when hiding suggestions
-    currentPartialTextInfo = null;
-}
+
 
 // Get saved position for current site
 function getSavedPosition() {
@@ -1125,6 +1457,11 @@ async function handleInputEvent(event) {
 
   if (isProcessingEmote) return;
 
+  // Skip regular input handling if Discord interceptor is active
+  if (getCurrentPlatform() === 'discord' && discordState === 'INTERCEPTING') {
+    return;
+  }
+
   // Only process in text fields
   if (!(target.isContentEditable || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT')) {
     return;
@@ -1293,8 +1630,10 @@ function handleEmoteSuggestions(event, target, currentText) {
       }
     }
 
-    // Hide suggestions if not in emote context
-    hideSuggestions();
+    // Hide suggestions if not in emote context (but not for Discord interceptor)
+    if (getCurrentPlatform() !== 'discord' || discordState !== 'INTERCEPTING') {
+        hideSuggestions();
+    }
   } catch (error) {
     debugLog("Error handling emote suggestions:", error);
   }
@@ -1361,6 +1700,16 @@ setTimeout(() => {
 }, 2000);
 
 // Continue with Mojify initialization
+
+// Initialize Discord text interceptor if on Discord
+if (getCurrentPlatform() === 'discord') {
+  debugLog("Discord platform detected - initializing text interceptor");
+  window.addEventListener('load', setupDiscordTextInterceptor, false);
+  // Also try immediate setup in case page is already loaded
+  if (document.readyState === 'complete') {
+    setupDiscordTextInterceptor();
+  }
+}
 
 // Additional check after longer delay
 setTimeout(() => {
