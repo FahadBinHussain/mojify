@@ -407,7 +407,7 @@ function showDiscordEmoteSuggestions(query) {
     // Clear previous suggestions
     emoteList.innerHTML = '';
 
-    // Add emote suggestions
+    // Add emote suggestions - use exact same code as regular suggestions
     filteredEmotes.forEach((emoteKey, index) => {
         const emoteItem = document.createElement('div');
         emoteItem.style.cssText = `
@@ -422,13 +422,12 @@ function showDiscordEmoteSuggestions(query) {
             min-width: 56px;
         `;
 
-        // Try to get cached emote for preview - use exact same code as regular suggestions
+        // Try to get cached emote for preview
         const emoteImg = document.createElement('img');
         emoteImg.style.cssText = `
             width: 40px;
             height: 40px;
             object-fit: contain;
-            transition: transform 0.2s ease;
         `;
 
         // Load emote preview if available
@@ -436,7 +435,6 @@ function showDiscordEmoteSuggestions(query) {
             emoteDB.getEmote(emoteKey).then(cachedEmote => {
                 if (cachedEmote && cachedEmote.dataUrl) {
                     emoteImg.src = cachedEmote.dataUrl;
-                    emoteItem.appendChild(emoteImg);
                 } else {
                     // Fallback to placeholder icon
                     emoteImg.style.display = 'none';
@@ -459,34 +457,57 @@ function showDiscordEmoteSuggestions(query) {
                 `;
                 emoteItem.appendChild(placeholderIcon);
             });
-        } else {
-            // Fallback to placeholder icon
-            const placeholderIcon = document.createElement('i');
-            placeholderIcon.className = 'fas fa-smile';
-            placeholderIcon.style.cssText = `
-                font-size: 24px;
-                color: #9ca3af;
-            `;
-            emoteItem.appendChild(placeholderIcon);
         }
+
+        emoteItem.appendChild(emoteImg);
+
+        // Create floating command tooltip
+        const commandTooltip = document.createElement('div');
+        commandTooltip.style.cssText = `
+            position: absolute;
+            bottom: -22px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            font-size: 9px;
+            font-family: 'Courier New', monospace;
+            padding: 3px 6px;
+            border-radius: 4px;
+            white-space: nowrap;
+            opacity: 1;
+            pointer-events: none;
+            transition: opacity 0.2s;
+            backdrop-filter: blur(10px);
+            z-index: 1001;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            max-width: 70px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        `;
+        commandTooltip.textContent = emoteKey;
+
+        emoteItem.appendChild(commandTooltip);
 
         // Hover effects
         emoteItem.addEventListener('mouseenter', () => {
-            if (emoteImg.style.display !== 'none') {
-                emoteImg.style.transform = 'scale(1.2)';
-            }
+            emoteImg.style.transform = 'scale(1.2)';
             emoteItem.style.background = 'rgba(79, 84, 92, 0.16)';
         });
 
         emoteItem.addEventListener('mouseleave', () => {
-            if (emoteImg.style.display !== 'none') {
-                emoteImg.style.transform = 'scale(1)';
-            }
+            emoteImg.style.transform = 'scale(1)';
             emoteItem.style.background = 'transparent';
         });
 
         // Click handler for Discord interceptor
         emoteItem.addEventListener('click', () => {
+            // Add click feedback
+            emoteItem.style.transform = 'scale(0.9)';
+            setTimeout(() => {
+                emoteItem.style.transform = 'translateY(-3px) scale(1.1)';
+            }, 150);
+
             insertEmoteFromDiscordInterceptor(emoteKey);
         });
 
