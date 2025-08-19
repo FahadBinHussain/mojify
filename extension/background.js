@@ -1937,6 +1937,22 @@ async function startMonitoringTab(tabId) {
   if (monitoringTabs.has(tabId)) return;
 
   try {
+    // Check if tab is on a supported site first
+    const tab = await chrome.tabs.get(tabId);
+    const supportedSites = [
+      'messenger.com',
+      'discord.com',
+      'discordapp.com',
+      'facebook.com',
+      'telegram.org',
+      'web.whatsapp.com'
+    ];
+
+    const isSupported = supportedSites.some(site => tab.url.includes(site));
+    if (!isSupported) {
+      // Silently skip unsupported sites
+      return;
+    }
     // Inject input listener
     await chrome.scripting.executeScript({
       target: { tabId: tabId },
@@ -1963,6 +1979,14 @@ async function startMonitoringTab(tabId) {
     monitoringTabs.add(tabId);
     console.log("[Mojify] Started monitoring tab:", tabId);
   } catch (error) {
+    // Handle restricted URLs and unsupported sites gracefully
+    if (error.message && (error.message.includes('chrome://') ||
+                         error.message.includes('edge://') ||
+                         error.message.includes('Cannot access contents') ||
+                         error.message.includes('Extension manifest must request permission'))) {
+      // Silently ignore restricted URL errors
+      return;
+    }
     console.error("[Mojify] Error setting up tab monitoring:", error);
   }
 }
