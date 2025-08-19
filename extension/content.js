@@ -336,6 +336,27 @@ function setupDiscordTextInterceptor() {
                         default:
                             if (event.key.length === 1) {
                                 discordBuffer += event.key;
+
+                                // Check if we have a complete emote command
+                                if (event.key === ':' && discordBuffer.length > 2) {
+                                    const emoteName = discordBuffer.slice(1, -1); // Remove both colons
+                                    const emoteKey = `:${emoteName}:`;
+
+                                    // Check if this emote exists in our mapping
+                                    if (emoteMapping && (emoteMapping[emoteKey] || emoteMapping[emoteName])) {
+                                        event.preventDefault();
+                                        debugLog("Discord interceptor: Auto-inserting emote", emoteKey);
+
+                                        // Reset state first
+                                        resetDiscordState();
+
+                                        // Insert the emote
+                                        const finalEmoteKey = emoteMapping[emoteKey] ? emoteKey : emoteName;
+                                        insertEmote(finalEmoteKey, discordEditor);
+                                        return;
+                                    }
+                                }
+
                                 updateDiscordMinibar();
                             }
                             break;
