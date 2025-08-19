@@ -514,12 +514,10 @@ function createEmoteSuggestionBar() {
     suggestionBar.id = 'mojify-suggestion-bar';
     suggestionBar.style.cssText = `
         position: fixed;
-        background: rgba(255, 255, 255, 0.95);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: transparent;
+        border: none;
         border-radius: 16px;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.12);
-        overflow: hidden;
+        overflow: visible;
         z-index: 10000;
         display: none;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -540,6 +538,7 @@ function createEmoteSuggestionBar() {
         max-width: 400px;
         scrollbar-width: none;
         -ms-overflow-style: none;
+        padding-bottom: 40px;
     `;
 
     // Hide scrollbar for webkit browsers
@@ -674,21 +673,22 @@ function showEmoteSuggestions(query, inputElement) {
         const commandTooltip = document.createElement('div');
         commandTooltip.style.cssText = `
             position: absolute;
-            bottom: -28px;
+            bottom: -32px;
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.8);
+            background: rgba(0, 0, 0, 0.9);
             color: white;
             font-size: 10px;
             font-family: 'Courier New', monospace;
             padding: 4px 8px;
             border-radius: 6px;
             white-space: nowrap;
-            opacity: 0;
+            opacity: 1;
             pointer-events: none;
             transition: opacity 0.2s;
             backdrop-filter: blur(10px);
-            z-index: 1000;
+            z-index: 1001;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         `;
         commandTooltip.textContent = emoteKey;
 
@@ -699,12 +699,14 @@ function showEmoteSuggestions(query, inputElement) {
             emoteItem.style.transform = 'translateY(-3px) scale(1.1)';
             emoteItem.style.filter = 'drop-shadow(0 6px 12px rgba(112, 80, 199, 0.3))';
             commandTooltip.style.opacity = '1';
+            commandTooltip.style.transform = 'translateX(-50%) translateY(2px)';
         });
 
         emoteItem.addEventListener('mouseleave', () => {
             emoteItem.style.transform = 'translateY(0) scale(1)';
             emoteItem.style.filter = 'none';
-            commandTooltip.style.opacity = '0';
+            commandTooltip.style.opacity = '1';
+            commandTooltip.style.transform = 'translateX(-50%) translateY(0px)';
         });
 
         // Click to insert emote
