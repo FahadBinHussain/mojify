@@ -515,34 +515,55 @@ function createEmoteSuggestionBar() {
     suggestionBar.style.cssText = `
         position: fixed;
         background: #ffffff;
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        max-height: 200px;
-        overflow-y: auto;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+        max-height: 360px;
+        overflow: hidden;
         z-index: 10000;
         display: none;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        font-size: 14px;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        min-width: 280px;
+        max-width: 320px;
         cursor: move;
     `;
 
     const header = document.createElement('div');
     header.style.cssText = `
-        padding: 8px 12px;
-        background: #f5f5f5;
-        border-bottom: 1px solid #e0e0e0;
+        padding: 12px 16px;
+        background: linear-gradient(135deg, #7050c7, #8b5cf6);
+        color: white;
         font-weight: 600;
-        color: #333;
-        font-size: 12px;
+        font-size: 13px;
         cursor: move;
         user-select: none;
+        display: flex;
+        align-items: center;
+        gap: 8px;
     `;
-    header.textContent = 'Emote Suggestions (Draggable)';
+
+    const headerIcon = document.createElement('i');
+    headerIcon.style.cssText = `
+        font-size: 14px;
+        opacity: 0.9;
+    `;
+    headerIcon.className = 'fas fa-magic';
+
+    const headerText = document.createElement('span');
+    headerText.textContent = 'Emote Suggestions';
+
+    header.appendChild(headerIcon);
+    header.appendChild(headerText);
     suggestionBar.appendChild(header);
 
     const emoteList = document.createElement('div');
     emoteList.id = 'mojify-emote-list';
+    emoteList.style.cssText = `
+        max-height: 300px;
+        overflow-y: auto;
+        padding: 8px;
+        background: #f9fafb;
+    `;
     suggestionBar.appendChild(emoteList);
 
     // Make draggable
@@ -614,34 +635,141 @@ function showEmoteSuggestions(query, inputElement) {
     filteredEmotes.forEach((emoteKey, index) => {
         const emoteItem = document.createElement('div');
         emoteItem.style.cssText = `
-            padding: 8px 12px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #e5e7eb;
+            margin-bottom: 6px;
             cursor: pointer;
-            border-bottom: 1px solid #f0f0f0;
             display: flex;
             align-items: center;
-            gap: 8px;
-            transition: background-color 0.2s;
+            gap: 12px;
+            padding: 10px 12px;
+            transition: all 0.2s ease;
+            position: relative;
+            overflow: hidden;
         `;
 
-        const emoteName = document.createElement('span');
+        // Create emote preview container
+        const emotePreview = document.createElement('div');
+        emotePreview.style.cssText = `
+            width: 32px;
+            height: 32px;
+            background: #f9fafb;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        `;
+
+        // Try to get cached emote for preview
+        const emoteImg = document.createElement('img');
+        emoteImg.style.cssText = `
+            max-width: 28px;
+            max-height: 28px;
+            object-fit: contain;
+        `;
+
+        // Load emote preview if available
+        if (typeof emoteDB !== 'undefined') {
+            emoteDB.getEmote(emoteKey).then(cachedEmote => {
+                if (cachedEmote && cachedEmote.dataUrl) {
+                    emoteImg.src = cachedEmote.dataUrl;
+                } else {
+                    // Fallback to placeholder icon
+                    emoteImg.style.display = 'none';
+                    const placeholderIcon = document.createElement('i');
+                    placeholderIcon.className = 'fas fa-smile';
+                    placeholderIcon.style.cssText = `
+                        font-size: 16px;
+                        color: #9ca3af;
+                    `;
+                    emotePreview.appendChild(placeholderIcon);
+                }
+            }).catch(() => {
+                // Fallback to placeholder icon
+                emoteImg.style.display = 'none';
+                const placeholderIcon = document.createElement('i');
+                placeholderIcon.className = 'fas fa-smile';
+                placeholderIcon.style.cssText = `
+                    font-size: 16px;
+                    color: #9ca3af;
+                `;
+                emotePreview.appendChild(placeholderIcon);
+            });
+        }
+
+        emotePreview.appendChild(emoteImg);
+
+        // Create text content
+        const textContent = document.createElement('div');
+        textContent.style.cssText = `
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        `;
+
+        const emoteName = document.createElement('div');
         emoteName.style.cssText = `
-            font-weight: 500;
-            color: #333;
+            font-weight: 600;
+            color: #27272a;
+            font-size: 13px;
+            line-height: 1.2;
         `;
         emoteName.textContent = emoteKey.replace(/:/g, '');
 
-        emoteItem.appendChild(emoteName);
+        const emoteTrigger = document.createElement('div');
+        emoteTrigger.style.cssText = `
+            font-size: 11px;
+            color: #71717a;
+            font-family: 'Courier New', monospace;
+            opacity: 0.8;
+        `;
+        emoteTrigger.textContent = emoteKey;
 
-        // Hover effect
+        textContent.appendChild(emoteName);
+        textContent.appendChild(emoteTrigger);
+
+        // Create click hint
+        const clickHint = document.createElement('div');
+        clickHint.style.cssText = `
+            font-size: 10px;
+            color: #7050c7;
+            font-weight: 500;
+            opacity: 0;
+            transition: opacity 0.2s;
+            white-space: nowrap;
+        `;
+        clickHint.textContent = 'Click to insert';
+
+        emoteItem.appendChild(emotePreview);
+        emoteItem.appendChild(textContent);
+        emoteItem.appendChild(clickHint);
+
+        // Hover effects
         emoteItem.addEventListener('mouseenter', () => {
-            emoteItem.style.backgroundColor = '#f0f7ff';
+            emoteItem.style.transform = 'translateY(-1px)';
+            emoteItem.style.boxShadow = '0 4px 8px rgba(0,0,0,0.08)';
+            emoteItem.style.borderColor = '#7050c7';
+            clickHint.style.opacity = '1';
         });
+
         emoteItem.addEventListener('mouseleave', () => {
-            emoteItem.style.backgroundColor = 'transparent';
+            emoteItem.style.transform = 'translateY(0)';
+            emoteItem.style.boxShadow = 'none';
+            emoteItem.style.borderColor = '#e5e7eb';
+            clickHint.style.opacity = '0';
         });
 
         // Click to insert emote
         emoteItem.addEventListener('click', () => {
+            // Add click feedback
+            emoteItem.style.transform = 'scale(0.98)';
+            setTimeout(() => {
+                emoteItem.style.transform = 'translateY(-1px)';
+            }, 100);
+
             insertEmoteFromSuggestion(emoteKey, inputElement);
             hideSuggestions();
         });
