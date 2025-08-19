@@ -1,161 +1,234 @@
-# Mojify
+# Mojify - Browser Extension
 
-<img src="https://wakapi-qt1b.onrender.com/api/badge/fahad/interval:any/project:Mojify" 
-     alt="Wakapi Time Tracking" 
-     title="Spent more than that amount of time spent on this project">
+<img src="https://wakapi-qt1b.onrender.com/api/badge/fahad/interval:any/project:Mojify"
+     alt="Wakapi Time Tracking"
+     title="Time spent on this project">
 
-A sleek, modern emoji and emote clipboard manager built with Tauri and Svelte.
+A powerful browser extension that brings Twitch emotes to any website with intelligent suggestions and seamless integration.
 
-![Mojify Screenshot](animation.gif)
+![Mojify Demo](animation.gif)
 
-## Features
+## ✨ Features
 
-- 🎨 **Modern, glass-like UI**: Beautiful, sleek design inspired by Windows 11
-- 🔍 **Instant search**: Quickly find any emoji or emote
-- ⌨️ **Global shortcut**: Access emojis from anywhere with `Alt+Space`
-- 🌓 **Dark/Light mode**: Switch between themes based on your preference
-- 🔄 **System tray integration**: Always accessible from your taskbar
-- 📋 **Windows Clipboard-like experience**: Pop up when needed, hide when not in use
-- 🚀 **Fast and lightweight**: Built with performance in mind
+### 🎯 **Smart Emote Integration**
+- **Universal Emote Support**: Use Twitch emotes anywhere on the web
+- **Intelligent Minibar**: Real-time emote suggestions with modern floating UI
+- **Auto-Complete**: Type `:emote_name:` and watch it transform into the actual emote
+- **Click-to-Insert**: Select emotes from the suggestion bar with a single click
 
-## Technology Stack
+### 🌐 **Platform Support**
+- **Messenger** (Facebook Messenger)
+- **Discord** 
+- **WhatsApp Web**
+- **Telegram Web**
+- **Facebook**
+- And more platforms being added regularly!
 
-- **[Tauri](https://tauri.app/)**: Lightweight, secure desktop framework
-- **[Svelte](https://svelte.dev/)**: Component-based UI framework
-- **[Vite](https://vitejs.dev/)**: Modern frontend build tool
+### 🎨 **Modern User Experience**
+- **Glassmorphism Design**: Beautiful, modern UI with blur effects
+- **Minimal Floating Bar**: Clean emote picker that stays out of your way
+- **Responsive Suggestions**: Instant emote filtering as you type
+- **Position Memory**: Remembers minibar position per website
+- **Smooth Animations**: Elegant hover effects and transitions
 
-## Getting Started
+### ⚡ **Advanced Technology**
+- **Intelligent Caching**: Fast emote loading with IndexedDB storage
+- **Real-time Updates**: Automatic background emote syncing
+- **Progressive Downloads**: Smart batching and priority-based downloading
+- **Cross-platform File Insertion**: Advanced drag-and-drop simulation
 
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) 18 or higher
-- [Rust](https://www.rust-lang.org/tools/install) and Cargo (for Tauri)
-- [Tauri CLI](https://tauri.app/v1/guides/getting-started/prerequisites/) - System dependencies for your OS
-
-#### Setting Up Rust and Tauri
-1. Install Rust using [rustup](https://rustup.rs/):
-   ```bash
-   # Windows
-   winget install Rustlang.Rustup
-   # OR curl method (works on all platforms)
-   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-   ```
-
-2. Ensure Rust and Cargo are in your PATH (may require terminal restart)
-
-3. Install OS-specific dependencies for Tauri:
-   - **Windows**: Microsoft Visual Studio C++ Build Tools (install via [Visual Studio Installer](https://visualstudio.microsoft.com/visual-cpp-build-tools/))
-   - **macOS**: Xcode Command Line Tools (`xcode-select --install`)
-   - **Linux**: Refer to [Tauri prerequisites](https://tauri.app/v1/guides/getting-started/prerequisites)
+## 🚀 Quick Start
 
 ### Installation
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/mojify.git
-   cd mojify
-   ```
+1. **Load the Extension**:
+   - Open Chrome and go to `chrome://extensions/`
+   - Enable "Developer mode" in the top right
+   - Click "Load unpacked" and select the `extension` folder
 
-2. Install frontend dependencies:
-   ```bash
-   cd frontend
-   npm install
-   ```
+2. **Configure Channels**:
+   - Click the Mojify extension icon
+   - Go to "Settings" tab
+   - Add Twitch channel IDs (e.g., `xqc`, `forsen`, `sodapoppin`)
+   - Click "Save Channel IDs"
 
-### Running the Application
+3. **Download Emotes**:
+   - Click "Refresh Emotes" to download emote library
+   - Wait for download completion
 
-#### Method 1: Using separate terminal windows
-1. Start the frontend development server:
-   ```bash
-   # Navigate to frontend directory if not already there
-   cd frontend
-   npm run dev
-   ```
+### Usage
 
-2. In a separate terminal, build and run the Tauri application:
-   ```bash
-   # Navigate to the src-tauri directory from project root
-   cd src-tauri
-   cargo run
-   ```
-
-#### Method 2: Install Tauri CLI and run together
-1. Install the Tauri CLI globally:
-   ```bash
-   npm install -g @tauri-apps/cli
-   ```
-
-2. Run from the project root:
-   ```bash
-   # From the project root
-   tauri dev
-   ```
-
-### Building for Production
-
-1. Build the frontend first:
-   ```bash
-   cd frontend
-   npm run build
-   ```
-
-2. From the project root, build the Tauri application:
-   ```bash
-   # If you have Tauri CLI installed globally
-   tauri build
-   
-   # OR directly with cargo
-   cd src-tauri
-   cargo build --release
-   ```
-
-The built application will be in the `src-tauri/target/release` directory:
-- Windows: Look for `Mojify_x.x.x_x64_en-US.msi` installer
-- macOS: `Mojify.app`
-- Linux: AppImage, Debian package, or other formats depending on configuration
-
-### Troubleshooting
-
-- If you encounter build errors, ensure all prerequisites are correctly installed
-- For Rust-related issues, try `cargo clean` before rebuilding
-- Check the [Tauri documentation](https://tauri.app/v1/guides/debugging/application/) for debugging tips
-- If you see "Missing script" errors, double-check which directory you're in. Frontend scripts are in the `frontend` directory
-- For Windows users: Make sure you're running commands in a shell with administrator privileges when necessary
-
-## Usage
-
-- **Global Shortcut**: Press `Alt+Space` to open Mojify from anywhere
-- **System Tray**: Click the Mojify icon in your system tray to show/hide the app
-- **Search**: Type to instantly filter emojis
-- **Categories**: Browse emojis by category
-- **Copy to Clipboard**: Click any emoji to copy it to your clipboard and dismiss the app
-
-## Customization
-
-### Adding Custom Emotes
-
-You can add custom emotes by modifying the emojis data in the Svelte components.
-
-### Changing the Global Shortcut
-
-To change the global shortcut, modify the `register` call in `src-tauri/src/main.rs`:
-
-```rust
-app.global_shortcut_manager()
-    .register("YOUR_CUSTOM_SHORTCUT", move || {
-        // ...
-    })
+#### **Method 1: Auto-Complete Typing**
+```
+Type: :kappa:
+Result: 🐸 (actual Kappa emote image)
 ```
 
-## License
+#### **Method 2: Smart Suggestions**
+1. Start typing `:angry` on any supported website
+2. Minibar appears with matching emotes
+3. Click any emote to insert it instantly
+4. Partial text is automatically cleaned up
+
+#### **Method 3: Extension Popup**
+1. Click the extension icon
+2. Browse or search emotes
+3. Click any emote to insert on supported sites
+
+## 🔧 Technical Architecture
+
+### Core Components
+
+- **Content Script** (`content.js`): Handles page interaction and emote insertion
+- **Background Service** (`background.js`): Manages downloads and storage
+- **Popup Interface** (`popup.html/js/css`): Extension configuration and browsing
+- **Manifest V3**: Modern extension architecture
+
+### Smart Features
+
+#### **Intelligent Minibar**
+- **Real-time Filtering**: Suggests emotes as you type
+- **Position Persistence**: Remembers location per domain using localStorage
+- **Collision Detection**: Prevents text overlap with smart spacing
+- **Performance Optimized**: Efficient DOM manipulation and caching
+
+#### **Advanced Download System**
+- **Incremental Updates**: Only downloads new/changed emotes
+- **Progress Tracking**: Real-time download status with detailed feedback
+- **Error Recovery**: Robust handling of network issues
+- **Batch Processing**: Intelligent grouping for optimal performance
+
+#### **Cross-Platform Insertion**
+- **Multiple Methods**: File dropping, clipboard simulation, direct injection
+- **Platform Detection**: Automatic adaptation to different websites
+- **Input Field Discovery**: Smart detection of text input areas
+- **Fallback Systems**: Multiple insertion strategies for reliability
+
+## 🎨 Customization
+
+### Minibar Appearance
+The minibar automatically adapts to each website while maintaining its minimal design:
+- Transparent background with blur effects
+- Floating emote previews with command tooltips
+- Smooth scaling and hover animations
+- Compact horizontal layout
+
+### Adding Custom Channels
+1. Open extension popup
+2. Navigate to Settings tab
+3. Add channel IDs (usernames) in the text area
+4. Save and refresh emotes
+
+### Position Adjustment
+- Drag the minibar to your preferred position
+- Position is automatically saved per website
+- Reset by refreshing the page
+
+## 🔍 Debugging
+
+### Debug Tools (Built-in)
+The extension includes comprehensive debugging tools:
+
+1. **Open Extension Popup**
+2. **Go to Settings > Debug Tools**
+3. **Available Tools**:
+   - **Find Text Field**: Locate input areas on current page
+   - **Insert Test Text**: Verify text insertion works
+   - **Analyze Page**: Get detailed page information
+   - **Test Drag & Drop**: Verify file insertion capability
+   - **Test Basic Functionality**: Overall system check
+
+### Console Logging
+Enable detailed logging by opening browser DevTools:
+```javascript
+// Check for errors in console
+console.log("Mojify debug info appears here")
+```
+
+## 🛠️ Development
+
+### Project Structure
+```
+Mojify/
+├── extension/           # Browser extension files
+│   ├── manifest.json   # Extension manifest
+│   ├── content.js      # Page interaction logic
+│   ├── background.js   # Service worker
+│   ├── popup.html      # Extension popup UI
+│   ├── popup.js        # Popup functionality
+│   ├── popup.css       # Modern styling
+│   └── icons/          # Extension icons
+├── desktop/            # Future desktop app
+├── python/             # Python utilities
+└── README.md
+```
+
+### Key Technologies
+- **Manifest V3**: Modern extension framework
+- **IndexedDB**: Client-side emote storage
+- **7TV API**: Twitch emote data source
+- **Advanced DOM Manipulation**: Cross-platform compatibility
+- **Modern CSS**: Glassmorphism and smooth animations
+
+### Contributing
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly on multiple platforms
+5. Submit a pull request
+
+## 🔒 Privacy & Security
+
+- **Local Storage Only**: All emotes stored locally in your browser
+- **No Data Collection**: Extension doesn't track or store personal data
+- **Secure Downloads**: Direct connection to 7TV API only
+- **Minimal Permissions**: Only requests necessary browser permissions
+
+## 🐛 Known Issues & Solutions
+
+### **Emotes Not Appearing**
+- Verify you've added channel IDs in settings
+- Check that "Refresh Emotes" completed successfully
+- Ensure you're on a supported platform
+
+### **Minibar Not Showing**
+- Make sure you're typing in a text input field
+- Verify the website is supported
+- Check browser console for errors
+
+### **Position Not Saving**
+- Ensure localStorage is enabled in your browser
+- Try refreshing the page after repositioning
+
+## 📝 Changelog
+
+### Latest Updates
+- ✅ **Improved Minibar**: Ultra-minimal floating design
+- ✅ **Better Messaging**: Accurate download status feedback
+- ✅ **Enhanced Performance**: Faster emote loading and insertion
+- ✅ **Position Memory**: Per-site minibar position saving
+- ✅ **Smart Cleanup**: Automatic partial text removal
+- ✅ **Modern UI**: Glassmorphism design with smooth animations
+
+## 🤝 Support
+
+- **Issues**: Report bugs on GitHub Issues
+- **Feature Requests**: Submit enhancement ideas
+- **Documentation**: Check this README for detailed info
+
+## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Acknowledgements
+## 🙏 Acknowledgements
 
-- Inspired by Windows Clipboard and modern UI design principles
-- Special thanks to the Tauri and Svelte communities for their excellent documentation
+- **7TV**: For providing the emote API and data
+- **Twitch Community**: For creating amazing emotes
+- **Browser Extension APIs**: For enabling cross-platform functionality
+- **Modern Web Standards**: For making advanced features possible
 
 ---
 
-Made with ❤️ by [Your Name]
+Made with ❤️ for the emote community
+
+**Ready to bring your favorite Twitch emotes everywhere? Install Mojify today!** 🚀
