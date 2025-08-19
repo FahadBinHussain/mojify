@@ -120,6 +120,17 @@ const platformSelectors = {
         'div[contenteditable="true"][data-lexical-editor="true"]',
         '.notranslate[contenteditable="true"][data-lexical-editor="true"]',
         '[contenteditable="true"][role="textbox"]'
+    ],
+    telegram: [
+        'div[contenteditable="true"].input-message-input',
+        '.input-message-input[contenteditable="true"]',
+        'div[contenteditable="true"][data-entity-type="messageEntityMention"]',
+        '.input-field-input[contenteditable="true"]',
+        'div[contenteditable="true"].composer-input',
+        '[contenteditable="true"][placeholder*="Message"]',
+        '[contenteditable="true"][class*="input"]',
+        'div[contenteditable="true"][role="textbox"]',
+        '[contenteditable="true"]'
     ]
 };
 
@@ -129,6 +140,7 @@ function getCurrentPlatform() {
     if (hostname.includes('messenger.com')) return 'messenger';
     if (hostname.includes('discord.com') || hostname.includes('discordapp.com')) return 'discord';
     if (hostname.includes('facebook.com')) return 'facebook';
+    if (hostname.includes('web.telegram.org') || hostname.includes('telegram.org')) return 'telegram';
     return null;
 }
 
@@ -177,7 +189,7 @@ function findMessengerInputField() {
 }
 
 // Platform-specific file insertion methods
-function insertFileOnPlatform(file, targetElement, platform) {
+async function insertFileOnPlatform(file, targetElement, platform) {
     debugLog("Inserting file on platform:", platform);
 
     if (platform === 'discord') {
@@ -189,8 +201,154 @@ function insertFileOnPlatform(file, targetElement, platform) {
     } else if (platform === 'facebook') {
         // Facebook uses similar method to messenger
         return simulateFileDrop(file, targetElement);
+    } else if (platform === 'telegram') {
+        // Telegram needs to target upper area for uncompressed images
+        return await insertFileOnTelegram(file, targetElement);
     } else {
         // Fallback to drag and drop
+        return simulateFileDrop(file, targetElement);
+    }
+}
+
+// Telegram-specific file insertion (target upper area for uncompressed)
+async function insertFileOnTelegram(file, targetElement) {
+    debugLog("Using Telegram-specific insertion method (upper area for uncompressed)");
+
+    try {
+        // Method 1: Try clipboard paste approach
+        debugLog("Attempting Telegram clipboard paste method");
+        try {
+            // Focus the input field first
+            targetElement.focus();
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            // Create clipboard data
+            const clipboardData = new DataTransfer();
+            clipboardData.items.add(file);
+
+            // Try paste event
+            const pasteEvent = new ClipboardEvent('paste', {
+                bubbles: true,
+                cancelable: true,
+                clipboardData: clipboardData
+            });
+
+            const pasteResult = targetElement.dispatchEvent(pasteEvent);
+            debugLog("Telegram paste event result:", pasteResult);
+
+            if (pasteResult) {
+                debugLog("Telegram paste method succeeded");
+                return true;
+            }
+        } catch (pasteError) {
+            debugLog("Telegram paste method failed:", pasteError);
+        }
+
+        // Method 2: Try input event with files
+        debugLog("Attempting Telegram input event method");
+        try {
+            targetElement.focus();
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            // Create input event with files
+            const inputEvent = new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertFromDrop',
+                data: null
+            });
+
+            // Try to set files property
+            Object.defineProperty(inputEvent, 'dataTransfer', {
+                value: (() => {
+                    const dt = new DataTransfer();
+                    dt.items.add(file);
+                    return dt;
+                })(),
+                writable: false
+            });
+
+            const inputResult = targetElement.dispatchEvent(inputEvent);
+            debugLog("Telegram input event result:", inputResult);
+
+            if (inputResult) {
+                debugLog("Telegram input method succeeded");
+                return true;
+            }
+        } catch (inputError) {
+            debugLog("Telegram input method failed:", inputError);
+        }
+
+        // Method 3: Enhanced drag and drop with better targeting
+        debugLog("Attempting enhanced Telegram drag and drop method");
+
+        // Get the bounding rect of the input field
+        const rect = targetElement.getBoundingClientRect();
+
+        // Target the very top of the input area for uncompressed
+        const targetX = rect.left + (rect.width / 2);
+        const targetY = rect.top + 10; // Just 10px from the top
+
+        debugLog("Telegram enhanced drop coordinates:", { x: targetX, y: targetY, rect });
+
+        // Focus first
+        targetElement.focus();
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+
+        // Set the dropEffect and effectAllowed
+        dataTransfer.dropEffect = 'copy';
+        dataTransfer.effectAllowed = 'copy';
+
+        // Create a more realistic drag sequence
+        const dragEnterEvent = new DragEvent('dragenter', {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer,
+            clientX: targetX,
+            clientY: targetY,
+            screenX: targetX,
+            screenY: targetY
+        });
+        targetElement.dispatchEvent(dragEnterEvent);
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const dragOverEvent = new DragEvent('dragover', {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer,
+            clientX: targetX,
+            clientY: targetY,
+            screenX: targetX,
+            screenY: targetY
+        });
+
+        // Prevent default on dragover
+        dragOverEvent.preventDefault();
+        targetElement.dispatchEvent(dragOverEvent);
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        const dropEvent = new DragEvent('drop', {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer,
+            clientX: targetX,
+            clientY: targetY,
+            screenX: targetX,
+            screenY: targetY
+        });
+
+        // Prevent default on drop
+        dropEvent.preventDefault();
+        const dropResult = targetElement.dispatchEvent(dropEvent);
+        debugLog("Telegram enhanced drop event result:", dropResult);
+
+        return true;
+    } catch (error) {
+        debugLog("Telegram insertion error:", error);
+        // Fallback to standard method
         return simulateFileDrop(file, targetElement);
     }
 }
@@ -258,7 +416,7 @@ async function insertEmote(emoteTrigger) {
         const platform = getCurrentPlatform();
         if (!platform) {
             debugLog("Not on a supported platform:", window.location.hostname);
-            return { success: false, error: 'This feature only works on supported platforms (Messenger, Discord, Facebook)' };
+            return { success: false, error: 'This feature only works on supported platforms (Messenger, Discord, Facebook, Telegram)' };
         }
         debugLog("Platform detected:", platform);
 
@@ -355,7 +513,7 @@ async function insertEmote(emoteTrigger) {
 
             // Use platform-specific insertion method
             debugLog("Step 19: About to insert file using platform-specific method...");
-            const insertResult = insertFileOnPlatform(file, inputField, platform);
+            const insertResult = await insertFileOnPlatform(file, inputField, platform);
             debugLog("Step 20: File insertion result:", insertResult, "- insertion should be complete");
 
             return { success: true };

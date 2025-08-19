@@ -19,7 +19,8 @@
     "https://*.messenger.com/*",
     "https://*.discord.com/*",
     "https://*.discordapp.com/*",
-    "https://*.facebook.com/*"
+    "https://*.facebook.com/*",
+    "https://*.telegram.org/*"
   ],
   "background": {
     "service_worker": "background.js"
