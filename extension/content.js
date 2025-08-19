@@ -493,14 +493,50 @@ function showDiscordEmoteSuggestions(query) {
         emoteList.appendChild(emoteItem);
     });
 
-    // Position and show the suggestion bar near the Discord minibar
-    if (discordMinibar) {
-        const minibarRect = discordMinibar.getBoundingClientRect();
-        suggestionBar.style.left = `${minibarRect.left + window.scrollX}px`;
-        suggestionBar.style.top = `${minibarRect.bottom + window.scrollY + 4}px`;
-    }
-
+    // Show the suggestion bar first so we can get its dimensions
     suggestionBar.style.display = 'block';
+
+    // Position the suggestion bar above the Discord minibar
+    if (discordMinibar) {
+        // Wait for next frame to ensure dimensions are calculated
+        requestAnimationFrame(() => {
+            // Check if we have a saved position for this suggestion bar
+            const savedPos = getSavedPosition();
+
+            if (savedPos && savedPos.left && savedPos.top) {
+                // Use saved position, but make sure it's still visible
+                const suggestionBarRect = suggestionBar.getBoundingClientRect();
+                const maxLeft = window.innerWidth - suggestionBarRect.width - 20;
+                const maxTop = window.innerHeight - suggestionBarRect.height - 20;
+
+                suggestionBar.style.left = `${Math.min(Math.max(savedPos.left, 20), maxLeft)}px`;
+                suggestionBar.style.top = `${Math.min(Math.max(savedPos.top, 20), maxTop)}px`;
+            } else {
+                // Default position above the interceptor minibar
+                const minibarRect = discordMinibar.getBoundingClientRect();
+                const suggestionBarRect = suggestionBar.getBoundingClientRect();
+
+                let left = minibarRect.left + window.scrollX;
+                let top = minibarRect.top + window.scrollY - suggestionBarRect.height - 8;
+
+                // Ensure it doesn't go off screen
+                const maxLeft = window.innerWidth - suggestionBarRect.width - 20;
+                const minTop = 20;
+
+                left = Math.min(Math.max(left, 20), maxLeft);
+                top = Math.max(top, minTop);
+
+                suggestionBar.style.left = `${left}px`;
+                suggestionBar.style.top = `${top}px`;
+            }
+
+            // Make the suggestion bar draggable and save position
+            if (!suggestionBar.dataset.draggableAttached) {
+                makeDraggable(suggestionBar, suggestionBar);
+                suggestionBar.dataset.draggableAttached = 'true';
+            }
+        });
+    }
     debugLog("Discord suggestion bar displayed with", filteredEmotes.length, "emotes");
 }
 
