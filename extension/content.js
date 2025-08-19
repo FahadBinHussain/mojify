@@ -422,75 +422,67 @@ function showDiscordEmoteSuggestions(query) {
             min-width: 56px;
         `;
 
-        // First set fallback text
-        emoteItem.textContent = emoteKey.replace(/:/g, '');
-        emoteItem.style.fontSize = '12px';
-        emoteItem.style.color = '#b9bbbe';
+        // Try to get cached emote for preview - use exact same code as regular suggestions
+        const emoteImg = document.createElement('img');
+        emoteImg.style.cssText = `
+            width: 40px;
+            height: 40px;
+            object-fit: contain;
+            transition: transform 0.2s ease;
+        `;
 
-        debugLog("Discord suggestions: Loading emote", emoteKey);
-
-        // Try to get cached emote for preview
-        emoteDB.getEmote(emoteKey).then(result => {
-            debugLog("Discord suggestions: Emote result for", emoteKey, result ? "found" : "not found");
-            if (result) {
-                let imageUrl;
-
-                // Check if result is already a blob URL or base64 data URL
-                if (typeof result === 'string') {
-                    if (result.startsWith('blob:') || result.startsWith('data:')) {
-                        imageUrl = result;
-                    } else {
-                        // Assume it's a regular URL
-                        imageUrl = result;
-                    }
-                } else if (result instanceof Blob) {
-                    // Convert blob to object URL
-                    imageUrl = URL.createObjectURL(result);
+        // Load emote preview if available
+        if (typeof emoteDB !== 'undefined') {
+            emoteDB.getEmote(emoteKey).then(cachedEmote => {
+                if (cachedEmote && cachedEmote.dataUrl) {
+                    emoteImg.src = cachedEmote.dataUrl;
+                    emoteItem.appendChild(emoteImg);
                 } else {
-                    debugLog("Discord suggestions: Unknown result type for", emoteKey, typeof result);
-                    return;
+                    // Fallback to placeholder icon
+                    emoteImg.style.display = 'none';
+                    const placeholderIcon = document.createElement('i');
+                    placeholderIcon.className = 'fas fa-smile';
+                    placeholderIcon.style.cssText = `
+                        font-size: 24px;
+                        color: #9ca3af;
+                    `;
+                    emoteItem.appendChild(placeholderIcon);
                 }
-
-                // Clear text content
-                emoteItem.textContent = '';
-
-                const img = document.createElement('img');
-                img.src = imageUrl;
-                img.style.cssText = `
-                    width: 40px;
-                    height: 40px;
-                    object-fit: contain;
-                    transition: transform 0.2s ease;
+            }).catch(() => {
+                // Fallback to placeholder icon
+                emoteImg.style.display = 'none';
+                const placeholderIcon = document.createElement('i');
+                placeholderIcon.className = 'fas fa-smile';
+                placeholderIcon.style.cssText = `
+                    font-size: 24px;
+                    color: #9ca3af;
                 `;
+                emoteItem.appendChild(placeholderIcon);
+            });
+        } else {
+            // Fallback to placeholder icon
+            const placeholderIcon = document.createElement('i');
+            placeholderIcon.className = 'fas fa-smile';
+            placeholderIcon.style.cssText = `
+                font-size: 24px;
+                color: #9ca3af;
+            `;
+            emoteItem.appendChild(placeholderIcon);
+        }
 
-                img.onload = () => {
-                    debugLog("Discord suggestions: Image loaded for", emoteKey);
-                    emoteItem.appendChild(img);
-                };
-
-                img.onerror = () => {
-                    debugLog("Discord suggestions: Image failed to load for", emoteKey);
-                    // Restore text fallback if image fails
-                    emoteItem.textContent = emoteKey.replace(/:/g, '');
-                };
-
-                emoteItem.addEventListener('mouseenter', () => {
-                    if (img.parentNode) {
-                        img.style.transform = 'scale(1.2)';
-                    }
-                    emoteItem.style.background = 'rgba(79, 84, 92, 0.16)';
-                });
-
-                emoteItem.addEventListener('mouseleave', () => {
-                    if (img.parentNode) {
-                        img.style.transform = 'scale(1)';
-                    }
-                    emoteItem.style.background = 'transparent';
-                });
+        // Hover effects
+        emoteItem.addEventListener('mouseenter', () => {
+            if (emoteImg.style.display !== 'none') {
+                emoteImg.style.transform = 'scale(1.2)';
             }
-        }).catch((error) => {
-            debugLog("Discord suggestions: Error getting emote", emoteKey, error);
-            // Text fallback is already set above
+            emoteItem.style.background = 'rgba(79, 84, 92, 0.16)';
+        });
+
+        emoteItem.addEventListener('mouseleave', () => {
+            if (emoteImg.style.display !== 'none') {
+                emoteImg.style.transform = 'scale(1)';
+            }
+            emoteItem.style.background = 'transparent';
         });
 
         // Click handler for Discord interceptor
