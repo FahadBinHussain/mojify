@@ -108,6 +108,18 @@ const platformSelectors = {
         'div[contenteditable="true"][data-slate-editor="true"]',
         '[contenteditable="true"][data-slate-editor="true"]',
         'div[role="textbox"][contenteditable="true"]'
+    ],
+    facebook: [
+        'div[role="textbox"][contenteditable="true"][data-lexical-editor="true"]',
+        'div[contenteditable="true"][role="textbox"][data-lexical-editor="true"]',
+        '[aria-label*="Write a comment"][contenteditable="true"]',
+        '[aria-label*="Write something"][contenteditable="true"]',
+        '[placeholder*="Write a comment"][contenteditable="true"]',
+        '[placeholder*="What\'s on your mind"][contenteditable="true"]',
+        'div[data-lexical-editor="true"][contenteditable="true"]',
+        'div[contenteditable="true"][data-lexical-editor="true"]',
+        '.notranslate[contenteditable="true"][data-lexical-editor="true"]',
+        '[contenteditable="true"][role="textbox"]'
     ]
 };
 
@@ -116,6 +128,7 @@ function getCurrentPlatform() {
     const hostname = window.location.hostname;
     if (hostname.includes('messenger.com')) return 'messenger';
     if (hostname.includes('discord.com') || hostname.includes('discordapp.com')) return 'discord';
+    if (hostname.includes('facebook.com')) return 'facebook';
     return null;
 }
 
@@ -172,6 +185,9 @@ function insertFileOnPlatform(file, targetElement, platform) {
         return insertFileOnDiscord(file, targetElement);
     } else if (platform === 'messenger') {
         // Messenger uses drag and drop
+        return simulateFileDrop(file, targetElement);
+    } else if (platform === 'facebook') {
+        // Facebook uses similar method to messenger
         return simulateFileDrop(file, targetElement);
     } else {
         // Fallback to drag and drop
@@ -242,7 +258,7 @@ async function insertEmote(emoteTrigger) {
         const platform = getCurrentPlatform();
         if (!platform) {
             debugLog("Not on a supported platform:", window.location.hostname);
-            return { success: false, error: 'This feature only works on supported platforms (Messenger, Discord)' };
+            return { success: false, error: 'This feature only works on supported platforms (Messenger, Discord, Facebook)' };
         }
         debugLog("Platform detected:", platform);
 

@@ -166,7 +166,8 @@ document.addEventListener('DOMContentLoaded', () => {
       // Check if the current tab is on a supported platform
       const isSupportedPlatform = currentTab.url.includes('messenger.com') ||
                                  currentTab.url.includes('discord.com') ||
-                                 currentTab.url.includes('discordapp.com');
+                                 currentTab.url.includes('discordapp.com') ||
+                                 currentTab.url.includes('facebook.com');
 
       if (!isSupportedPlatform) {
         showToast('This feature only works on supported platforms', 'error');
@@ -183,6 +184,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <ul>
               <li><code>messenger.com</code></li>
               <li><code>discord.com</code></li>
+              <li><code>facebook.com</code></li>
             </ul>
           </div>
         `;
@@ -247,7 +249,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="diagnostic-header">
                   <h3>Insertion Failed</h3>
                   <p>Error: ${error}</p>
-                  <p>Make sure you're on a supported platform (Messenger or Discord) and try clicking in the message input field first</p>
+                  <p>Make sure you're on a supported platform (Messenger, Discord, or Facebook) and try clicking in the message input field first</p>
                   <p>You can try reloading the page and trying again</p>
                 </div>
               `;
