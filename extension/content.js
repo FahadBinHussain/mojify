@@ -1,10 +1,38 @@
-// ===== CONTENT SCRIPT INJECTION TEST =====
-console.error("🚀 MOJIFY CONTENT SCRIPT LOADED!", window.location.href);
-console.error("🚀 MOJIFY TIMESTAMP:", new Date().toISOString());
-console.error("🚀 MOJIFY User Agent:", navigator.userAgent.substring(0, 50));
+// Early exit check for unsupported sites
+(function() {
+  const hostname = window.location.hostname;
+  const supportedSites = [
+    'messenger.com',
+    'discord.com',
+    'discordapp.com',
+    'facebook.com',
+    'telegram.org',
+    'web.whatsapp.com'
+  ];
 
+  const isSupported = supportedSites.some(site => hostname.includes(site));
+  if (!isSupported) {
+    // Silently exit without loading Mojify on unsupported sites
+    return;
+  }
 
-let emoteMapping = {};
+  // Error handling function
+  function handleRuntimeError(context, error) {
+    if (error.message && error.message.includes('chrome://')) {
+      // Silently handle chrome:// URL errors
+      return;
+    }
+    if (error.message && error.message.includes('edge://')) {
+      // Silently handle edge:// URL errors
+      return;
+    }
+    // Log other errors normally
+    debugLog(`Error in ${context}:`, error);
+  }
+
+  // Content script loaded on supported platform
+
+  let emoteMapping = {};
 
 // IndexedDB wrapper for emote storage (same as background.js)
 const emoteDB = {
@@ -74,13 +102,17 @@ function loadEmoteMapping() {
 // Initial load
 loadEmoteMapping();
 
-chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (changes.emoteMapping) {
-    emoteMapping = changes.emoteMapping.newValue;
-    debugLog("Updated emote mapping with", Object.keys(emoteMapping).length, "emotes");
-    debugLog("Updated sample emotes:", Object.keys(emoteMapping).slice(0, 5));
-  }
-});
+try {
+  chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (changes.emoteMapping) {
+      emoteMapping = changes.emoteMapping.newValue;
+      debugLog("Updated emote mapping with", Object.keys(emoteMapping).length, "emotes");
+      debugLog("Updated sample emotes:", Object.keys(emoteMapping).slice(0, 5));
+    }
+  });
+} catch (error) {
+  handleRuntimeError("storage listener setup", error);
+}
 
 // Platform-specific input field selectors
 const platformSelectors = {
@@ -613,24 +645,28 @@ async function insertEmote(emoteTrigger) {
 }
 
 // Message listener
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    debugLog("Message received:", request);
+try {
+  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+      debugLog("Message received:", request);
 
-    if (request.action === 'insertEmote') {
-        insertEmote(request.emoteTrigger)
-            .then(result => {
-                debugLog("Insert result:", result);
-                sendResponse(result);
-            })
-            .catch(error => {
-                debugLog("Insert error:", error);
-                sendResponse({ success: false, error: error.message });
-            });
-        return true; // Async response
-    }
+      if (request.action === 'insertEmote') {
+          insertEmote(request.emoteTrigger)
+              .then(result => {
+                  debugLog("Insert result:", result);
+                  sendResponse(result);
+              })
+              .catch(error => {
+                  debugLog("Insert error:", error);
+                  sendResponse({ success: false, error: error.message });
+              });
+          return true; // Async response
+      }
 
-    return false;
-});
+      return false;
+  });
+} catch (error) {
+  handleRuntimeError("message listener setup", error);
+}
 
 // Auto-replace emote codes as user types
 let typingBuffer = '';
@@ -772,7 +808,7 @@ document.body.addEventListener('input', handleInputEvent, true);
 document.body.addEventListener('keyup', handleInputEvent, true);
 
 
-debugLog("Mojify content script loaded");
+debugLog("Mojify content script loaded on supported platform:", hostname);
 
 // Add startup check and ensure emotes are loaded
 setTimeout(() => {
@@ -805,7 +841,9 @@ setTimeout(() => {
   } else {
     debugLog("✗ Test emotes NOT found - available emotes:", Object.keys(emoteMapping || {}).slice(0, 10));
   }
-}, 1000);
+}, 2000);
+
+// Continue with Mojify initialization
 
 // Additional check after longer delay
 setTimeout(() => {
@@ -818,3 +856,5 @@ setTimeout(() => {
     debugLog("3. Click 'Refresh Emotes'");
   }
 }, 5000);
+
+})(); // End of early exit function
