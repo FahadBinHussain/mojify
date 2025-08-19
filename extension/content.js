@@ -1230,6 +1230,8 @@ async function handleInputEvent(event) {
 
                 // Insert the emote using existing function with the correct key
                 await insertEmote(emoteKeyForInsertion);
+                // Hide suggestions since we successfully processed a complete emote
+                hideSuggestions();
                 break;
               }
             }
@@ -1252,6 +1254,8 @@ async function handleInputEvent(event) {
                             currentText.substring(commandIndex + fullCommand.length);
             target.value = newValue;
             target.selectionStart = target.selectionEnd = commandIndex + emoteKeyForInsertion.length + 2;
+            // Hide suggestions since we successfully processed a complete emote
+            hideSuggestions();
           }
         }
 
