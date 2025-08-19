@@ -18,7 +18,8 @@
     "https://7tv.io/*",
     "https://*.messenger.com/*",
     "https://*.discord.com/*",
-    "https://*.discordapp.com/*"
+    "https://*.discordapp.com/*",
+    "https://*.facebook.com/*"
   ],
   "background": {
     "service_worker": "background.js"
