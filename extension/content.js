@@ -518,13 +518,10 @@ function createEmoteSuggestionBar() {
         border: 1px solid #e5e7eb;
         border-radius: 12px;
         box-shadow: 0 10px 25px rgba(0,0,0,0.15);
-        max-height: 360px;
         overflow: hidden;
         z-index: 10000;
         display: none;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        min-width: 280px;
-        max-width: 320px;
         cursor: move;
     `;
 
@@ -559,10 +556,13 @@ function createEmoteSuggestionBar() {
     const emoteList = document.createElement('div');
     emoteList.id = 'mojify-emote-list';
     emoteList.style.cssText = `
-        max-height: 300px;
-        overflow-y: auto;
-        padding: 8px;
+        display: flex;
+        flex-direction: row;
+        gap: 8px;
+        padding: 12px;
         background: #f9fafb;
+        overflow-x: auto;
+        max-width: 500px;
     `;
     suggestionBar.appendChild(emoteList);
 
@@ -638,35 +638,35 @@ function showEmoteSuggestions(query, inputElement) {
             background: white;
             border-radius: 8px;
             border: 1px solid #e5e7eb;
-            margin-bottom: 6px;
             cursor: pointer;
             display: flex;
+            flex-direction: column;
             align-items: center;
-            gap: 12px;
-            padding: 10px 12px;
+            padding: 10px 8px 8px 8px;
             transition: all 0.2s ease;
             position: relative;
-            overflow: hidden;
+            min-width: 80px;
+            flex-shrink: 0;
         `;
 
         // Create emote preview container
         const emotePreview = document.createElement('div');
         emotePreview.style.cssText = `
-            width: 32px;
-            height: 32px;
+            width: 40px;
+            height: 40px;
             background: #f9fafb;
             border-radius: 6px;
             display: flex;
             align-items: center;
             justify-content: center;
-            flex-shrink: 0;
+            margin-bottom: 6px;
         `;
 
         // Try to get cached emote for preview
         const emoteImg = document.createElement('img');
         emoteImg.style.cssText = `
-            max-width: 28px;
-            max-height: 28px;
+            max-width: 36px;
+            max-height: 36px;
             object-fit: contain;
         `;
 
@@ -681,7 +681,7 @@ function showEmoteSuggestions(query, inputElement) {
                     const placeholderIcon = document.createElement('i');
                     placeholderIcon.className = 'fas fa-smile';
                     placeholderIcon.style.cssText = `
-                        font-size: 16px;
+                        font-size: 18px;
                         color: #9ca3af;
                     `;
                     emotePreview.appendChild(placeholderIcon);
@@ -692,7 +692,7 @@ function showEmoteSuggestions(query, inputElement) {
                 const placeholderIcon = document.createElement('i');
                 placeholderIcon.className = 'fas fa-smile';
                 placeholderIcon.style.cssText = `
-                    font-size: 16px;
+                    font-size: 18px;
                     color: #9ca3af;
                 `;
                 emotePreview.appendChild(placeholderIcon);
@@ -701,73 +701,58 @@ function showEmoteSuggestions(query, inputElement) {
 
         emotePreview.appendChild(emoteImg);
 
-        // Create text content
-        const textContent = document.createElement('div');
-        textContent.style.cssText = `
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        `;
-
+        // Create emote name
         const emoteName = document.createElement('div');
         emoteName.style.cssText = `
             font-weight: 600;
             color: #27272a;
-            font-size: 13px;
+            font-size: 11px;
             line-height: 1.2;
+            text-align: center;
+            margin-bottom: 2px;
+            word-wrap: break-word;
+            max-width: 100%;
         `;
         emoteName.textContent = emoteKey.replace(/:/g, '');
 
+        // Create emote trigger
         const emoteTrigger = document.createElement('div');
         emoteTrigger.style.cssText = `
-            font-size: 11px;
+            font-size: 9px;
             color: #71717a;
             font-family: 'Courier New', monospace;
             opacity: 0.8;
+            text-align: center;
+            word-wrap: break-word;
+            max-width: 100%;
         `;
         emoteTrigger.textContent = emoteKey;
 
-        textContent.appendChild(emoteName);
-        textContent.appendChild(emoteTrigger);
-
-        // Create click hint
-        const clickHint = document.createElement('div');
-        clickHint.style.cssText = `
-            font-size: 10px;
-            color: #7050c7;
-            font-weight: 500;
-            opacity: 0;
-            transition: opacity 0.2s;
-            white-space: nowrap;
-        `;
-        clickHint.textContent = 'Click to insert';
-
         emoteItem.appendChild(emotePreview);
-        emoteItem.appendChild(textContent);
-        emoteItem.appendChild(clickHint);
+        emoteItem.appendChild(emoteName);
+        emoteItem.appendChild(emoteTrigger);
 
         // Hover effects
         emoteItem.addEventListener('mouseenter', () => {
-            emoteItem.style.transform = 'translateY(-1px)';
-            emoteItem.style.boxShadow = '0 4px 8px rgba(0,0,0,0.08)';
+            emoteItem.style.transform = 'translateY(-2px)';
+            emoteItem.style.boxShadow = '0 4px 8px rgba(0,0,0,0.12)';
             emoteItem.style.borderColor = '#7050c7';
-            clickHint.style.opacity = '1';
+            emoteItem.style.background = '#f8faff';
         });
 
         emoteItem.addEventListener('mouseleave', () => {
             emoteItem.style.transform = 'translateY(0)';
             emoteItem.style.boxShadow = 'none';
             emoteItem.style.borderColor = '#e5e7eb';
-            clickHint.style.opacity = '0';
+            emoteItem.style.background = 'white';
         });
 
         // Click to insert emote
         emoteItem.addEventListener('click', () => {
             // Add click feedback
-            emoteItem.style.transform = 'scale(0.98)';
+            emoteItem.style.transform = 'scale(0.95)';
             setTimeout(() => {
-                emoteItem.style.transform = 'translateY(-1px)';
+                emoteItem.style.transform = 'translateY(-2px)';
             }, 100);
 
             insertEmoteFromSuggestion(emoteKey, inputElement);
