@@ -858,18 +858,29 @@ async function insertEmoteFromSuggestion(emoteKey, inputElement) {
                     const textNode = range.startContainer;
 
                     if (textNode.nodeType === Node.TEXT_NODE) {
-                        // Remove the partial emote text using stored info
-                        const deleteRange = document.createRange();
-                        deleteRange.setStart(textNode, currentPartialTextInfo.startIndex);
-                        deleteRange.setEnd(textNode, currentPartialTextInfo.endIndex);
-                        deleteRange.deleteContents();
+                        // Discord-specific handling - skip text deletion
+                        if (getCurrentPlatform() === 'discord') {
+                            // For Discord, just position cursor and skip deletion
+                            // Let the emote insert at current position
+                            const newRange = document.createRange();
+                            newRange.setStart(textNode, currentPartialTextInfo.startIndex);
+                            newRange.collapse(true);
+                            selection.removeAllRanges();
+                            selection.addRange(newRange);
+                        } else {
+                            // Standard approach for other platforms
+                            const deleteRange = document.createRange();
+                            deleteRange.setStart(textNode, currentPartialTextInfo.startIndex);
+                            deleteRange.setEnd(textNode, currentPartialTextInfo.endIndex);
+                            deleteRange.deleteContents();
 
-                        // Update selection to position where emote will be inserted
-                        const newRange = document.createRange();
-                        newRange.setStart(textNode, currentPartialTextInfo.startIndex);
-                        newRange.collapse(true);
-                        selection.removeAllRanges();
-                        selection.addRange(newRange);
+                            // Update selection to position where emote will be inserted
+                            const newRange = document.createRange();
+                            newRange.setStart(textNode, currentPartialTextInfo.startIndex);
+                            newRange.collapse(true);
+                            selection.removeAllRanges();
+                            selection.addRange(newRange);
+                        }
                     }
                 }
             } else {
@@ -1188,11 +1199,22 @@ async function handleInputEvent(event) {
                 const commandStart = searchText.lastIndexOf(fullCommand);
                 const actualStart = startPos + commandStart;
 
-                // Create range to select the emote command
-                const deleteRange = document.createRange();
-                deleteRange.setStart(node, actualStart);
-                deleteRange.setEnd(node, actualStart + fullCommand.length);
-                deleteRange.deleteContents();
+                // Discord-specific handling - skip text deletion
+                if (getCurrentPlatform() === 'discord') {
+                  // For Discord, just position cursor and skip deletion
+                  // Let the emote insert at current position
+                  const newRange = document.createRange();
+                  newRange.setStart(node, actualStart);
+                  newRange.collapse(true);
+                  selection.removeAllRanges();
+                  selection.addRange(newRange);
+                } else {
+                  // Standard approach for other platforms
+                  const deleteRange = document.createRange();
+                  deleteRange.setStart(node, actualStart);
+                  deleteRange.setEnd(node, actualStart + fullCommand.length);
+                  deleteRange.deleteContents();
+                }
 
                 // Insert the emote using existing function with the correct key
                 await insertEmote(emoteKeyForInsertion);

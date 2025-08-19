@@ -7,6 +7,7 @@
 A powerful browser extension that brings Twitch emotes to any website with intelligent suggestions and seamless integration.
 
 ![Mojify Demo](animation.gif)
+![Mojify Demo](https://i.postimg.cc/s29DdZK2/Animation.gif)
 
 ## ✨ Features
 
@@ -18,7 +19,7 @@ A powerful browser extension that brings Twitch emotes to any website with intel
 
 ### 🌐 **Platform Support**
 - **Messenger** (Facebook Messenger)
-- **Discord** 
+- **Discord**
 - **WhatsApp Web**
 - **Telegram Web**
 - **Facebook**
