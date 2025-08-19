@@ -531,14 +531,14 @@ function createEmoteSuggestionBar() {
     emoteList.style.cssText = `
         display: flex;
         flex-direction: row;
-        gap: 16px;
+        gap: 8px;
         padding: 12px;
         background: transparent;
         overflow-x: auto;
-        max-width: 500px;
+        max-width: 450px;
         scrollbar-width: none;
         -ms-overflow-style: none;
-        padding-bottom: 40px;
+        padding-bottom: 30px;
     `;
 
     // Hide scrollbar for webkit browsers
@@ -624,11 +624,11 @@ function showEmoteSuggestions(query, inputElement) {
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 8px;
+            padding: 6px;
             transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             position: relative;
             flex-shrink: 0;
-            min-width: 60px;
+            min-width: 56px;
         `;
 
         // Try to get cached emote for preview
@@ -674,7 +674,7 @@ function showEmoteSuggestions(query, inputElement) {
         const commandTooltip = document.createElement('div');
         commandTooltip.style.cssText = `
             position: absolute;
-            bottom: -32px;
+            bottom: -22px;
             left: 50%;
             transform: translateX(-50%);
             background: rgba(0, 0, 0, 0.9);
@@ -690,7 +690,7 @@ function showEmoteSuggestions(query, inputElement) {
             backdrop-filter: blur(10px);
             z-index: 1001;
             box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-            max-width: 80px;
+            max-width: 70px;
             overflow: hidden;
             text-overflow: ellipsis;
         `;
