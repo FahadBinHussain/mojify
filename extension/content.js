@@ -552,10 +552,43 @@ function createEmoteSuggestionBar() {
     return suggestionBar;
 }
 
+// Global variable to store partial text info for suggestions
+let currentPartialTextInfo = null;
+
 // Show emote suggestions
 function showEmoteSuggestions(query, inputElement) {
     const suggestionBar = document.getElementById('mojify-suggestion-bar') || createEmoteSuggestionBar();
     const emoteList = document.getElementById('mojify-emote-list');
+
+    // Store current partial text info for later removal
+    let cursorPos;
+    let currentText;
+
+    if (inputElement.isContentEditable) {
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            cursorPos = range.startOffset;
+            currentText = range.startContainer.textContent || '';
+        }
+    } else {
+        cursorPos = inputElement.selectionStart;
+        currentText = inputElement.value;
+    }
+
+    if (typeof cursorPos !== 'undefined') {
+        const textBeforeCursor = currentText.substring(0, cursorPos);
+        const lastColonIndex = textBeforeCursor.lastIndexOf(':');
+
+        if (lastColonIndex !== -1) {
+            currentPartialTextInfo = {
+                startIndex: lastColonIndex,
+                endIndex: cursorPos,
+                inputElement: inputElement,
+                fullText: currentText
+            };
+        }
+    }
 
     if (!emoteMapping || Object.keys(emoteMapping).length === 0) {
         hideSuggestions();
@@ -627,6 +660,8 @@ function hideSuggestions() {
     if (suggestionBar) {
         suggestionBar.style.display = 'none';
     }
+    // Clear partial text info when hiding suggestions
+    currentPartialTextInfo = null;
 }
 
 // Get saved position for current site
@@ -732,42 +767,90 @@ async function insertEmoteFromSuggestion(emoteKey, inputElement) {
         const platform = getCurrentPlatform();
         if (!platform) return;
 
-        // For contenteditable elements, replace the colon text first
-        if (inputElement.isContentEditable) {
-            const selection = window.getSelection();
-            if (selection.rangeCount > 0) {
-                const range = selection.getRangeAt(0);
-                const textNode = range.startContainer;
+        // Focus the input element first
+        inputElement.focus();
 
-                if (textNode.nodeType === Node.TEXT_NODE) {
-                    const text = textNode.textContent;
-                    const colonIndex = text.lastIndexOf(':', range.startOffset);
+        // Use stored partial text info if available
+        if (currentPartialTextInfo && currentPartialTextInfo.inputElement === inputElement) {
+            if (inputElement.isContentEditable) {
+                const selection = window.getSelection();
+                if (selection.rangeCount > 0) {
+                    const range = selection.getRangeAt(0);
+                    const textNode = range.startContainer;
 
-                    if (colonIndex !== -1) {
-                        // Remove the partial emote text
+                    if (textNode.nodeType === Node.TEXT_NODE) {
+                        // Remove the partial emote text using stored info
                         const deleteRange = document.createRange();
-                        deleteRange.setStart(textNode, colonIndex);
-                        deleteRange.setEnd(textNode, range.startOffset);
+                        deleteRange.setStart(textNode, currentPartialTextInfo.startIndex);
+                        deleteRange.setEnd(textNode, currentPartialTextInfo.endIndex);
                         deleteRange.deleteContents();
+
+                        // Update selection to position where emote will be inserted
+                        const newRange = document.createRange();
+                        newRange.setStart(textNode, currentPartialTextInfo.startIndex);
+                        newRange.collapse(true);
+                        selection.removeAllRanges();
+                        selection.addRange(newRange);
                     }
                 }
+            } else {
+                // For regular input fields, use stored info to remove partial text
+                const beforePartial = currentPartialTextInfo.fullText.substring(0, currentPartialTextInfo.startIndex);
+                const afterPartial = currentPartialTextInfo.fullText.substring(currentPartialTextInfo.endIndex);
+                inputElement.value = beforePartial + afterPartial;
+
+                // Set cursor position where emote will be inserted
+                const newPos = beforePartial.length;
+                inputElement.setSelectionRange(newPos, newPos);
+
+                // Trigger input event to notify the platform of the change
+                inputElement.dispatchEvent(new Event('input', { bubbles: true }));
             }
         } else {
-            // For regular input fields, remove the partial emote text
-            const text = inputElement.value;
-            const cursorPos = inputElement.selectionStart;
-            const colonIndex = text.lastIndexOf(':', cursorPos);
+            // Fallback to old method if no stored info
+            if (inputElement.isContentEditable) {
+                const selection = window.getSelection();
+                if (selection.rangeCount > 0) {
+                    const range = selection.getRangeAt(0);
+                    const textNode = range.startContainer;
 
-            if (colonIndex !== -1) {
-                const beforeColon = text.substring(0, colonIndex);
-                const afterCursor = text.substring(cursorPos);
-                inputElement.value = beforeColon + afterCursor;
+                    if (textNode.nodeType === Node.TEXT_NODE) {
+                        const text = textNode.textContent;
+                        const colonIndex = text.lastIndexOf(':', range.startOffset);
 
-                // Set cursor position after the removed text
-                const newPos = beforeColon.length;
-                inputElement.setSelectionRange(newPos, newPos);
+                        if (colonIndex !== -1) {
+                            const deleteRange = document.createRange();
+                            deleteRange.setStart(textNode, colonIndex);
+                            deleteRange.setEnd(textNode, range.startOffset);
+                            deleteRange.deleteContents();
+
+                            const newRange = document.createRange();
+                            newRange.setStart(textNode, colonIndex);
+                            newRange.collapse(true);
+                            selection.removeAllRanges();
+                            selection.addRange(newRange);
+                        }
+                    }
+                }
+            } else {
+                const text = inputElement.value;
+                const cursorPos = inputElement.selectionStart;
+                const colonIndex = text.lastIndexOf(':', cursorPos);
+
+                if (colonIndex !== -1) {
+                    const beforeColon = text.substring(0, colonIndex);
+                    const afterCursor = text.substring(cursorPos);
+                    inputElement.value = beforeColon + afterCursor;
+
+                    const newPos = beforeColon.length;
+                    inputElement.setSelectionRange(newPos, newPos);
+                    inputElement.dispatchEvent(new Event('input', { bubbles: true }));
+                }
             }
         }
+
+        // Clear the stored partial text info
+        currentPartialTextInfo = null;
 
         // Always use remote insertion for all platforms
         await insertEmote(emoteKey);
