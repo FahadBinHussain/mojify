@@ -506,6 +506,275 @@ async function insertFileOnWhatsApp(file, targetElement) {
     }
 }
 
+// Create emote suggestion minibar
+function createEmoteSuggestionBar() {
+    if (document.getElementById('mojify-suggestion-bar')) return;
+
+    const suggestionBar = document.createElement('div');
+    suggestionBar.id = 'mojify-suggestion-bar';
+    suggestionBar.style.cssText = `
+        position: fixed;
+        background: #ffffff;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 10000;
+        display: none;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        font-size: 14px;
+        cursor: move;
+    `;
+
+    const header = document.createElement('div');
+    header.style.cssText = `
+        padding: 8px 12px;
+        background: #f5f5f5;
+        border-bottom: 1px solid #e0e0e0;
+        font-weight: 600;
+        color: #333;
+        font-size: 12px;
+        cursor: move;
+        user-select: none;
+    `;
+    header.textContent = 'Emote Suggestions (Draggable)';
+    suggestionBar.appendChild(header);
+
+    const emoteList = document.createElement('div');
+    emoteList.id = 'mojify-emote-list';
+    suggestionBar.appendChild(emoteList);
+
+    // Make draggable
+    makeDraggable(suggestionBar, header);
+
+    document.body.appendChild(suggestionBar);
+    return suggestionBar;
+}
+
+// Show emote suggestions
+function showEmoteSuggestions(query, inputElement) {
+    const suggestionBar = document.getElementById('mojify-suggestion-bar') || createEmoteSuggestionBar();
+    const emoteList = document.getElementById('mojify-emote-list');
+
+    if (!emoteMapping || Object.keys(emoteMapping).length === 0) {
+        hideSuggestions();
+        return;
+    }
+
+    // Filter emotes based on query
+    const filteredEmotes = Object.keys(emoteMapping).filter(key => {
+        const cleanKey = key.replace(/:/g, '').toLowerCase();
+        const cleanQuery = query.toLowerCase();
+        return cleanKey.includes(cleanQuery);
+    }).slice(0, 6); // Limit to 6 suggestions
+
+    if (filteredEmotes.length === 0) {
+        hideSuggestions();
+        return;
+    }
+
+    // Clear previous suggestions
+    emoteList.innerHTML = '';
+
+    // Add emote suggestions
+    filteredEmotes.forEach((emoteKey, index) => {
+        const emoteItem = document.createElement('div');
+        emoteItem.style.cssText = `
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: background-color 0.2s;
+        `;
+
+        const emoteName = document.createElement('span');
+        emoteName.style.cssText = `
+            font-weight: 500;
+            color: #333;
+        `;
+        emoteName.textContent = emoteKey.replace(/:/g, '');
+
+        emoteItem.appendChild(emoteName);
+
+        // Hover effect
+        emoteItem.addEventListener('mouseenter', () => {
+            emoteItem.style.backgroundColor = '#f0f7ff';
+        });
+        emoteItem.addEventListener('mouseleave', () => {
+            emoteItem.style.backgroundColor = 'transparent';
+        });
+
+        // Click to insert emote
+        emoteItem.addEventListener('click', () => {
+            insertEmoteFromSuggestion(emoteKey, inputElement);
+            hideSuggestions();
+        });
+
+        emoteList.appendChild(emoteItem);
+    });
+
+    // Position the suggestion bar using saved position or default
+    positionSuggestionBarFromStorage(inputElement);
+    suggestionBar.style.display = 'block';
+}
+
+// Hide suggestions
+function hideSuggestions() {
+    const suggestionBar = document.getElementById('mojify-suggestion-bar');
+    if (suggestionBar) {
+        suggestionBar.style.display = 'none';
+    }
+}
+
+// Get saved position for current site
+function getSavedPosition() {
+    const hostname = window.location.hostname;
+    const storageKey = `mojify-suggestion-pos-${hostname}`;
+    const saved = localStorage.getItem(storageKey);
+    return saved ? JSON.parse(saved) : null;
+}
+
+// Save position for current site
+function savePosition(x, y) {
+    const hostname = window.location.hostname;
+    const storageKey = `mojify-suggestion-pos-${hostname}`;
+    localStorage.setItem(storageKey, JSON.stringify({ x, y }));
+}
+
+// Position suggestion bar using saved position or default above input
+function positionSuggestionBarFromStorage(inputElement) {
+    const suggestionBar = document.getElementById('mojify-suggestion-bar');
+    if (!suggestionBar) return;
+
+    const savedPos = getSavedPosition();
+
+    if (savedPos) {
+        // Use saved position
+        suggestionBar.style.left = `${savedPos.x}px`;
+        suggestionBar.style.top = `${savedPos.y}px`;
+        suggestionBar.style.width = '300px';
+    } else {
+        // Default position above input
+        if (inputElement) {
+            const rect = inputElement.getBoundingClientRect();
+            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+            const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+
+            suggestionBar.style.left = `${rect.left + scrollLeft}px`;
+            suggestionBar.style.top = `${rect.top + scrollTop - 220}px`; // Above input
+            suggestionBar.style.width = `${Math.min(300, rect.width)}px`;
+        } else {
+            // Fallback to center screen
+            suggestionBar.style.left = '50px';
+            suggestionBar.style.top = '50px';
+            suggestionBar.style.width = '300px';
+        }
+    }
+}
+
+// Make element draggable
+function makeDraggable(element, handle) {
+    let isDragging = false;
+    let startX, startY, initialLeft, initialTop;
+
+    handle.addEventListener('mousedown', (e) => {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        initialLeft = parseInt(element.style.left) || 0;
+        initialTop = parseInt(element.style.top) || 0;
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        e.preventDefault();
+    });
+
+    function onMouseMove(e) {
+        if (!isDragging) return;
+
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+
+        const newLeft = initialLeft + deltaX;
+        const newTop = initialTop + deltaY;
+
+        // Keep within viewport bounds
+        const maxLeft = window.innerWidth - element.offsetWidth;
+        const maxTop = window.innerHeight - element.offsetHeight;
+
+        const boundedLeft = Math.max(0, Math.min(newLeft, maxLeft));
+        const boundedTop = Math.max(0, Math.min(newTop, maxTop));
+
+        element.style.left = `${boundedLeft}px`;
+        element.style.top = `${boundedTop}px`;
+    }
+
+    function onMouseUp(e) {
+        if (isDragging) {
+            isDragging = false;
+            // Save position
+            const finalLeft = parseInt(element.style.left);
+            const finalTop = parseInt(element.style.top);
+            savePosition(finalLeft, finalTop);
+        }
+
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+    }
+}
+
+// Insert emote from suggestion
+async function insertEmoteFromSuggestion(emoteKey, inputElement) {
+    try {
+        const platform = getCurrentPlatform();
+        if (!platform) return;
+
+        // For contenteditable elements, replace the colon text
+        if (inputElement.isContentEditable) {
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                const textNode = range.startContainer;
+
+                if (textNode.nodeType === Node.TEXT_NODE) {
+                    const text = textNode.textContent;
+                    const colonIndex = text.lastIndexOf(':', range.startOffset);
+
+                    if (colonIndex !== -1) {
+                        // Remove the partial emote text
+                        const deleteRange = document.createRange();
+                        deleteRange.setStart(textNode, colonIndex);
+                        deleteRange.setEnd(textNode, range.startOffset);
+                        deleteRange.deleteContents();
+
+                        // Insert the emote
+                        await insertEmote(emoteKey);
+                    }
+                }
+            }
+        } else {
+            // For regular input fields
+            const text = inputElement.value;
+            const cursorPos = inputElement.selectionStart;
+            const colonIndex = text.lastIndexOf(':', cursorPos);
+
+            if (colonIndex !== -1) {
+                const beforeColon = text.substring(0, colonIndex);
+                const afterCursor = text.substring(cursorPos);
+                inputElement.value = beforeColon + `[${emoteKey}]` + afterCursor;
+
+                const newPos = beforeColon.length + emoteKey.length + 2;
+                inputElement.setSelectionRange(newPos, newPos);
+            }
+        }
+    } catch (error) {
+        debugLog("Error inserting emote from suggestion:", error);
+    }
+}
+
 // Simulate file drop (exact copy from example)
 function simulateFileDrop(file, targetElement) {
     debugLog("Using drag and drop method");
@@ -691,6 +960,9 @@ async function handleInputEvent(event) {
     (target.textContent || target.innerText || '') :
     target.value;
 
+  // Handle emote suggestions
+  handleEmoteSuggestions(event, target, currentText);
+
   debugLog("Input event - current text:", currentText);
   debugLog("Input event - event data:", event.data);
   debugLog("Input event - input type:", event.inputType);
@@ -797,6 +1069,47 @@ async function handleInputEvent(event) {
   }
 }
 
+// Handle emote suggestions
+function handleEmoteSuggestions(event, target, currentText) {
+  try {
+    // Get cursor position
+    let cursorPos;
+    if (target.isContentEditable) {
+      const selection = window.getSelection();
+      if (selection.rangeCount === 0) return;
+      const range = selection.getRangeAt(0);
+      cursorPos = range.startOffset;
+    } else {
+      cursorPos = target.selectionStart;
+    }
+
+    // Look for colon followed by text (incomplete emote)
+    const textBeforeCursor = currentText.substring(0, cursorPos);
+    const lastColonIndex = textBeforeCursor.lastIndexOf(':');
+
+    if (lastColonIndex !== -1) {
+      const textAfterColon = textBeforeCursor.substring(lastColonIndex + 1);
+
+      // Check if it's a valid emote query (no spaces, reasonable length)
+      if (textAfterColon.length >= 0 && textAfterColon.length <= 20 && !textAfterColon.includes(' ')) {
+        // Check if there's another colon after (complete emote)
+        const nextColonIndex = currentText.indexOf(':', lastColonIndex + 1);
+
+        if (nextColonIndex === -1 || nextColonIndex >= cursorPos) {
+          // Incomplete emote, show suggestions
+          showEmoteSuggestions(textAfterColon, target);
+          return;
+        }
+      }
+    }
+
+    // Hide suggestions if not in emote context
+    hideSuggestions();
+  } catch (error) {
+    debugLog("Error handling emote suggestions:", error);
+  }
+}
+
 // Add multiple event listeners to catch different input types
 document.addEventListener('input', handleInputEvent);
 document.addEventListener('keyup', handleInputEvent);
@@ -807,6 +1120,20 @@ document.addEventListener('compositionend', handleInputEvent);
 document.body.addEventListener('input', handleInputEvent, true);
 document.body.addEventListener('keyup', handleInputEvent, true);
 
+// Hide suggestions when clicking outside
+document.addEventListener('click', (event) => {
+  const suggestionBar = document.getElementById('mojify-suggestion-bar');
+  if (suggestionBar && !suggestionBar.contains(event.target)) {
+    hideSuggestions();
+  }
+});
+
+// Hide suggestions on escape key
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    hideSuggestions();
+  }
+});
 
 debugLog("Mojify content script loaded on supported platform:", hostname);
 
