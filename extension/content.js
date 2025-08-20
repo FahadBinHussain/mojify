@@ -561,6 +561,7 @@ function hideSuggestions() {
     }
     // Reset keyboard navigation state
     selectedEmoteIndex = -1;
+    minibarFocused = false;
     emoteElements = [];
 }
 
@@ -917,6 +918,7 @@ async function insertFileOnWhatsApp(file, targetElement) {
 let selectedEmoteIndex = -1;
 let emoteElements = [];
 let isNavigatingKeyboard = false;
+let minibarFocused = false;
 
 function createEmoteSuggestionBar() {
     if (document.getElementById('mojify-suggestion-bar')) return;
@@ -1160,8 +1162,9 @@ function showEmoteSuggestions(query, inputElement) {
         element: emoteList.children[index]
     }));
 
-    // Reset selection
+    // Reset selection and focus state
     selectedEmoteIndex = -1;
+    minibarFocused = false;
     updateEmoteSelection();
 
     // Position the suggestion bar using saved position or default
@@ -1550,7 +1553,7 @@ let isProcessingEmote = false;
 function updateEmoteSelection() {
     emoteElements.forEach((emote, index) => {
         if (emote.element) {
-            if (index === selectedEmoteIndex) {
+            if (index === selectedEmoteIndex && minibarFocused) {
                 emote.element.classList.add('mojify-emote-selected');
                 emote.element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             } else {
@@ -1579,6 +1582,13 @@ function selectPrevEmote() {
 function selectFirstEmote() {
     if (emoteElements.length === 0) return;
     selectedEmoteIndex = 0;
+    minibarFocused = true;
+    updateEmoteSelection();
+}
+
+function unfocusMinibar() {
+    selectedEmoteIndex = -1;
+    minibarFocused = false;
     updateEmoteSelection();
 }
 
@@ -1644,23 +1654,40 @@ document.addEventListener('keydown', (event) => {
             setTimeout(() => { isNavigatingKeyboard = false; }, 200);
             break;
         case 'ArrowLeft':
-            event.preventDefault();
-            event.stopPropagation();
-            event.stopImmediatePropagation();
-            isNavigatingKeyboard = true;
-            selectPrevEmote();
-            setTimeout(() => { isNavigatingKeyboard = false; }, 200);
+            // Only navigate within minibar if it's focused
+            if (minibarFocused) {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                isNavigatingKeyboard = true;
+                selectPrevEmote();
+                setTimeout(() => { isNavigatingKeyboard = false; }, 200);
+            }
             break;
         case 'ArrowRight':
-            event.preventDefault();
-            event.stopPropagation();
-            event.stopImmediatePropagation();
-            isNavigatingKeyboard = true;
-            selectNextEmote();
-            setTimeout(() => { isNavigatingKeyboard = false; }, 200);
+            // Only navigate within minibar if it's focused
+            if (minibarFocused) {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                isNavigatingKeyboard = true;
+                selectNextEmote();
+                setTimeout(() => { isNavigatingKeyboard = false; }, 200);
+            }
+            break;
+        case 'ArrowDown':
+            // Only unfocus minibar if it's currently focused
+            if (minibarFocused) {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                isNavigatingKeyboard = true;
+                unfocusMinibar();
+                setTimeout(() => { isNavigatingKeyboard = false; }, 200);
+            }
             break;
         case 'Enter':
-            if (selectedEmoteIndex >= 0) {
+            if (selectedEmoteIndex >= 0 && minibarFocused) {
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation();
