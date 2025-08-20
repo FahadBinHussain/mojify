@@ -113,6 +113,54 @@
             </div>
           </div>
 
+          <div class="settings-section backup-restore">
+            <h2 class="section-title">Backup & Restore</h2>
+            <p class="section-description">Backup and restore all your emotes, settings, and configurations</p>
+
+            <div class="backup-restore-actions">
+              <button id="create-backup" class="primary-button">
+                <i class="fas fa-download"></i>
+                <span>Create Backup</span>
+              </button>
+
+              <div class="restore-section">
+                <input type="file" id="restore-file" accept=".json" style="display: none;">
+                <button id="restore-backup" class="secondary-button">
+                  <i class="fas fa-upload"></i>
+                  <span>Restore Backup</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="backup-info">
+              <div class="info-item">
+                <i class="fas fa-check-circle"></i>
+                <span>Emote collection with images</span>
+              </div>
+              <div class="info-item">
+                <i class="fas fa-check-circle"></i>
+                <span>Channel configurations</span>
+              </div>
+              <div class="info-item">
+                <i class="fas fa-check-circle"></i>
+                <span>Emote mappings</span>
+              </div>
+              <div class="info-item">
+                <i class="fas fa-check-circle"></i>
+                <span>Minibar positions for all sites</span>
+              </div>
+            </div>
+
+            <div class="backup-progress hidden" id="backup-progress">
+              <div class="progress-info">
+                <span id="backup-progress-text">Creating backup...</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill" id="backup-progress-fill"></div>
+              </div>
+            </div>
+          </div>
+
           <div class="settings-section storage-info">
             <h2 class="section-title">Storage Information</h2>
             <div class="storage-details">

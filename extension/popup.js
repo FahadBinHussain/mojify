@@ -1626,4 +1626,329 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   init();
+  initBackupRestore();
+
+// Backup and Restore functionality
+function initBackupRestore() {
+  const createBackupBtn = document.getElementById('create-backup');
+  const restoreBackupBtn = document.getElementById('restore-backup');
+  const restoreFileInput = document.getElementById('restore-file');
+
+  createBackupBtn.addEventListener('click', createBackup);
+  restoreBackupBtn.addEventListener('click', () => restoreFileInput.click());
+  restoreFileInput.addEventListener('change', handleRestoreFile);
+}
+
+async function createBackup() {
+  const backupBtn = document.getElementById('create-backup');
+  const progressContainer = document.getElementById('backup-progress');
+  const progressText = document.getElementById('backup-progress-text');
+  const progressFill = document.getElementById('backup-progress-fill');
+
+  try {
+    backupBtn.disabled = true;
+    progressContainer.classList.remove('hidden');
+    progressText.textContent = 'Preparing backup...';
+    progressFill.style.width = '10%';
+
+    const backupData = {
+      version: '1.0',
+      timestamp: new Date().toISOString(),
+      data: {}
+    };
+
+    // Get Chrome storage data
+    progressText.textContent = 'Backing up settings...';
+    progressFill.style.width = '20%';
+
+    const chromeStorageData = await new Promise((resolve) => {
+      chrome.storage.local.get(null, resolve);
+    });
+
+    // Process chrome storage to reduce size
+    const processedChromeStorage = {};
+    for (const [key, value] of Object.entries(chromeStorageData)) {
+      if (key === 'emoteImageData') {
+        // Skip large image data, we'll get it from IndexedDB
+        continue;
+      }
+      processedChromeStorage[key] = value;
+    }
+    backupData.data.chromeStorage = processedChromeStorage;
+
+    // Get IndexedDB emote data in chunks
+    progressText.textContent = 'Backing up emotes...';
+    progressFill.style.width = '40%';
+
+    const emoteData = [];
+    if (emoteDB.db) {
+      try {
+        const allEmotes = await emoteDB.getAllEmotes();
+        // Process emotes to include only essential data
+        for (const emote of allEmotes) {
+          emoteData.push({
+            key: emote.key,
+            url: emote.url,
+            dataUrl: emote.dataUrl,
+            channel: emote.channel,
+            timestamp: emote.timestamp
+          });
+        }
+        backupData.data.indexedDBEmotes = emoteData;
+      } catch (dbError) {
+        console.warn('Could not backup IndexedDB emotes:', dbError);
+        backupData.data.indexedDBEmotes = [];
+      }
+    }
+
+    // Get localStorage data (minibar positions)
+    progressText.textContent = 'Backing up positions...';
+    progressFill.style.width = '60%';
+
+    const localStorageData = {};
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('mojify-suggestion-pos-')) {
+          localStorageData[key] = localStorage.getItem(key);
+        }
+      }
+    } catch (lsError) {
+      console.warn('Could not access localStorage:', lsError);
+    }
+    backupData.data.localStorage = localStorageData;
+
+    // Create backup file with compression
+    progressText.textContent = 'Creating backup file...';
+    progressFill.style.width = '80%';
+
+    // Convert to JSON string without pretty printing to reduce size
+    const jsonString = JSON.stringify(backupData);
+
+    // Check size and warn if too large
+    const sizeInMB = new Blob([jsonString]).size / (1024 * 1024);
+    if (sizeInMB > 50) {
+      if (!confirm(`Backup file is ${sizeInMB.toFixed(1)}MB. This may take time to download. Continue?`)) {
+        throw new Error('Backup cancelled by user');
+      }
+    }
+
+    const blob = new Blob([jsonString], {
+      type: 'application/json'
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `mojify-backup-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    progressText.textContent = 'Backup completed!';
+    progressFill.style.width = '100%';
+
+    showToast(`Backup created successfully! (${sizeInMB.toFixed(1)}MB)`, 'success');
+
+    setTimeout(() => {
+      progressContainer.classList.add('hidden');
+      progressFill.style.width = '0%';
+    }, 2000);
+
+  } catch (error) {
+    console.error('Backup failed:', error);
+    showToast('Backup failed: ' + error.message, 'error');
+    progressContainer.classList.add('hidden');
+  } finally {
+    backupBtn.disabled = false;
+  }
+}
+
+async function handleRestoreFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const progressContainer = document.getElementById('backup-progress');
+  const progressText = document.getElementById('backup-progress-text');
+  const progressFill = document.getElementById('backup-progress-fill');
+
+  try {
+    progressContainer.classList.remove('hidden');
+    progressText.textContent = 'Reading backup file...';
+    progressFill.style.width = '5%';
+
+    // Check file size
+    const fileSizeInMB = file.size / (1024 * 1024);
+    if (fileSizeInMB > 100) {
+      if (!confirm(`Large backup file (${fileSizeInMB.toFixed(1)}MB). This may take time to process. Continue?`)) {
+        throw new Error('Restore cancelled by user');
+      }
+    }
+
+    const fileContent = await file.text();
+    progressFill.style.width = '15%';
+
+    let backupData;
+    try {
+      backupData = JSON.parse(fileContent);
+    } catch (parseError) {
+      throw new Error('Invalid JSON format in backup file');
+    }
+
+    if (!backupData.version || !backupData.data) {
+      throw new Error('Invalid backup file format');
+    }
+
+    // Show backup info
+    const emoteCount = backupData.data.indexedDBEmotes ? backupData.data.indexedDBEmotes.length : 0;
+    const channelCount = backupData.data.chromeStorage && backupData.data.chromeStorage.channels ?
+                        backupData.data.chromeStorage.channels.length : 0;
+    const positionCount = backupData.data.localStorage ? Object.keys(backupData.data.localStorage).length : 0;
+
+    const confirmMessage = `Restore backup from ${new Date(backupData.timestamp).toLocaleString()}?\n\n` +
+                          `• ${emoteCount} emotes\n` +
+                          `• ${channelCount} channels\n` +
+                          `• ${positionCount} minibar positions\n\n` +
+                          `This will replace ALL current data!`;
+
+    if (!confirm(confirmMessage)) {
+      progressContainer.classList.add('hidden');
+      return;
+    }
+
+    // Clear existing data
+    progressText.textContent = 'Clearing existing data...';
+    progressFill.style.width = '25%';
+
+    // Clear Chrome storage
+    await new Promise((resolve) => {
+      chrome.storage.local.clear(resolve);
+    });
+
+    // Clear IndexedDB
+    try {
+      if (emoteDB.db) {
+        await emoteDB.clearAll();
+      }
+    } catch (dbError) {
+      console.warn('Could not clear IndexedDB:', dbError);
+    }
+
+    // Clear localStorage (minibar positions)
+    try {
+      const keysToRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('mojify-suggestion-pos-')) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach(key => localStorage.removeItem(key));
+    } catch (lsError) {
+      console.warn('Could not clear localStorage:', lsError);
+    }
+
+    // Restore Chrome storage data
+    progressText.textContent = 'Restoring settings...';
+    progressFill.style.width = '40%';
+
+    if (backupData.data.chromeStorage) {
+      try {
+        await new Promise((resolve, reject) => {
+          chrome.storage.local.set(backupData.data.chromeStorage, () => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve();
+            }
+          });
+        });
+      } catch (storageError) {
+        console.warn('Could not restore Chrome storage:', storageError);
+      }
+    }
+
+    // Restore IndexedDB data
+    progressText.textContent = 'Restoring emotes...';
+    progressFill.style.width = '60%';
+
+    if (backupData.data.indexedDBEmotes && backupData.data.indexedDBEmotes.length > 0) {
+      try {
+        await emoteDB.init();
+        const emotes = backupData.data.indexedDBEmotes;
+        for (let i = 0; i < emotes.length; i++) {
+          const emote = emotes[i];
+          if (emote.key && emote.dataUrl) {
+            await emoteDB.storeEmote(
+              emote.key,
+              emote.url || '',
+              emote.dataUrl,
+              {
+                channel: emote.channel || 'unknown',
+                timestamp: emote.timestamp || Date.now()
+              }
+            );
+          }
+
+          // Update progress for large emote collections
+          if (i % 50 === 0) {
+            const progress = 60 + (i / emotes.length) * 20;
+            progressFill.style.width = `${progress}%`;
+            progressText.textContent = `Restoring emotes... (${i + 1}/${emotes.length})`;
+            await new Promise(resolve => setTimeout(resolve, 10)); // Small delay to update UI
+          }
+        }
+      } catch (dbError) {
+        console.warn('Could not restore IndexedDB emotes:', dbError);
+      }
+    }
+
+    // Restore localStorage data
+    progressText.textContent = 'Restoring positions...';
+    progressFill.style.width = '85%';
+
+    if (backupData.data.localStorage) {
+      try {
+        Object.entries(backupData.data.localStorage).forEach(([key, value]) => {
+          if (key.startsWith('mojify-suggestion-pos-')) {
+            localStorage.setItem(key, value);
+          }
+        });
+      } catch (lsError) {
+        console.warn('Could not restore localStorage:', lsError);
+      }
+    }
+
+    progressText.textContent = 'Finalizing restore...';
+    progressFill.style.width = '95%';
+
+    // Refresh UI
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    progressText.textContent = 'Restore completed!';
+    progressFill.style.width = '100%';
+
+    showToast(`Backup restored successfully! (${emoteCount} emotes, ${channelCount} channels)`, 'success');
+
+    // Refresh UI components
+    setTimeout(() => {
+      loadEmotes();
+      loadChannelIds();
+      updateStorageInfo();
+      updateChannelManagement();
+      progressContainer.classList.add('hidden');
+      progressFill.style.width = '0%';
+    }, 1500);
+
+  } catch (error) {
+    console.error('Restore failed:', error);
+    showToast('Restore failed: ' + error.message, 'error');
+    progressContainer.classList.add('hidden');
+    progressFill.style.width = '0%';
+  }
+
+  // Reset file input
+  event.target.value = '';
+}
 });
