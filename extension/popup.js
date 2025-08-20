@@ -1358,37 +1358,68 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Storage and channel management functions
   function updateStorageInfo() {
-    chrome.storage.local.get(['emoteMapping', 'channels', 'emoteImageData'], (result) => {
+    // Get references to the storage elements
+    const localStorageUsed = document.getElementById('local-storage-used');
+    const indexedDBStorageUsed = document.getElementById('indexeddb-storage-used');
+    
+    // Get Chrome storage data
+    chrome.storage.local.get(['emoteMapping', 'channels', 'emoteImageData'], async (result) => {
       const emoteCount = result.emoteMapping ? Object.keys(result.emoteMapping).length : 0;
       const channelCount = result.channels ? result.channels.length : 0;
 
       totalEmotesCount.textContent = emoteCount;
       channelsCount.textContent = channelCount;
 
-      // Calculate storage usage
-      let totalSize = 0;
-      if (result.emoteImageData) {
-        Object.values(result.emoteImageData).forEach(emote => {
-          if (emote.size) {
-            totalSize += emote.size;
+      // Calculate Chrome storage usage (localStorage)
+      let localStorageSize = 0;
+      
+      // Calculate size of emoteMapping and channels
+      const storageString = JSON.stringify(result);
+      localStorageSize = new Blob([storageString]).size;
+      
+      // Format and display local storage size
+      localStorageUsed.textContent = formatSize(localStorageSize);
+      
+      // Calculate IndexedDB storage size
+      let indexedDBSize = 0;
+      
+      try {
+        // Initialize IndexedDB if needed
+        if (!emoteDB.db) {
+          await emoteDB.init();
+        }
+        
+        // Get all emotes from IndexedDB
+        const indexedDBEmotes = await emoteDB.getAllEmotes();
+        
+        // Calculate size of all emote data URLs
+        indexedDBEmotes.forEach(emote => {
+          if (emote.dataUrl) {
+            // Estimate size of data URL
+            indexedDBSize += emote.dataUrl.length;
           }
         });
+        
+        // Format and display IndexedDB storage size
+        indexedDBStorageUsed.textContent = formatSize(indexedDBSize);
+      } catch (error) {
+        console.error('Error calculating IndexedDB size:', error);
+        indexedDBStorageUsed.textContent = 'Error';
       }
-
-      // Convert bytes to appropriate unit
-      let sizeText = '0 KB';
-      if (totalSize > 0) {
-        if (totalSize < 1024) {
-          sizeText = `${totalSize} B`;
-        } else if (totalSize < 1024 * 1024) {
-          sizeText = `${(totalSize / 1024).toFixed(1)} KB`;
-        } else {
-          sizeText = `${(totalSize / (1024 * 1024)).toFixed(1)} MB`;
-        }
-      }
-
-      storageUsed.textContent = sizeText;
     });
+  }
+  
+  // Helper function to format size in B, KB, or MB
+  function formatSize(bytes) {
+    if (bytes === 0) return '0 B';
+    
+    if (bytes < 1024) {
+      return `${bytes} B`;
+    } else if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`;
+    } else {
+      return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
   }
 
   function updateChannelManagement() {
