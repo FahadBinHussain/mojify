@@ -169,7 +169,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const cancelBtn = document.getElementById('modal-cancel');
 
       modalTitle.textContent = title;
-      modalMessage.textContent = message;
+      // Use innerHTML instead of textContent to properly render HTML entities and formatting
+      modalMessage.innerHTML = message.replace(/\n/g, '<br>');
       confirmBtn.innerHTML = `<span>${confirmText}</span>`;
       cancelBtn.innerHTML = `<span>${cancelText}</span>`;
 
@@ -2099,9 +2100,9 @@ async function clearAllStorage() {
     const positionCount = backupData.data.localStorage ? Object.keys(backupData.data.localStorage).length : 0;
 
     const confirmMessage = `Restore backup from ${new Date(backupData.timestamp).toLocaleString()}?\n\n` +
-                          `• ${emoteCount} emotes\n` +
-                          `• ${channelCount} channels\n` +
-                          `• ${positionCount} minibar positions\n\n` +
+                          `&bull; ${emoteCount} emotes\n` +
+                          `&bull; ${channelCount} channels\n` +
+                          `&bull; ${positionCount} minibar positions\n\n` +
                           `This will replace ALL current data!`;
 
     const confirmed = await showConfirmDialog(
