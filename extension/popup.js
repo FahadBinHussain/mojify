@@ -50,6 +50,41 @@ const emoteDB = {
       request.onsuccess = () => resolve(request.result || []);
       request.onerror = () => reject(request.error);
     });
+  },
+
+  async storeEmote(key, url, dataUrl, metadata = {}) {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emotes'], 'readwrite');
+      const store = transaction.objectStore('emotes');
+
+      const emoteData = {
+        key: key,
+        url: url,
+        html: `<img src="${dataUrl}">`,
+        dataUrl: dataUrl,
+        timestamp: Date.now(),
+        ...metadata
+      };
+
+      const request = store.put(emoteData);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  async clearAll() {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emotes'], 'readwrite');
+      const store = transaction.objectStore('emotes');
+      const request = store.clear();
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
   }
 };
 
@@ -1628,6 +1663,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   init();
   initBackupRestore();
+  initDownloadButton();
 });
 
 // Backup and Restore functionality
@@ -1639,6 +1675,50 @@ function initBackupRestore() {
   createBackupBtn.addEventListener('click', createBackup);
   restoreBackupBtn.addEventListener('click', () => restoreFileInput.click());
   restoreFileInput.addEventListener('change', handleRestoreFile);
+}
+
+// Download button functionality
+function initDownloadButton() {
+  const downloadButton = document.getElementById('download-button');
+
+  if (downloadButton) {
+    downloadButton.addEventListener('click', handleManualRefresh);
+  }
+}
+
+async function handleManualRefresh() {
+  const downloadButton = document.getElementById('download-button');
+
+  try {
+    downloadButton.disabled = true;
+    downloadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Refreshing...</span>';
+
+    // Set manual refresh flag to bypass restore skip logic
+    await new Promise((resolve) => {
+      chrome.storage.local.set({ manualRefresh: true }, resolve);
+    });
+
+    // Trigger download
+    chrome.runtime.sendMessage({ action: 'downloadEmotes' }, (response) => {
+      if (response && response.success) {
+        if (response.skipped) {
+          showToast(response.message, 'info');
+        } else {
+          showToast('Emotes refresh started', 'success');
+          startProgressPolling();
+        }
+      } else {
+        showToast('Refresh failed: ' + (response?.error || 'Unknown error'), 'error');
+      }
+    });
+
+  } catch (error) {
+    console.error('Manual refresh failed:', error);
+    showToast('Refresh failed: ' + error.message, 'error');
+  } finally {
+    downloadButton.disabled = false;
+    downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
+  }
 }
 
 // Save button functionality
