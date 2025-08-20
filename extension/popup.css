@@ -1162,3 +1162,39 @@ code {
 .restore-section {
   position: relative;
 }
+
+/* Toast Notifications */
+.toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: #333;
+  color: white;
+  padding: 12px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  z-index: 1000;
+  min-width: 200px;
+  max-width: 350px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transition: all 0.3s ease;
+  transform: translateX(0);
+}
+
+.toast.hidden {
+  transform: translateX(100%);
+  opacity: 0;
+}
+
+.toast-success {
+  background: #28a745;
+}
+
+.toast-error {
+  background: #dc3545;
+}
+
+.toast-info {
+  background: #007bff;
+}
