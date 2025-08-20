@@ -1976,6 +1976,36 @@ if (getCurrentPlatform() === 'discord') {
   if (document.readyState === 'complete') {
     setupDiscordTextInterceptor();
   }
+  
+  // Handle Discord navigation/channel changes
+  const discordObserver = new MutationObserver((mutations) => {
+    // Check if URL has changed (Discord uses client-side routing)
+    const currentUrl = window.location.href;
+    if (currentUrl !== discordObserver.lastUrl) {
+      discordObserver.lastUrl = currentUrl;
+      debugLog("Discord navigation detected - reinitializing text interceptor");
+      
+      // Reset Discord state variables
+      discordState = 'NORMAL';
+      discordBuffer = '';
+      
+      // Remove old minibar if it exists
+      if (discordMinibar) {
+        discordMinibar.remove();
+        discordMinibar = null;
+      }
+      
+      // Reset editor reference
+      discordEditor = null;
+      
+      // Reinitialize the text interceptor
+      setTimeout(setupDiscordTextInterceptor, 500);
+    }
+  });
+  
+  // Start observing with the current URL
+  discordObserver.lastUrl = window.location.href;
+  discordObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 // Additional check after longer delay
