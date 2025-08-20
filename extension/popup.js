@@ -2253,6 +2253,33 @@ async function clearAllStorage() {
 
     showToast(`Backup restored successfully! (${emoteCount} emotes, ${channelCount} channels)`, 'success');
 
+    // Ensure emoteMapping is properly updated with all restored emotes
+    if (backupData.data.indexedDBEmotes && backupData.data.indexedDBEmotes.length > 0) {
+      try {
+        // Create a new emoteMapping from the restored emotes
+        const newEmoteMapping = {};
+        backupData.data.indexedDBEmotes.forEach(emote => {
+          if (emote.key && emote.url) {
+            newEmoteMapping[emote.key] = emote.url;
+          }
+        });
+        
+        // Save the updated emoteMapping to chrome.storage
+        await new Promise((resolve, reject) => {
+          chrome.storage.local.set({ emoteMapping: newEmoteMapping }, () => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              console.log('EmoteMapping updated with', Object.keys(newEmoteMapping).length, 'emotes');
+              resolve();
+            }
+          });
+        });
+      } catch (error) {
+        console.error('Failed to update emoteMapping:', error);
+      }
+    }
+    
     // Refresh UI components
     setTimeout(() => {
       loadEmotes();
