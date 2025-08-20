@@ -1392,32 +1392,99 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateChannelManagement() {
-    chrome.storage.local.get(['channels'], (result) => {
+    // First get the channels
+    chrome.storage.local.get(['channels'], async (result) => {
       const channels = result.channels || [];
 
       if (channels.length > 0) {
         channelManagement.style.display = 'block';
         channelList.innerHTML = '';
+        
+        try {
+          // Initialize IndexedDB if needed
+          if (!emoteDB.db) {
+            await emoteDB.init();
+          }
+          
+          // Get all emotes from IndexedDB
+          const indexedDBEmotes = await emoteDB.getAllEmotes();
+          
+          // Get the emoteMapping to check which emotes belong to which channel
+          const { emoteMapping } = await new Promise((resolve) => {
+            chrome.storage.local.get(['emoteMapping'], (result) => resolve(result));
+          });
+          
+          // Count emotes per channel based on the channel's emotes in emoteMapping
+          const emoteCountByChannel = {};
+          
+          // For each channel, count how many of its emotes are actually in IndexedDB
+          channels.forEach(channel => {
+            if (!channel.id) return;
+            
+            // Get all emote keys for this channel
+            const channelEmoteKeys = new Set();
+            if (channel.emotes) {
+              Object.keys(channel.emotes).forEach(key => channelEmoteKeys.add(key));
+            }
+            
+            // Count how many of these emotes are in IndexedDB
+            const indexedDBEmoteKeys = new Set(indexedDBEmotes.map(e => e.key));
+            let count = 0;
+            channelEmoteKeys.forEach(key => {
+              if (indexedDBEmoteKeys.has(key)) {
+                count++;
+              }
+            });
+            
+            emoteCountByChannel[channel.id] = count;
+          });
+          
+          // Create channel list items
+          channels.forEach(channel => {
+            // Use the count from IndexedDB or fallback to channel.emotes
+            const emoteCount = emoteCountByChannel[channel.id] || 
+                             (channel.emotes ? Object.keys(channel.emotes).length : 0);
 
-        channels.forEach(channel => {
-          const emoteCount = channel.emotes ? Object.keys(channel.emotes).length : 0;
+            const channelItem = document.createElement('div');
+            channelItem.className = 'channel-item';
+            channelItem.innerHTML = `
+              <div class="channel-info">
+                <div class="channel-name">${channel.username}</div>
+                <div class="channel-stats">${emoteCount} emotes</div>
+              </div>
+              <div class="channel-actions">
+                <button class="delete-channel-btn" data-channel-id="${channel.id}">
+                  <i class="fas fa-trash"></i> Delete
+                </button>
+              </div>
+            `;
 
-          const channelItem = document.createElement('div');
-          channelItem.className = 'channel-item';
-          channelItem.innerHTML = `
-            <div class="channel-info">
-              <div class="channel-name">${channel.username}</div>
-              <div class="channel-stats">${emoteCount} emotes</div>
-            </div>
-            <div class="channel-actions">
-              <button class="delete-channel-btn" data-channel-id="${channel.id}">
-                <i class="fas fa-trash"></i> Delete
-              </button>
-            </div>
-          `;
+            channelList.appendChild(channelItem);
+          });
+        } catch (error) {
+          console.error('Error updating channel management:', error);
+          
+          // Fallback to simple display if IndexedDB fails
+          channels.forEach(channel => {
+            const emoteCount = channel.emotes ? Object.keys(channel.emotes).length : 0;
 
-          channelList.appendChild(channelItem);
-        });
+            const channelItem = document.createElement('div');
+            channelItem.className = 'channel-item';
+            channelItem.innerHTML = `
+              <div class="channel-info">
+                <div class="channel-name">${channel.username}</div>
+                <div class="channel-stats">${emoteCount} emotes</div>
+              </div>
+              <div class="channel-actions">
+                <button class="delete-channel-btn" data-channel-id="${channel.id}">
+                  <i class="fas fa-trash"></i> Delete
+                </button>
+              </div>
+            `;
+
+            channelList.appendChild(channelItem);
+          });
+        }
 
         // Add delete channel handlers
         channelList.querySelectorAll('.delete-channel-btn').forEach(btn => {
@@ -2279,6 +2346,9 @@ async function clearAllStorage() {
         console.error('Failed to update emoteMapping:', error);
       }
     }
+    
+    // We'll let loadEmotes handle the channel emote mapping
+    // since it already has the logic to match emotes to channels
     
     // Refresh UI components
     setTimeout(() => {
