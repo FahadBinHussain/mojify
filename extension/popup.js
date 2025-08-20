@@ -150,6 +150,55 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 3000);
   }
 
+  // Custom modal confirmation function
+  function showConfirmDialog(title, message, confirmText = 'Confirm', cancelText = 'Cancel', isDangerous = false) {
+    return new Promise((resolve) => {
+      const modal = document.getElementById('confirmation-modal');
+      const modalTitle = document.getElementById('modal-title');
+      const modalMessage = document.getElementById('modal-message');
+      const confirmBtn = document.getElementById('modal-confirm');
+      const cancelBtn = document.getElementById('modal-cancel');
+
+      modalTitle.textContent = title;
+      modalMessage.textContent = message;
+      confirmBtn.innerHTML = `<span>${confirmText}</span>`;
+      cancelBtn.innerHTML = `<span>${cancelText}</span>`;
+
+      // Style confirm button based on action type
+      confirmBtn.className = isDangerous ? 'danger-button' : 'primary-button';
+
+      modal.classList.remove('hidden');
+
+      const handleConfirm = () => {
+        modal.classList.add('hidden');
+        cleanup();
+        resolve(true);
+      };
+
+      const handleCancel = () => {
+        modal.classList.add('hidden');
+        cleanup();
+        resolve(false);
+      };
+
+      const cleanup = () => {
+        confirmBtn.removeEventListener('click', handleConfirm);
+        cancelBtn.removeEventListener('click', handleCancel);
+        modal.removeEventListener('click', handleOverlayClick);
+      };
+
+      const handleOverlayClick = (e) => {
+        if (e.target === modal) {
+          handleCancel();
+        }
+      };
+
+      confirmBtn.addEventListener('click', handleConfirm);
+      cancelBtn.addEventListener('click', handleCancel);
+      modal.addEventListener('click', handleOverlayClick);
+    });
+  }
+
   // Initialize tab indicator position
   function initTabs() {
     const activeTab = document.querySelector('.tab-btn.active');
@@ -1834,7 +1883,15 @@ async function saveChannelIds() {
 async function clearAllStorage() {
   const clearButton = document.getElementById('clear-all-storage');
 
-  if (!confirm('This will delete ALL emotes, channels, and settings. Are you sure?')) {
+  const confirmed = await showConfirmDialog(
+    'Clear All Data',
+    'This will permanently delete ALL emotes, channels, settings, and minibar positions. This action cannot be undone.',
+    'Delete All',
+    'Cancel',
+    true
+  );
+
+  if (!confirmed) {
     return;
   }
 
@@ -1967,7 +2024,13 @@ async function clearAllStorage() {
     // Check size and warn if too large
     const sizeInMB = new Blob([jsonString]).size / (1024 * 1024);
     if (sizeInMB > 50) {
-      if (!confirm(`Backup file is ${sizeInMB.toFixed(1)}MB. This may take time to download. Continue?`)) {
+      const confirmed = await showConfirmDialog(
+        'Large Backup File',
+        `Backup file is ${sizeInMB.toFixed(1)}MB. This may take time to download. Continue?`,
+        'Download',
+        'Cancel'
+      );
+      if (!confirmed) {
         throw new Error('Backup cancelled by user');
       }
     }
@@ -2020,7 +2083,13 @@ async function clearAllStorage() {
     // Check file size
     const fileSizeInMB = file.size / (1024 * 1024);
     if (fileSizeInMB > 100) {
-      if (!confirm(`Large backup file (${fileSizeInMB.toFixed(1)}MB). This may take time to process. Continue?`)) {
+      const confirmed = await showConfirmDialog(
+        'Large Backup File',
+        `Large backup file (${fileSizeInMB.toFixed(1)}MB). This may take time to process. Continue?`,
+        'Process',
+        'Cancel'
+      );
+      if (!confirmed) {
         throw new Error('Restore cancelled by user');
       }
     }
@@ -2051,7 +2120,15 @@ async function clearAllStorage() {
                           `• ${positionCount} minibar positions\n\n` +
                           `This will replace ALL current data!`;
 
-    if (!confirm(confirmMessage)) {
+    const confirmed = await showConfirmDialog(
+      'Restore Backup',
+      confirmMessage,
+      'Restore',
+      'Cancel',
+      true
+    );
+
+    if (!confirmed) {
       progressContainer.classList.add('hidden');
       return;
     }
