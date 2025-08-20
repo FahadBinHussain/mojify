@@ -21,6 +21,7 @@ body {
   flex-direction: column;
   overflow: hidden;
   position: relative;
+  max-width: 100%;
 }
 
 /* Header */
@@ -124,6 +125,9 @@ body {
   flex: 1;
   overflow: auto;
   position: relative;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .tab-pane {
@@ -366,8 +370,11 @@ body {
   gap: 12px;
   padding: 12px;
   max-height: none;
-  overflow: visible;
+  overflow-x: hidden;
+  overflow-y: visible;
   transition: max-height 0.3s ease-out;
+  width: 100%;
+  max-width: 100%;
 }
 
 .channel-section.collapsed .channel-emotes {
@@ -382,6 +389,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 24px;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .emote-item {
