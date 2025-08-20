@@ -260,7 +260,7 @@ function updateDiscordMinibar() {
         }
     } else {
         discordMinibar.style.opacity = '0';
-        hideDiscordSuggestions();
+        hideSuggestions();
     }
 }
 
@@ -278,7 +278,7 @@ function resetDiscordState() {
     discordState = 'NORMAL';
     discordBuffer = '';
     updateDiscordMinibar();
-    hideDiscordSuggestions();
+    hideSuggestions();
 }
 
 function setupDiscordTextInterceptor() {
@@ -387,7 +387,7 @@ async function showDiscordEmoteSuggestions(query) {
 
     if (!emoteMapping || Object.keys(emoteMapping).length === 0) {
         debugLog("No emote mapping available for Discord suggestions");
-        hideDiscordSuggestions();
+        hideSuggestions();
         return;
     }
 
@@ -400,7 +400,7 @@ async function showDiscordEmoteSuggestions(query) {
 
     if (filteredEmotes.length === 0) {
         debugLog("No filtered emotes found for query:", query);
-        hideDiscordSuggestions();
+        hideSuggestions();
         return;
     }
 
