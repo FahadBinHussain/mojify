@@ -1608,6 +1608,7 @@ document.addEventListener('DOMContentLoaded', () => {
     addButtonEffects();
     initDebugSection();
     checkDownloadStatus();
+    initSaveButton();
 
     // Check current platform and show warnings
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -1627,6 +1628,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   init();
   initBackupRestore();
+});
 
 // Backup and Restore functionality
 function initBackupRestore() {
@@ -1638,6 +1640,143 @@ function initBackupRestore() {
   restoreBackupBtn.addEventListener('click', () => restoreFileInput.click());
   restoreFileInput.addEventListener('change', handleRestoreFile);
 }
+
+// Save button functionality
+function initSaveButton() {
+  const saveButton = document.getElementById('save-button');
+  const channelIdsInput = document.getElementById('channel-ids');
+  const clearStorageButton = document.getElementById('clear-all-storage');
+
+  if (saveButton) {
+    saveButton.addEventListener('click', saveChannelIds);
+  }
+
+  if (clearStorageButton) {
+    clearStorageButton.addEventListener('click', clearAllStorage);
+  }
+}
+
+async function saveChannelIds() {
+  const saveButton = document.getElementById('save-button');
+  const channelIdsInput = document.getElementById('channel-ids');
+
+  if (!channelIdsInput || !saveButton) return;
+
+  const input = channelIdsInput.value.trim();
+  if (!input) {
+    showToast('Please enter at least one channel ID', 'error');
+    return;
+  }
+
+  try {
+    saveButton.disabled = true;
+    saveButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Saving...</span>';
+
+    // Parse channel IDs (support both newline and comma separation)
+    const channelIds = input
+      .split(/[,\n]/)
+      .map(id => id.trim())
+      .filter(id => id.length > 0);
+
+    if (channelIds.length === 0) {
+      showToast('Please enter valid channel IDs', 'error');
+      return;
+    }
+
+    // Check if emotes were recently restored
+    const { skipNextDownload, lastRestoreTime } = await new Promise((resolve) => {
+      chrome.storage.local.get(['skipNextDownload', 'lastRestoreTime'], resolve);
+    });
+
+    const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
+    const shouldSkipDownload = skipNextDownload || (lastRestoreTime && lastRestoreTime > tenMinutesAgo);
+
+    // Save channel IDs
+    await new Promise((resolve) => {
+      chrome.storage.local.set({ channelIds }, resolve);
+    });
+
+    showToast(`Saved ${channelIds.length} channel ID(s)`, 'success');
+
+    if (shouldSkipDownload) {
+      showToast('Skipping download - emotes recently restored', 'info');
+    } else {
+      // Trigger download
+      chrome.runtime.sendMessage({ action: 'downloadEmotes' }, (response) => {
+        if (response && response.success) {
+          if (response.skipped) {
+            showToast(response.message, 'info');
+          } else {
+            showToast('Emotes download started', 'success');
+            startProgressPolling();
+          }
+        } else {
+          showToast('Download failed: ' + (response?.error || 'Unknown error'), 'error');
+        }
+      });
+    }
+
+    // Update UI
+    updateChannelManagement();
+    updateStorageInfo();
+
+  } catch (error) {
+    console.error('Save failed:', error);
+    showToast('Save failed: ' + error.message, 'error');
+  } finally {
+    saveButton.disabled = false;
+    saveButton.innerHTML = '<i class="fas fa-save"></i> <span>Save Channel IDs</span>';
+  }
+}
+
+async function clearAllStorage() {
+  const clearButton = document.getElementById('clear-all-storage');
+
+  if (!confirm('This will delete ALL emotes, channels, and settings. Are you sure?')) {
+    return;
+  }
+
+  try {
+    clearButton.disabled = true;
+    clearButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Clearing...</span>';
+
+    // Clear Chrome storage
+    await new Promise((resolve) => {
+      chrome.storage.local.clear(resolve);
+    });
+
+    // Clear IndexedDB
+    if (emoteDB.db) {
+      await emoteDB.clearAll();
+    }
+
+    // Clear localStorage positions
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('mojify-suggestion-pos-')) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+
+    showToast('All data cleared successfully', 'success');
+
+    // Reset UI
+    document.getElementById('channel-ids').value = '';
+    loadEmotes();
+    updateChannelManagement();
+    updateStorageInfo();
+  } catch (error) {
+    console.error('Clear storage failed:', error);
+    showToast('Clear failed: ' + error.message, 'error');
+  } finally {
+    clearButton.disabled = false;
+    clearButton.innerHTML = '<i class="fas fa-trash"></i> <span>Clear All Data</span>';
+  }
+}
+
+
 
 async function createBackup() {
   const backupBtn = document.getElementById('create-backup');
@@ -1855,8 +1994,16 @@ async function handleRestoreFile(event) {
 
     if (backupData.data.chromeStorage) {
       try {
+        // Add restore metadata to prevent automatic downloads
+        const restoreData = {
+          ...backupData.data.chromeStorage,
+          lastRestoreTime: Date.now(),
+          restoreSource: 'backup',
+          skipNextDownload: true
+        };
+
         await new Promise((resolve, reject) => {
-          chrome.storage.local.set(backupData.data.chromeStorage, () => {
+          chrome.storage.local.set(restoreData, () => {
             if (chrome.runtime.lastError) {
               reject(new Error(chrome.runtime.lastError.message));
             } else {
@@ -1923,6 +2070,19 @@ async function handleRestoreFile(event) {
     progressText.textContent = 'Finalizing restore...';
     progressFill.style.width = '95%';
 
+    // Mark restoration complete and disable auto-download
+    try {
+      await new Promise((resolve) => {
+        chrome.storage.local.set({
+          restorationComplete: true,
+          lastRestoreTime: Date.now(),
+          skipNextDownload: true
+        }, resolve);
+      });
+    } catch (error) {
+      console.warn('Could not set restoration flags:', error);
+    }
+
     // Refresh UI
     await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -1939,6 +2099,11 @@ async function handleRestoreFile(event) {
       updateChannelManagement();
       progressContainer.classList.add('hidden');
       progressFill.style.width = '0%';
+
+      // Clear the skip flag after UI refresh
+      setTimeout(() => {
+        chrome.storage.local.remove(['skipNextDownload']);
+      }, 2000);
     }, 1500);
 
   } catch (error) {
@@ -1951,4 +2116,3 @@ async function handleRestoreFile(event) {
   // Reset file input
   event.target.value = '';
 }
-});

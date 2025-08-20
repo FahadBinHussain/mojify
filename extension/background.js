@@ -226,7 +226,28 @@ async function downloadEmotes() {
 
     console.log("[Download] Starting emote download");
 
-    const { channelIds } = await chrome.storage.local.get(['channelIds']);
+    // Check if we should skip download due to recent restore
+    const storageCheck = await chrome.storage.local.get(['channelIds', 'skipNextDownload', 'lastRestoreTime']);
+    const { channelIds, skipNextDownload, lastRestoreTime } = storageCheck;
+
+    // Skip download if restored within last 10 minutes
+    const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
+    if (skipNextDownload || (lastRestoreTime && lastRestoreTime > tenMinutesAgo)) {
+      console.log("[Download] Skipping download - emotes recently restored from backup");
+      downloadState.isDownloading = false;
+
+      // Clear the skip flag
+      await chrome.storage.local.remove(['skipNextDownload']);
+
+      const allEmotes = await emoteDB.getAllEmotes();
+      return {
+        success: true,
+        message: "Skipped download - emotes restored from backup",
+        totalEmotes: allEmotes.length,
+        skipped: true
+      };
+    }
+
     if (!channelIds || channelIds.length === 0) {
       downloadState.isDownloading = false;
       return { success: false, error: "No channel IDs configured" };
