@@ -125,6 +125,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let displayedEmotes = [];
   let currentPage = 1;
   let searchTerm = '';
+  let emoteDataMap = new Map();
 
   // Notification function
   function showToast(message, type = 'info') {
@@ -436,24 +437,27 @@ document.addEventListener('DOMContentLoaded', () => {
         const indexedDBEmotes = await emoteDB.getAllEmotes();
         console.log('IndexedDB emotes count:', indexedDBEmotes.length);
 
-        // Create a map for quick lookup
-        const emoteDataMap = new Map();
+        // Update global emoteDataMap for quick lookup
+        emoteDataMap.clear();
         indexedDBEmotes.forEach(emote => {
           emoteDataMap.set(emote.key, emote);
         });
 
-        // Process channels and merge with IndexedDB data
+        // Process channels using only IndexedDB data
         if (channels.length > 0) {
           channels.forEach(channel => {
             if (channel.emotes) {
               const processedEmotes = {};
               Object.entries(channel.emotes).forEach(([key, url]) => {
                 const emoteData = emoteDataMap.get(key);
-                processedEmotes[key] = {
-                  url: typeof url === 'string' ? url : url.url || url,
-                  hasImageData: !!emoteData,
-                  blob: emoteData?.blob || null
-                };
+                // Only include emotes that exist in IndexedDB
+                if (emoteData) {
+                  processedEmotes[key] = {
+                    url: emoteData.url,
+                    hasImageData: true,
+                    dataUrl: emoteData.dataUrl
+                  };
+                }
               });
               channel.emotes = processedEmotes;
             }
@@ -467,15 +471,16 @@ document.addEventListener('DOMContentLoaded', () => {
           });
 
           if (channelIds && channelIds.length > 0) {
-            // Create a single channel with all emotes for backward compatibility
+            // Create a single channel with emotes from IndexedDB only
             const processedEmotes = {};
-            Object.entries(allEmotes).forEach(([key, url]) => {
-              const emoteData = emoteDataMap.get(key);
-              processedEmotes[key] = {
-                url: url,
-                hasImageData: !!emoteData,
-                blob: emoteData?.blob || null
-              };
+            indexedDBEmotes.forEach(emoteData => {
+              if (emoteData.key && emoteData.dataUrl) {
+                processedEmotes[emoteData.key] = {
+                  url: emoteData.url,
+                  hasImageData: true,
+                  dataUrl: emoteData.dataUrl
+                };
+              }
             });
 
             channels = [{
@@ -588,10 +593,14 @@ document.addEventListener('DOMContentLoaded', () => {
         emoteItem.className = 'emote-item';
         emoteItem.setAttribute('data-emote-key', key);
 
-        // Set initial content
+        // Get emote data from IndexedDB
+        const emoteDbData = emoteDataMap.get(key);
+        const imageSrc = emoteDbData?.dataUrl || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjgiIGhlaWdodD0iMjgiIHZpZXdCb3g9IjAgMCAyOCAyOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjI4IiBoZWlnaHQ9IjI4IiByeD0iNCIgZmlsbD0iI0Y1RjVGNSIvPgo8cGF0aCBkPSJNMTQgMTBWMThNMTAgMTRIMTgiIHN0cm9rZT0iIzk5OTk5OSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPHN2Zz4K';
+
+        // Set content with IndexedDB data only
         emoteItem.innerHTML = `
           <div class="emote-img-container">
-            <img src="${emoteUrl}" alt="${emoteName}" class="emote-img">
+            <img src="${imageSrc}" alt="${emoteName}" class="emote-img">
           </div>
           <div class="emote-details">
             <div class="emote-name">${emoteName}</div>
@@ -599,41 +608,11 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
         `;
 
-        // Get image data and update asynchronously
-        chrome.storage.local.get(['emoteImageData'], (result) => {
-          const imageData = result.emoteImageData?.[key];
-          const hasImageData = imageData?.data && imageData.data.startsWith('data:');
-
-          // Update image source if we have base64 data
-          const img = emoteItem.querySelector('.emote-img');
-          if (img && hasImageData) {
-            img.src = imageData.data;
-          }
-
-          // Add error handling for images
-          if (img) {
-            img.addEventListener('error', () => {
-              console.error(`[Popup] Image load failed for ${key}, falling back to URL`);
-              if (img.src !== emoteUrl) {
-                img.src = emoteUrl;
-              } else {
-                console.error(`[Popup] Both base64 and URL failed for ${key}`);
-                img.style.backgroundColor = '#ff6b6b';
-                img.style.color = 'white';
-                img.style.fontSize = '10px';
-                img.alt = 'Failed to load';
-              }
-            });
-
-            img.addEventListener('load', () => {
-              console.log(`[Popup] Image loaded successfully for ${key}`, {
-                src: img.src.substring(0, 50) + '...',
-                naturalWidth: img.naturalWidth,
-                naturalHeight: img.naturalHeight
-              });
-            });
-          }
-        });
+        // Only show if we have data in IndexedDB
+        if (!emoteDbData?.dataUrl) {
+          emoteItem.style.opacity = '0.5';
+          emoteItem.style.pointerEvents = 'none';
+        }
 
         // Add click event to insert emote
         emoteItem.addEventListener('click', () => {
