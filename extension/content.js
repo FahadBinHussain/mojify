@@ -426,7 +426,7 @@ async function showDiscordEmoteSuggestions(query) {
     const emotesData = await Promise.all(emotePromises);
 
     // Render all emotes at once
-    emotesData.forEach(({ key: emoteKey, data: cachedEmote }) => {
+    emotesData.forEach(({ key: emoteKey, data: cachedEmote }, index) => {
         // Only render if we have valid emote data
         if (!cachedEmote || !cachedEmote.dataUrl) return;
 
@@ -503,6 +503,10 @@ async function showDiscordEmoteSuggestions(query) {
 
             insertEmoteFromDiscordInterceptor(emoteKey);
         });
+        
+        // Store emote data for keyboard navigation
+        emoteItem.setAttribute('data-emote-key', emoteKey);
+        emoteItem.setAttribute('data-emote-index', index);
 
         emoteList.appendChild(emoteItem);
     });
@@ -549,6 +553,18 @@ async function showDiscordEmoteSuggestions(query) {
                 makeDraggable(suggestionBar, suggestionBar);
                 suggestionBar.dataset.draggableAttached = 'true';
             }
+            
+            // Store emote elements for keyboard navigation
+            emoteElements = Array.from(emoteList.children).map((element, idx) => ({
+                key: element.getAttribute('data-emote-key'),
+                index: idx,
+                element: element
+            }));
+            
+            // Reset selection and focus state
+            selectedEmoteIndex = -1;
+            minibarFocused = false;
+            updateEmoteSelection();
         });
     }
     debugLog("Discord suggestion bar displayed with", filteredEmotes.length, "emotes");
@@ -1635,6 +1651,19 @@ function getCurrentInputElement() {
     return null;
 }
 
+// Function to handle keyboard navigation in Discord emote suggestions
+async function insertSelectedEmoteDiscord() {
+    if (selectedEmoteIndex >= 0 && selectedEmoteIndex < emoteElements.length) {
+        const selectedEmote = emoteElements[selectedEmoteIndex];
+        if (selectedEmote && selectedEmote.key) {
+            await insertEmoteFromDiscordInterceptor(selectedEmote.key);
+            hideSuggestions();
+            return true;
+        }
+    }
+    return false;
+}
+
 // Add global keyboard event listener for minibar navigation
 document.addEventListener('keydown', (event) => {
     const suggestionBar = document.getElementById('mojify-suggestion-bar');
@@ -1692,7 +1721,14 @@ document.addEventListener('keydown', (event) => {
                 event.stopPropagation();
                 event.stopImmediatePropagation();
                 isNavigatingKeyboard = true;
-                insertSelectedEmote();
+                
+                // Use Discord-specific insertion if we're in Discord mode
+                if (getCurrentPlatform() === 'discord' && discordState === 'INTERCEPTING') {
+                    insertSelectedEmoteDiscord();
+                } else {
+                    insertSelectedEmote();
+                }
+                
                 setTimeout(() => { isNavigatingKeyboard = false; }, 200);
             }
             break;
