@@ -49,6 +49,12 @@ body {
   margin-right: 12px;
 }
 
+.logo-png {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+
 .logo-text h1 {
   font-size: 22px;
   font-weight: 700;
