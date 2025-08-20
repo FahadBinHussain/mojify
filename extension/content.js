@@ -554,11 +554,14 @@ async function showDiscordEmoteSuggestions(query) {
     debugLog("Discord suggestion bar displayed with", filteredEmotes.length, "emotes");
 }
 
-function hideDiscordSuggestions() {
+function hideSuggestions() {
     const suggestionBar = document.getElementById('mojify-suggestion-bar');
     if (suggestionBar) {
         suggestionBar.style.display = 'none';
     }
+    // Reset keyboard navigation state
+    selectedEmoteIndex = -1;
+    emoteElements = [];
 }
 
 function hideSuggestions() {
@@ -910,6 +913,11 @@ async function insertFileOnWhatsApp(file, targetElement) {
 }
 
 // Create emote suggestion minibar
+// Global variable to track keyboard navigation
+let selectedEmoteIndex = -1;
+let emoteElements = [];
+let isNavigatingKeyboard = false;
+
 function createEmoteSuggestionBar() {
     if (document.getElementById('mojify-suggestion-bar')) return;
 
@@ -949,6 +957,11 @@ function createEmoteSuggestionBar() {
     style.textContent = `
         #mojify-emote-list::-webkit-scrollbar {
             display: none;
+        }
+        .mojify-emote-selected {
+            background: rgba(112, 80, 199, 0.2) !important;
+            border: 2px solid #7050c7 !important;
+            border-radius: 8px !important;
         }
     `;
     document.head.appendChild(style);
@@ -1133,8 +1146,23 @@ function showEmoteSuggestions(query, inputElement) {
             hideSuggestions();
         });
 
+        // Store emote data for keyboard navigation
+        emoteItem.setAttribute('data-emote-key', emoteKey);
+        emoteItem.setAttribute('data-emote-index', index);
+
         emoteList.appendChild(emoteItem);
     });
+
+    // Store emote elements for keyboard navigation
+    emoteElements = filteredEmotes.map((key, index) => ({
+        key: key,
+        index: index,
+        element: emoteList.children[index]
+    }));
+
+    // Reset selection
+    selectedEmoteIndex = -1;
+    updateEmoteSelection();
 
     // Position the suggestion bar using saved position or default
     positionSuggestionBarFromStorage(inputElement);
@@ -1518,7 +1546,147 @@ let lastInputTime = 0;
 let isProcessingEmote = false;
 
 // Function to handle input events
+// Keyboard navigation functions
+function updateEmoteSelection() {
+    emoteElements.forEach((emote, index) => {
+        if (emote.element) {
+            if (index === selectedEmoteIndex) {
+                emote.element.classList.add('mojify-emote-selected');
+                emote.element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            } else {
+                emote.element.classList.remove('mojify-emote-selected');
+            }
+        }
+    });
+}
+
+function selectNextEmote() {
+    if (emoteElements.length === 0) return;
+    selectedEmoteIndex = (selectedEmoteIndex + 1) % emoteElements.length;
+    updateEmoteSelection();
+}
+
+function selectPrevEmote() {
+    if (emoteElements.length === 0) return;
+    if (selectedEmoteIndex <= 0) {
+        selectedEmoteIndex = emoteElements.length - 1;
+    } else {
+        selectedEmoteIndex = selectedEmoteIndex - 1;
+    }
+    updateEmoteSelection();
+}
+
+function selectFirstEmote() {
+    if (emoteElements.length === 0) return;
+    selectedEmoteIndex = 0;
+    updateEmoteSelection();
+}
+
+function insertSelectedEmote() {
+    if (selectedEmoteIndex >= 0 && selectedEmoteIndex < emoteElements.length) {
+        const selectedEmote = emoteElements[selectedEmoteIndex];
+        const inputElement = getCurrentInputElement();
+        if (inputElement) {
+            insertEmoteFromSuggestion(selectedEmote.key, inputElement);
+            hideSuggestions();
+            return true;
+        }
+    }
+    return false;
+}
+
+function getCurrentInputElement() {
+    // Try to find the currently focused input element
+    const activeElement = document.activeElement;
+    if (activeElement && (
+        activeElement.tagName === 'INPUT' ||
+        activeElement.tagName === 'TEXTAREA' ||
+        activeElement.contentEditable === 'true'
+    )) {
+        return activeElement;
+    }
+
+    // Fallback to common input selectors for different platforms
+    const inputSelectors = [
+        'div[contenteditable="true"]',
+        'input[type="text"]',
+        'textarea',
+        '[data-text="true"]',
+        '[role="textbox"]'
+    ];
+
+    for (const selector of inputSelectors) {
+        const element = document.querySelector(selector);
+        if (element) {
+            return element;
+        }
+    }
+
+    return null;
+}
+
+// Add global keyboard event listener for minibar navigation
+document.addEventListener('keydown', (event) => {
+    const suggestionBar = document.getElementById('mojify-suggestion-bar');
+
+    // Only handle keyboard navigation when suggestion bar is visible
+    if (!suggestionBar || suggestionBar.style.display === 'none') {
+        return;
+    }
+
+    switch (event.key) {
+        case 'ArrowUp':
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            isNavigatingKeyboard = true;
+            selectFirstEmote();
+            setTimeout(() => { isNavigatingKeyboard = false; }, 200);
+            break;
+        case 'ArrowLeft':
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            isNavigatingKeyboard = true;
+            selectPrevEmote();
+            setTimeout(() => { isNavigatingKeyboard = false; }, 200);
+            break;
+        case 'ArrowRight':
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            isNavigatingKeyboard = true;
+            selectNextEmote();
+            setTimeout(() => { isNavigatingKeyboard = false; }, 200);
+            break;
+        case 'Enter':
+            if (selectedEmoteIndex >= 0) {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                isNavigatingKeyboard = true;
+                insertSelectedEmote();
+                setTimeout(() => { isNavigatingKeyboard = false; }, 200);
+            }
+            break;
+        case 'Escape':
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            isNavigatingKeyboard = true;
+            hideSuggestions();
+            setTimeout(() => { isNavigatingKeyboard = false; }, 200);
+            break;
+    }
+}, true);
+
 async function handleInputEvent(event) {
+  // Skip processing if we're navigating with keyboard
+  if (isNavigatingKeyboard) {
+    debugLog("Skipping input processing - keyboard navigation active");
+    return;
+  }
+
   const { target } = event;
 
   // Check if processing is blocked
