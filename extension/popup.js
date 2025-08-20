@@ -467,7 +467,7 @@ document.addEventListener('DOMContentLoaded', () => {
           });
 
           if (channelIds && channelIds.length > 0) {
-            // Create a single channel with all emotes
+            // Create a single channel with all emotes for backward compatibility
             const processedEmotes = {};
             Object.entries(allEmotes).forEach(([key, url]) => {
               const emoteData = emoteDataMap.get(key);
