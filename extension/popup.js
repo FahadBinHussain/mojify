@@ -126,6 +126,30 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentPage = 1;
   let searchTerm = '';
 
+  // Toast notification function
+  function showToast(message, type = 'info') {
+    const toast = document.getElementById('toast');
+    if (!toast) return;
+
+    toast.textContent = message;
+    toast.className = 'toast';
+
+    if (type === 'success') {
+      toast.classList.add('toast-success');
+    } else if (type === 'error') {
+      toast.classList.add('toast-error');
+    } else {
+      toast.classList.add('toast-info');
+    }
+
+    toast.classList.remove('hidden');
+
+    setTimeout(() => {
+      toast.classList.add('hidden');
+      toast.className = 'toast hidden';
+    }, 3000);
+  }
+
   // Initialize tab indicator position
   function initTabs() {
     const activeTab = document.querySelector('.tab-btn.active');
@@ -1664,62 +1688,60 @@ document.addEventListener('DOMContentLoaded', () => {
   init();
   initBackupRestore();
   initDownloadButton();
-});
+  // Backup and Restore functionality
+  function initBackupRestore() {
+    const createBackupBtn = document.getElementById('create-backup');
+    const restoreBackupBtn = document.getElementById('restore-backup');
+    const restoreFileInput = document.getElementById('restore-file');
 
-// Backup and Restore functionality
-function initBackupRestore() {
-  const createBackupBtn = document.getElementById('create-backup');
-  const restoreBackupBtn = document.getElementById('restore-backup');
-  const restoreFileInput = document.getElementById('restore-file');
-
-  createBackupBtn.addEventListener('click', createBackup);
-  restoreBackupBtn.addEventListener('click', () => restoreFileInput.click());
-  restoreFileInput.addEventListener('change', handleRestoreFile);
-}
-
-// Download button functionality
-function initDownloadButton() {
-  const downloadButton = document.getElementById('download-button');
-
-  if (downloadButton) {
-    downloadButton.addEventListener('click', handleManualRefresh);
+    createBackupBtn.addEventListener('click', createBackup);
+    restoreBackupBtn.addEventListener('click', () => restoreFileInput.click());
+    restoreFileInput.addEventListener('change', handleRestoreFile);
   }
-}
 
-async function handleManualRefresh() {
-  const downloadButton = document.getElementById('download-button');
+  // Download button functionality
+  function initDownloadButton() {
+    const downloadButton = document.getElementById('download-button');
 
-  try {
-    downloadButton.disabled = true;
-    downloadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Refreshing...</span>';
+    if (downloadButton) {
+      downloadButton.addEventListener('click', handleManualRefresh);
+    }
+  }
 
-    // Set manual refresh flag to bypass restore skip logic
-    await new Promise((resolve) => {
-      chrome.storage.local.set({ manualRefresh: true }, resolve);
-    });
+  async function handleManualRefresh() {
+    const downloadButton = document.getElementById('download-button');
 
-    // Trigger download
-    chrome.runtime.sendMessage({ action: 'downloadEmotes' }, (response) => {
-      if (response && response.success) {
-        if (response.skipped) {
-          showToast(response.message, 'info');
+    try {
+      downloadButton.disabled = true;
+      downloadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Refreshing...</span>';
+
+      // Set manual refresh flag to bypass restore skip logic
+      await new Promise((resolve) => {
+        chrome.storage.local.set({ manualRefresh: true }, resolve);
+      });
+
+      // Trigger download
+      chrome.runtime.sendMessage({ action: 'downloadEmotes' }, (response) => {
+        if (response && response.success) {
+          if (response.skipped) {
+            showToast(response.message, 'info');
+          } else {
+            showToast('Emotes refresh started', 'success');
+            startProgressPolling();
+          }
         } else {
-          showToast('Emotes refresh started', 'success');
-          startProgressPolling();
+          showToast('Refresh failed: ' + (response?.error || 'Unknown error'), 'error');
         }
-      } else {
-        showToast('Refresh failed: ' + (response?.error || 'Unknown error'), 'error');
-      }
-    });
+      });
 
-  } catch (error) {
-    console.error('Manual refresh failed:', error);
-    showToast('Refresh failed: ' + error.message, 'error');
-  } finally {
-    downloadButton.disabled = false;
-    downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
+    } catch (error) {
+      console.error('Manual refresh failed:', error);
+      showToast('Refresh failed: ' + error.message, 'error');
+    } finally {
+      downloadButton.disabled = false;
+      downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
+    }
   }
-}
 
 // Save button functionality
 function initSaveButton() {
@@ -1856,9 +1878,7 @@ async function clearAllStorage() {
   }
 }
 
-
-
-async function createBackup() {
+  async function createBackup() {
   const backupBtn = document.getElementById('create-backup');
   const progressContainer = document.getElementById('backup-progress');
   const progressText = document.getElementById('backup-progress-text');
@@ -1982,9 +2002,9 @@ async function createBackup() {
   } finally {
     backupBtn.disabled = false;
   }
-}
+  }
 
-async function handleRestoreFile(event) {
+  async function handleRestoreFile(event) {
   const file = event.target.files[0];
   if (!file) return;
 
@@ -2193,6 +2213,7 @@ async function handleRestoreFile(event) {
     progressFill.style.width = '0%';
   }
 
-  // Reset file input
-  event.target.value = '';
-}
+    // Reset file input
+    event.target.value = '';
+  }
+});
