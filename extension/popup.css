@@ -137,7 +137,8 @@ body {
   visibility: hidden;
   transform: translateX(20px);
   transition: all 0.3s ease;
-  overflow-y: visible;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding-bottom: 20px;
 }
 
@@ -234,6 +235,7 @@ body {
   background: #f9fafb;
   min-height: 300px;
   overflow-y: auto;
+  overflow-x: hidden;
   flex: 1;
   max-height: none;
 }
