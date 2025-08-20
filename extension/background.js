@@ -227,12 +227,12 @@ async function downloadEmotes() {
     console.log("[Download] Starting emote download");
 
     // Check if we should skip download due to recent restore
-    const storageCheck = await chrome.storage.local.get(['channelIds', 'skipNextDownload', 'lastRestoreTime']);
-    const { channelIds, skipNextDownload, lastRestoreTime } = storageCheck;
+    const storageCheck = await chrome.storage.local.get(['channelIds', 'skipNextDownload', 'lastRestoreTime', 'manualRefresh']);
+    const { channelIds, skipNextDownload, lastRestoreTime, manualRefresh } = storageCheck;
 
-    // Skip download if restored within last 10 minutes
+    // Skip download if restored within last 10 minutes AND it's not a manual refresh
     const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
-    if (skipNextDownload || (lastRestoreTime && lastRestoreTime > tenMinutesAgo)) {
+    if ((skipNextDownload || (lastRestoreTime && lastRestoreTime > tenMinutesAgo)) && !manualRefresh) {
       console.log("[Download] Skipping download - emotes recently restored from backup");
       downloadState.isDownloading = false;
 
@@ -246,6 +246,11 @@ async function downloadEmotes() {
         totalEmotes: allEmotes.length,
         skipped: true
       };
+    }
+
+    // Clear manual refresh flag if it was set
+    if (manualRefresh) {
+      await chrome.storage.local.remove(['manualRefresh']);
     }
 
     if (!channelIds || channelIds.length === 0) {
