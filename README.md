@@ -6,8 +6,21 @@
 
 A powerful browser extension that brings Twitch emotes to any website with intelligent suggestions and seamless integration.
 
-![Mojify Demo](https://i.postimg.cc/BQdczFyK/animation.gif)
-![Mojify Demo](https://i.postimg.cc/s29DdZK2/Animation.gif)
+<div align="center">
+  <h2>✨ See Mojify in Action ✨</h2>
+  <table>
+    <tr>
+      <td width="50%">
+        <p><strong>Instant Emote Insertion</strong></p>
+        <img src="https://i.postimg.cc/BQdczFyK/animation.gif" alt="Mojify Smart Suggestions" width="100%">
+      </td>
+      <td width="50%">
+        <p><strong>Smart Emote Suggestions</strong></p>
+        <img src="https://i.postimg.cc/s29DdZK2/Animation.gif" alt="Mojify Emote Insertion" width="100%">
+      </td>
+    </tr>
+  </table>
+</div>
 
 ## ✨ Features
 
@@ -54,27 +67,44 @@ A powerful browser extension that brings Twitch emotes to any website with intel
    - Click "Save Channel IDs"
 
 3. **Download Emotes**:
-   - Click "Refresh Emotes" to download emote library
-   - Wait for download completion
+   - Emotes will automatically download when you save channel IDs
+   - Progress will be shown in real-time
+   - Emotes are ready to use immediately after download completes
+
+4. **Backup & Restore**:
+   - Create backups of your emote collection regularly
+   - Restore your collection on any device with the extension installed
 
 ### Usage
 
-#### **Method 1: Auto-Complete Typing**
-```
-Type: :kappa:
-Result: 🐸 (actual Kappa emote image)
-```
-
-#### **Method 2: Smart Suggestions**
-1. Start typing `:angry` on any supported website
-2. Minibar appears with matching emotes
-3. Click any emote to insert it instantly
-4. Partial text is automatically cleaned up
-
-#### **Method 3: Extension Popup**
-1. Click the extension icon
-2. Browse or search emotes
-3. Click any emote to insert on supported sites
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <h4>📝 Method 1: Auto-Complete</h4>
+      <p>Type an emote code surrounded by colons anywhere on the web:</p>
+      <pre>Type: :kappa:<br>Result: 🐸 (Kappa emote)</pre>
+      <p><em>The text is automatically replaced with the actual emote image.</em></p>
+    </td>
+    <td width="33%" valign="top">
+      <h4>💡 Method 2: Smart Suggestions</h4>
+      <ol>
+        <li>Start typing <code>:emote</code> on any website</li>
+        <li>Minibar appears with matching emotes</li>
+        <li>Click any emote to insert it instantly</li>
+        <li>Partial text is automatically cleaned up</li>
+      </ol>
+    </td>
+    <td width="33%" valign="top">
+      <h4>🔍 Method 3: Extension Popup</h4>
+      <ol>
+        <li>Click the Mojify extension icon</li>
+        <li>Browse or search your emote collection</li>
+        <li>Click any emote to insert it on supported sites</li>
+        <li>Organize emotes by channel for easy access</li>
+      </ol>
+    </td>
+  </tr>
+</table>
 
 ## 🔧 Technical Architecture
 
