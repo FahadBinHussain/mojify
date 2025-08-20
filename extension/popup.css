@@ -1081,3 +1081,84 @@ code {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+
+/* Backup & Restore */
+.backup-restore {
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.backup-restore-actions {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.backup-restore-actions button {
+  flex: 1;
+  min-width: 140px;
+}
+
+.secondary-button {
+  background: #fff;
+  border: 1px solid #7050c7;
+  color: #7050c7;
+  padding: 10px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.secondary-button:hover {
+  background: #7050c7;
+  color: #fff;
+}
+
+.secondary-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.backup-info {
+  margin-bottom: 16px;
+}
+
+.info-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: #495057;
+}
+
+.info-item i {
+  color: #28a745;
+  font-size: 12px;
+}
+
+.backup-progress {
+  margin-top: 16px;
+}
+
+.backup-progress .progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+  color: #6c757d;
+}
+
+.restore-section {
+  position: relative;
+}
