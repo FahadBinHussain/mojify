@@ -578,49 +578,64 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    // If we're searching, show emotes with pagination
+    // If we're searching, show search results in channel format
     if (searchTerm !== '') {
       const emotesToShow = displayedEmotes.slice(startIndex, endIndex);
 
       console.log(`Showing search results: ${emotesToShow.length} emotes (${startIndex}-${endIndex} of ${displayedEmotes.length})`);
 
-      emotesToShow.forEach(key => {
-        const emoteData = allEmotes[key];
-        const emoteUrl = typeof emoteData === 'string' ? emoteData : emoteData.url;
-        const emoteName = key.replace(/:/g, '');
+      // Create a search results section similar to channel format
+      const searchSection = document.createElement('div');
+      searchSection.className = 'channel-section';
 
-        const emoteItem = document.createElement('div');
-        emoteItem.className = 'emote-item';
-        emoteItem.setAttribute('data-emote-key', key);
+      // Create search header
+      const searchHeader = document.createElement('div');
+      searchHeader.className = 'channel-header';
+      searchHeader.innerHTML = `
+        <div class="channel-header-content">
+          <span class="channel-name">Search Results</span>
+          <span class="channel-emote-count">${emotesToShow.length} emotes</span>
+        </div>
+      `;
+
+      // Create search emotes container
+      const searchEmotes = document.createElement('div');
+      searchEmotes.className = 'channel-emotes';
+
+      emotesToShow.forEach(key => {
+        const emoteName = key.replace(/:/g, '');
 
         // Get emote data from IndexedDB
         const emoteDbData = emoteDataMap.get(key);
-        const imageSrc = emoteDbData?.dataUrl || 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjgiIGhlaWdodD0iMjgiIHZpZXdCb3g9IjAgMCAyOCAyOCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjI4IiBoZWlnaHQ9IjI4IiByeD0iNCIgZmlsbD0iI0Y1RjVGNSIvPgo8cGF0aCBkPSJNMTQgMTBWMThNMTAgMTRIMTgiIHN0cm9rZT0iIzk5OTk5OSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KPHN2Zz4K';
 
-        // Set content with IndexedDB data only
-        emoteItem.innerHTML = `
-          <div class="emote-img-container">
-            <img src="${imageSrc}" alt="${emoteName}" class="emote-img">
-          </div>
-          <div class="emote-details">
-            <div class="emote-name">${emoteName}</div>
-            <div class="emote-trigger">${key}</div>
-          </div>
-        `;
+        // Only render if we have IndexedDB data
+        if (emoteDbData?.dataUrl) {
+          const emoteItem = document.createElement('div');
+          emoteItem.className = 'emote-item';
+          emoteItem.setAttribute('data-emote-key', key);
 
-        // Only show if we have data in IndexedDB
-        if (!emoteDbData?.dataUrl) {
-          emoteItem.style.opacity = '0.5';
-          emoteItem.style.pointerEvents = 'none';
+          emoteItem.innerHTML = `
+            <div class="emote-img-container">
+              <img src="${emoteDbData.dataUrl}" alt="${emoteName}" class="emote-img">
+            </div>
+            <div class="emote-details">
+              <div class="emote-name">${emoteName}</div>
+              <div class="emote-trigger">${key}</div>
+            </div>
+          `;
+
+          // Add click event to insert emote
+          emoteItem.addEventListener('click', () => {
+            insertEmoteIntoActiveTab(key, emoteItem);
+          });
+
+          searchEmotes.appendChild(emoteItem);
         }
-
-        // Add click event to insert emote
-        emoteItem.addEventListener('click', () => {
-          insertEmoteIntoActiveTab(key, emoteItem);
-        });
-
-        emoteGrid.appendChild(emoteItem);
       });
+
+      searchSection.appendChild(searchHeader);
+      searchSection.appendChild(searchEmotes);
+      emoteGrid.appendChild(searchSection);
 
       // Update "Load More" button visibility
       if (endIndex < displayedEmotes.length) {
@@ -673,66 +688,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
         Object.entries(channel.emotes).forEach(([key, emoteData]) => {
           const emoteName = key.replace(/:/g, '');
-          const url = emoteData.url;
-          const hasBlob = !!emoteData.blob;
 
-          const emoteItem = document.createElement('div');
-          emoteItem.className = 'emote-item';
-          emoteItem.setAttribute('data-emote-key', key);
+          // Get emote data from IndexedDB
+          const emoteDbData = emoteDataMap.get(key);
 
-          // Create image source - use blob URL if available, fallback to regular URL
-          let imageSrc = url;
-          if (hasBlob) {
-            try {
-              imageSrc = URL.createObjectURL(emoteData.blob);
-            } catch (error) {
-              console.warn(`Failed to create blob URL for ${key}:`, error);
-              imageSrc = url;
-            }
-          }
+          // Only render if we have IndexedDB data
+          if (emoteDbData?.dataUrl) {
+            const emoteItem = document.createElement('div');
+            emoteItem.className = 'emote-item';
+            emoteItem.setAttribute('data-emote-key', key);
 
-          // Set content with proper image source
-          emoteItem.innerHTML = `
-            <div class="emote-img-container">
-              <img src="${imageSrc}" alt="${emoteName}" class="emote-img">
-            </div>
-            <div class="emote-details">
-              <div class="emote-name">${emoteName}</div>
+            emoteItem.innerHTML = `
+              <div class="emote-img-container">
+                <img src="${emoteDbData.dataUrl}" alt="${emoteName}" class="emote-img">
+              </div>
+              <div class="emote-details">
+                <div class="emote-name">${emoteName}</div>
               <div class="emote-trigger">${key}</div>
-            </div>
-          `;
+            `;
 
-          // Add error handling for images
-          const img = emoteItem.querySelector('.emote-img');
-          if (img) {
-            img.addEventListener('error', () => {
-              console.error(`[Popup] Image load failed for ${key}, falling back to URL`);
-              if (img.src !== url) {
-                img.src = url;
-              } else {
-                console.error(`[Popup] Both blob and URL failed for ${key}`);
-                img.style.backgroundColor = '#ff6b6b';
-                img.style.color = 'white';
-                img.style.fontSize = '10px';
-                img.alt = 'Failed to load';
-              }
+            // Add click event to insert emote
+            emoteItem.addEventListener('click', () => {
+              insertEmoteIntoActiveTab(key, emoteItem);
             });
 
-            img.addEventListener('load', () => {
-              console.log(`[Popup] Image loaded successfully for ${key}`, {
-                hasBlob: hasBlob,
-                naturalWidth: img.naturalWidth,
-                naturalHeight: img.naturalHeight
-              });
-            });
+            channelEmotes.appendChild(emoteItem);
           }
-
-          // Add click event to insert emote
-          emoteItem.addEventListener('click', () => {
-            insertEmoteIntoActiveTab(key, emoteItem);
-          });
-
-          channelEmotes.appendChild(emoteItem);
         });
 
         // Add toggle functionality to channel header
