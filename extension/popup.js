@@ -896,8 +896,16 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Clear all storage
-  clearAllStorageBtn.addEventListener('click', () => {
-    if (!confirm('Are you sure you want to clear all emote data and channel IDs? This action cannot be undone.')) {
+  clearAllStorageBtn.addEventListener('click', async () => {
+    const confirmed = await showConfirmDialog(
+      'Clear All Data',
+      'Are you sure you want to clear all emote data and channel IDs? This action cannot be undone.',
+      'Clear All',
+      'Cancel',
+      true
+    );
+
+    if (!confirmed) {
       return;
     }
 
@@ -1463,8 +1471,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function deleteChannel(channelId) {
-    if (!confirm('Are you sure you want to delete this channel and all its emotes?')) {
+  async function deleteChannel(channelId) {
+    const confirmed = await showConfirmDialog(
+      'Delete Channel',
+      'Are you sure you want to delete this channel and all its emotes? This action cannot be undone.',
+      'Delete',
+      'Cancel',
+      true
+    );
+
+    if (!confirmed) {
       return;
     }
 
@@ -1503,8 +1519,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Clear all storage handler
-  clearAllStorageBtn.addEventListener('click', () => {
-    if (!confirm('Are you sure you want to delete ALL emote data? This cannot be undone.')) {
+  clearAllStorageBtn.addEventListener('click', async () => {
+    const confirmed = await showConfirmDialog(
+      'Delete All Emote Data',
+      'Are you sure you want to delete ALL emote data? This cannot be undone.',
+      'Delete All',
+      'Cancel',
+      true
+    );
+
+    if (!confirmed) {
       return;
     }
 
