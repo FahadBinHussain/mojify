@@ -2069,3 +2069,15 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 // Initialize on script load as well (for service worker reactivation)
 initializeEmoteMapping();
+
+// Message handler for popup communication
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.action === 'downloadEmotes') {
+    downloadEmotes().then(result => {
+      sendResponse(result);
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message });
+    });
+    return true; // Will respond asynchronously
+  }
+});
