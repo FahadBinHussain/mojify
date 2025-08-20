@@ -102,7 +102,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const tabButtons = document.querySelectorAll('.tab-btn');
   const tabPanes = document.querySelectorAll('.tab-pane');
   const tabIndicator = document.querySelector('.tab-indicator');
-  const toast = document.getElementById('toast');
+  // Remove this line as it's declared too early
 
   // Progress and storage elements
   const downloadProgress = document.getElementById('download-progress');
@@ -126,27 +126,35 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentPage = 1;
   let searchTerm = '';
 
-  // Toast notification function
+  // Notification function
   function showToast(message, type = 'info') {
-    const toast = document.getElementById('toast');
-    if (!toast) return;
+    console.log('showToast called:', message, type);
+    const notification = document.getElementById('notification');
+    console.log('notification element:', notification);
 
-    toast.textContent = message;
-    toast.className = 'toast';
-
-    if (type === 'success') {
-      toast.classList.add('toast-success');
-    } else if (type === 'error') {
-      toast.classList.add('toast-error');
-    } else {
-      toast.classList.add('toast-info');
+    if (!notification) {
+      console.error('Notification element not found');
+      return;
     }
 
-    toast.classList.remove('hidden');
+    notification.textContent = message;
+    notification.className = 'notification';
+
+    if (type === 'success') {
+      notification.classList.add('notification-success');
+    } else if (type === 'error') {
+      notification.classList.add('notification-error');
+    } else {
+      notification.classList.add('notification-info');
+    }
+
+    notification.classList.remove('hidden');
+    console.log('Notification should be visible now');
 
     setTimeout(() => {
-      toast.classList.add('hidden');
-      toast.className = 'toast hidden';
+      notification.classList.add('hidden');
+      notification.className = 'notification hidden';
+      console.log('Notification hidden');
     }, 3000);
   }
 
@@ -221,15 +229,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Show toast notification
-  function showToast(message, type = 'success') {
-    toast.textContent = message;
-    toast.className = `toast ${type} show`;
 
-    setTimeout(() => {
-      toast.className = 'toast hidden';
-    }, 3000);
-  }
 
   // Reset emote loading state
   function resetEmoteLoadingState(emoteElement) {
@@ -899,7 +899,7 @@ document.addEventListener('DOMContentLoaded', () => {
   clearAllStorageBtn.addEventListener('click', async () => {
     const confirmed = await showConfirmDialog(
       'Clear All Data',
-      'Are you sure you want to clear all emote data and channel IDs? This action cannot be undone.',
+      'This will delete all emote data and channel IDs permanently.',
       'Clear All',
       'Cancel',
       true
@@ -1522,7 +1522,7 @@ document.addEventListener('DOMContentLoaded', () => {
   clearAllStorageBtn.addEventListener('click', async () => {
     const confirmed = await showConfirmDialog(
       'Delete All Emote Data',
-      'Are you sure you want to delete ALL emote data? This cannot be undone.',
+      'This will permanently delete all emote data.',
       'Delete All',
       'Cancel',
       true
