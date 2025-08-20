@@ -277,21 +277,36 @@ async function downloadEmotes() {
     const existingEmotes = await emoteDB.getAllEmotes();
     const existingEmoteKeys = new Set(existingEmotes.map(e => e.key));
 
-    // Collect only NEW emotes that need downloading
-    let totalNewEmotes = 0;
+    // Pre-fetch channel names and create channels immediately
     const channelEmotes = [];
+    let totalNewEmotes = 0;
 
+    // First pass: fetch channel info and create channels with real names
     for (const channelId of channelIds) {
       const trimmedChannelId = channelId.trim();
       if (!trimmedChannelId) continue;
 
       try {
         const result = await get7TVEmotes(trimmedChannelId);
+
+        // Update or create channel with real username immediately
+        const existingChannelIndex = channels.findIndex(ch => ch.id === trimmedChannelId);
+        if (existingChannelIndex >= 0) {
+          channels[existingChannelIndex] = {
+            id: trimmedChannelId,
+            username: result.username,
+            emotes: result.emotes
+          };
+        } else {
+          channels.push({
+            id: trimmedChannelId,
+            username: result.username,
+            emotes: result.emotes
+          });
+        }
+
         if (Object.keys(result.emotes).length > 0) {
           // INCREMENTAL CHECK: Compare server emotes vs locally stored emotes
-          // Only include emotes that are either:
-          // - Not in local storage at all (!emoteImageData[key])
-          // - In storage but failed to download properly (!emoteImageData[key].data)
           const newEmotes = {};
           Object.entries(result.emotes).forEach(([key, url]) => {
             if (!existingEmoteKeys.has(key)) {
@@ -308,27 +323,26 @@ async function downloadEmotes() {
             });
             totalNewEmotes += Object.keys(newEmotes).length;
           }
-
-          // Update channel in existing channels or add new
-          const existingChannelIndex = channels.findIndex(ch => ch.id === trimmedChannelId);
-          if (existingChannelIndex >= 0) {
-            channels[existingChannelIndex] = {
-              id: trimmedChannelId,
-              username: result.username,
-              emotes: result.emotes
-            };
-          } else {
-            channels.push({
-              id: trimmedChannelId,
-              username: result.username,
-              emotes: result.emotes
-            });
-          }
         }
       } catch (error) {
         console.error(`[Download] Error fetching emotes for ${trimmedChannelId}:`, error);
+        // Create channel with ID as fallback name
+        const existingChannelIndex = channels.findIndex(ch => ch.id === trimmedChannelId);
+        if (existingChannelIndex === -1) {
+          channels.push({
+            id: trimmedChannelId,
+            username: trimmedChannelId,
+            emotes: {}
+          });
+        }
       }
     }
+
+    // Save channels with real names immediately before download starts
+    await chrome.storage.local.set({
+      channels: channels,
+      downloadInProgress: true
+    });
 
     downloadState.total = totalNewEmotes;
     downloadState.current = 0;
