@@ -103,6 +103,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const tabPanes = document.querySelectorAll('.tab-pane');
   const tabIndicator = document.querySelector('.tab-indicator');
   // Remove this line as it's declared too early
+  
+  // Auto-focus on search input when popup opens
+  searchInput.focus();
 
   // Progress and storage elements
   const downloadProgress = document.getElementById('download-progress');
