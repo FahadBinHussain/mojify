@@ -44,30 +44,42 @@
 const emoteDB = {
   async getEmote(key) {
     return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({
-        action: 'getEmote',
-        key: key
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
-        } else {
-          resolve(response);
-        }
-      });
+      try {
+        chrome.runtime.sendMessage({
+          action: 'getEmote',
+          key: key
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            debugLog("Background script connection error:", chrome.runtime.lastError.message);
+            resolve(null); // Graceful fallback instead of reject
+          } else {
+            resolve(response);
+          }
+        });
+      } catch (error) {
+        debugLog("Failed to communicate with background script:", error);
+        resolve(null); // Graceful fallback
+      }
     });
   },
 
   async getAllEmotes() {
     return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({
-        action: 'getAllEmotes'
-      }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(chrome.runtime.lastError);
-        } else {
-          resolve(response || []);
-        }
-      });
+      try {
+        chrome.runtime.sendMessage({
+          action: 'getAllEmotes'
+        }, (response) => {
+          if (chrome.runtime.lastError) {
+            debugLog("Background script connection error:", chrome.runtime.lastError.message);
+            resolve([]); // Graceful fallback instead of reject
+          } else {
+            resolve(response || []);
+          }
+        });
+      } catch (error) {
+        debugLog("Failed to communicate with background script:", error);
+        resolve([]); // Graceful fallback
+      }
     });
   }
 };
@@ -82,27 +94,45 @@ function debugLog(...args) {
 
 // Load emote mapping from storage - retry mechanism
 function loadEmoteMapping() {
-  chrome.storage.local.get(['emoteMapping'], (result) => {
-    if (result.emoteMapping) {
-      emoteMapping = result.emoteMapping;
-      debugLog("Loaded emote mapping with", Object.keys(emoteMapping).length, "emotes");
-      debugLog("Sample emotes:", Object.keys(emoteMapping).slice(0, 5));
-      debugLog("Full emote mapping:", emoteMapping);
-    } else {
-      debugLog("No emote mapping found in storage");
-      // Retry after a short delay in case background script is still initializing
-      setTimeout(() => {
-        chrome.storage.local.get(['emoteMapping'], (retryResult) => {
-          if (retryResult.emoteMapping) {
-            emoteMapping = retryResult.emoteMapping;
-            debugLog("Retry loaded emote mapping with", Object.keys(emoteMapping).length, "emotes");
-          } else {
-            debugLog("No emotes available after retry - user may need to configure channels");
+  try {
+    chrome.storage.local.get(['emoteMapping'], (result) => {
+      if (chrome.runtime.lastError) {
+        debugLog("Error loading emote mapping:", chrome.runtime.lastError.message);
+        return;
+      }
+
+      if (result.emoteMapping) {
+        emoteMapping = result.emoteMapping;
+        debugLog("Loaded emote mapping with", Object.keys(emoteMapping).length, "emotes");
+        debugLog("Sample emotes:", Object.keys(emoteMapping).slice(0, 5));
+        debugLog("Full emote mapping:", emoteMapping);
+      } else {
+        debugLog("No emote mapping found in storage");
+        // Retry after a short delay in case background script is still initializing
+        setTimeout(() => {
+          try {
+            chrome.storage.local.get(['emoteMapping'], (retryResult) => {
+              if (chrome.runtime.lastError) {
+                debugLog("Error loading emote mapping on retry:", chrome.runtime.lastError.message);
+                return;
+              }
+
+              if (retryResult.emoteMapping) {
+                emoteMapping = retryResult.emoteMapping;
+                debugLog("Retry loaded emote mapping with", Object.keys(emoteMapping).length, "emotes");
+              } else {
+                debugLog("No emotes available after retry - user may need to configure channels");
+              }
+            });
+          } catch (error) {
+            debugLog("Error during emote mapping retry:", error);
           }
-        });
-      }, 2000);
-    }
-  });
+        }, 2000);
+      }
+    });
+  } catch (error) {
+    debugLog("Error accessing chrome storage for emote mapping:", error);
+  }
 }
 
 // Initial load
@@ -416,6 +446,7 @@ async function showDiscordEmoteSuggestions(query) {
                 const cachedEmote = await emoteDB.getEmote(emoteKey);
                 return { key: emoteKey, data: cachedEmote };
             } catch (error) {
+                debugLog("Error loading emote data for", emoteKey, error);
                 return { key: emoteKey, data: null };
             }
         }
@@ -1484,7 +1515,8 @@ async function insertEmote(emoteKey, targetElement = null) {
         // Get emote from database/storage
         const cachedEmote = await emoteDB.getEmote(emoteKey);
         if (!cachedEmote || !cachedEmote.dataUrl) {
-            debugLog(`[Mojify] Emote ${emoteKey} not found in cache`);
+            debugLog(`[Mojify] Emote ${emoteKey} not found in cache or background script not responding`);
+            debugLog(`[Mojify] Try reloading the extension or checking if emotes are properly loaded`);
             return false;
         }
 
