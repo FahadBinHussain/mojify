@@ -613,7 +613,7 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log("[Mojify Debug] insertEmoteFromBase64 called with:", filename, trigger);
 
     try {
-      // Convert base64 back to blob
+      // Create File directly from base64 (faster - no blob conversion)
       const base64 = base64Data.split(',')[1];
       const mimeMatch = base64Data.match(/data:([^;]+)/);
       const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
@@ -624,12 +624,11 @@ document.addEventListener('DOMContentLoaded', () => {
         byteNumbers[i] = byteCharacters.charCodeAt(i);
       }
       const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: mimeType });
 
-      console.log("[Mojify] Recreated blob:", blob.size, "bytes, type:", blob.type);
+      console.log("[Mojify] Converted base64 to bytes:", byteArray.length, "bytes");
 
-      // Create File object
-      const file = new File([blob], filename, { type: blob.type });
+      // Create File object directly from byteArray
+      const file = new File([byteArray], filename, { type: mimeType });
       console.log("[Mojify] Created file:", file.name, file.size, "bytes");
 
       // Find input field
