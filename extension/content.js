@@ -1083,7 +1083,7 @@ function showEmoteSuggestions(query, inputElement) {
 
         // Load emote preview if available
         if (typeof emoteDB !== 'undefined') {
-            emoteDB.getEmote(key).then(cachedEmote => {
+            emoteDB.getEmote(emoteKey).then(cachedEmote => {
                 if (cachedEmote && cachedEmote.blob) {
                     emoteImg.src = URL.createObjectURL(cachedEmote.blob);
                 }
@@ -1374,13 +1374,15 @@ async function insertEmoteFromSuggestion(emoteKey, inputElement) {
         // Clear the stored partial text info
         currentPartialTextInfo = null;
 
-        // Get the blob from IndexedDB and insert directly
+        // Get the blob from IndexedDB and create file directly
         try {
             const cachedEmote = await emoteDB.getEmote(emoteKey);
             if (!cachedEmote || !cachedEmote.blob) {
                 debugLog("❌ Emote not found or missing blob:", emoteKey);
                 return;
             }
+
+            debugLog("✅ Retrieved blob from IndexedDB:", cachedEmote.blob.size, "bytes");
 
             // Create File object directly from blob
             const blob = cachedEmote.blob;
