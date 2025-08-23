@@ -450,7 +450,10 @@ async function showDiscordEmoteSuggestions(query) {
             height: 40px;
             object-fit: contain;
         `;
-        emoteImg.src = cachedEmote.dataUrl;
+
+        if (cachedEmote.blob) {
+            emoteImg.src = URL.createObjectURL(cachedEmote.blob);
+        }
 
         emoteItem.appendChild(emoteImg);
 
@@ -503,7 +506,7 @@ async function showDiscordEmoteSuggestions(query) {
 
             insertEmoteFromDiscordInterceptor(emoteKey);
         });
-        
+
         // Store emote data for keyboard navigation
         emoteItem.setAttribute('data-emote-key', emoteKey);
         emoteItem.setAttribute('data-emote-index', index);
@@ -553,14 +556,14 @@ async function showDiscordEmoteSuggestions(query) {
                 makeDraggable(suggestionBar, suggestionBar);
                 suggestionBar.dataset.draggableAttached = 'true';
             }
-            
+
             // Store emote elements for keyboard navigation
             emoteElements = Array.from(emoteList.children).map((element, idx) => ({
                 key: element.getAttribute('data-emote-key'),
                 index: idx,
                 element: element
             }));
-            
+
             // Reset selection and focus state
             selectedEmoteIndex = -1;
             minibarFocused = false;
@@ -1080,30 +1083,12 @@ function showEmoteSuggestions(query, inputElement) {
 
         // Load emote preview if available
         if (typeof emoteDB !== 'undefined') {
-            emoteDB.getEmote(emoteKey).then(cachedEmote => {
-                if (cachedEmote && cachedEmote.dataUrl) {
-                    emoteImg.src = cachedEmote.dataUrl;
-                } else {
-                    // Fallback to placeholder icon
-                    emoteImg.style.display = 'none';
-                    const placeholderIcon = document.createElement('i');
-                    placeholderIcon.className = 'fas fa-smile';
-                    placeholderIcon.style.cssText = `
-                        font-size: 24px;
-                        color: #9ca3af;
-                    `;
-                    emoteItem.appendChild(placeholderIcon);
+            emoteDB.getEmote(key).then(cachedEmote => {
+                if (cachedEmote && cachedEmote.blob) {
+                    emoteImg.src = URL.createObjectURL(cachedEmote.blob);
                 }
             }).catch(() => {
-                // Fallback to placeholder icon
-                emoteImg.style.display = 'none';
-                const placeholderIcon = document.createElement('i');
-                placeholderIcon.className = 'fas fa-smile';
-                placeholderIcon.style.cssText = `
-                    font-size: 24px;
-                    color: #9ca3af;
-                `;
-                emoteItem.appendChild(placeholderIcon);
+                // Do nothing - only show emotes with blobs
             });
         }
 
@@ -1389,8 +1374,37 @@ async function insertEmoteFromSuggestion(emoteKey, inputElement) {
         // Clear the stored partial text info
         currentPartialTextInfo = null;
 
-        // Always use remote insertion for all platforms
-        await insertEmote(emoteKey);
+        // Get the blob from IndexedDB and insert directly
+        try {
+            const cachedEmote = await emoteDB.getEmote(emoteKey);
+            if (!cachedEmote || !cachedEmote.blob) {
+                debugLog("❌ Emote not found or missing blob:", emoteKey);
+                return;
+            }
+
+            // Create File object directly from blob
+            const blob = cachedEmote.blob;
+            const filename = cachedEmote.filename || emoteKey + '.png';
+            const file = new File([blob], filename, { type: blob.type });
+
+            debugLog("✅ Created file from suggestion:", file.name, file.size, "bytes");
+
+            // Insert using drag and drop
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+
+            ['dragenter', 'dragover', 'drop'].forEach(eventType => {
+                const event = new DragEvent(eventType, {
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer
+                });
+                inputElement.dispatchEvent(event);
+            });
+
+        } catch (emoteError) {
+            debugLog("❌ Error inserting emote from suggestion:", emoteError);
+        }
 
     } catch (error) {
         debugLog("Error inserting emote from suggestion:", error);
@@ -1415,144 +1429,13 @@ function simulateFileDrop(file, targetElement) {
 }
 
 // Main emote insertion function (adapted from example)
-async function insertEmote(emoteTrigger) {
-    debugLog("=== INSERTING EMOTE ===", emoteTrigger);
+// insertEmote function removed - now handled by direct script injection from popup
 
-    try {
-        // Check if we're on a supported platform
-        const platform = getCurrentPlatform();
-        if (!platform) {
-            debugLog("Not on a supported platform:", window.location.hostname);
-            return { success: false, error: 'This feature only works on supported platforms (Messenger, Discord, Facebook, Telegram, WhatsApp)' };
-        }
-        debugLog("Platform detected:", platform);
-
-        // Get emote URL
-        if (!emoteMapping || !emoteMapping[emoteTrigger]) {
-            debugLog("Emote not found in mapping:", emoteTrigger);
-            return { success: false, error: 'Emote not found' };
-        }
-
-        const emoteUrl = emoteMapping[emoteTrigger];
-        debugLog("Emote URL:", emoteUrl);
-
-        // Get cached image data from background script IndexedDB
-        let dataUrl;
-        let blob;
-        let mimeType;
-
-        // Try both formats - with and without colons
-        debugLog("Looking for emote with key:", emoteTrigger);
-
-        debugLog("Step 1: Starting emote lookup process");
-
-        let cachedEmote;
-        try {
-            debugLog("Step 2: Attempting first lookup");
-            cachedEmote = await emoteDB.getEmote(emoteTrigger);
-            debugLog("Step 3: First lookup result:", cachedEmote ? "FOUND" : "NOT FOUND");
-
-            if (!cachedEmote && !emoteTrigger.startsWith(':')) {
-                const colonKey = ':' + emoteTrigger + ':';
-                debugLog("Step 4: Trying with colons:", colonKey);
-                cachedEmote = await emoteDB.getEmote(colonKey);
-                debugLog("Step 5: Second lookup result:", cachedEmote ? "FOUND" : "NOT FOUND");
-            }
-
-            debugLog("Step 6: Skipping getAllEmotes debug to avoid hanging");
-        } catch (error) {
-            debugLog("❌ Error in lookup phase:", error);
-            return { success: false, error: 'Failed to access emote storage: ' + error.message };
-        }
-
-        debugLog("Step 9: Processing cached emote:", cachedEmote);
-
-        if (cachedEmote && cachedEmote.dataUrl) {
-            debugLog("Step 10: ✅ Using cached data URL from IndexedDB - FAST!");
-            try {
-                dataUrl = cachedEmote.dataUrl;
-                debugLog("Step 11: Data URL length:", dataUrl.length);
-
-                // Convert data URL to blob for file creation
-                debugLog("Step 12: Converting data URL to blob");
-                const base64Data = dataUrl.split(',')[1];
-                const mimeMatch = dataUrl.match(/data:([^;]+)/);
-                mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
-                debugLog("Step 13: Detected MIME type:", mimeType);
-
-                const byteCharacters = atob(base64Data);
-                const byteNumbers = new Array(byteCharacters.length);
-                for (let i = 0; i < byteCharacters.length; i++) {
-                    byteNumbers[i] = byteCharacters.charCodeAt(i);
-                }
-                const byteArray = new Uint8Array(byteNumbers);
-                blob = new Blob([byteArray], { type: mimeType });
-
-                debugLog("Step 14: Converted data URL to blob:", blob.size, "bytes, type:", mimeType);
-            } catch (conversionError) {
-                debugLog("❌ Error converting data URL to blob:", conversionError);
-                return { success: false, error: 'Failed to convert emote data: ' + conversionError.message };
-            }
-        } else {
-            debugLog("❌ Emote not found in IndexedDB cache or missing dataUrl");
-            if (cachedEmote) {
-                debugLog("Cached emote exists but missing dataUrl. Has keys:", Object.keys(cachedEmote));
-            }
-            return { success: false, error: 'Emote not cached. Please download emotes first.' };
-        }
-
-        // Create File object
-        debugLog("Step 15: Creating file object");
-        try {
-            const fileName = mimeType.includes('gif') ? `${emoteTrigger}.gif` : `${emoteTrigger}.png`;
-            const file = new File([blob], fileName, { type: mimeType });
-            debugLog("Step 16: Created file:", fileName, file.size, "bytes");
-
-            // Find input field for current platform
-            debugLog("Step 17: Looking for input field on platform:", getCurrentPlatform());
-            const inputField = findInputField();
-            if (!inputField) {
-                debugLog("❌ Could not find input field");
-                return { success: false, error: 'Could not find input field on this platform' };
-            }
-
-            debugLog("Step 18: Found input field:", inputField.tagName, inputField.className);
-
-            // Use platform-specific insertion method
-            debugLog("Step 19: About to insert file using platform-specific method...");
-            const insertResult = await insertFileOnPlatform(file, inputField, platform);
-            debugLog("Step 20: File insertion result:", insertResult, "- insertion should be complete");
-
-            return { success: true };
-        } catch (fileError) {
-            debugLog("❌ Error in file creation/insertion phase:", fileError);
-            return { success: false, error: 'Failed to create or insert file: ' + fileError.message };
-        }
-
-    } catch (error) {
-        debugLog("Error inserting emote:", error);
-        return { success: false, error: error.message };
-    }
-}
-
-// Message listener
+// Message listener - insertEmote handling removed, now using direct script injection
 try {
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       debugLog("Message received:", request);
-
-      if (request.action === 'insertEmote') {
-          insertEmote(request.emoteTrigger)
-              .then(result => {
-                  debugLog("Insert result:", result);
-                  sendResponse(result);
-              })
-              .catch(error => {
-                  debugLog("Insert error:", error);
-                  sendResponse({ success: false, error: error.message });
-              });
-          return true; // Async response
-      }
-
+      // Other message handling can be added here if needed
       return false;
   });
 } catch (error) {
@@ -1721,14 +1604,14 @@ document.addEventListener('keydown', (event) => {
                 event.stopPropagation();
                 event.stopImmediatePropagation();
                 isNavigatingKeyboard = true;
-                
+
                 // Use Discord-specific insertion if we're in Discord mode
                 if (getCurrentPlatform() === 'discord' && discordState === 'INTERCEPTING') {
                     insertSelectedEmoteDiscord();
                 } else {
                     insertSelectedEmote();
                 }
-                
+
                 setTimeout(() => { isNavigatingKeyboard = false; }, 200);
             }
             break;
@@ -2012,7 +1895,7 @@ if (getCurrentPlatform() === 'discord') {
   if (document.readyState === 'complete') {
     setupDiscordTextInterceptor();
   }
-  
+
   // Handle Discord navigation/channel changes
   const discordObserver = new MutationObserver((mutations) => {
     // Check if URL has changed (Discord uses client-side routing)
@@ -2020,25 +1903,25 @@ if (getCurrentPlatform() === 'discord') {
     if (currentUrl !== discordObserver.lastUrl) {
       discordObserver.lastUrl = currentUrl;
       debugLog("Discord navigation detected - reinitializing text interceptor");
-      
+
       // Reset Discord state variables
       discordState = 'NORMAL';
       discordBuffer = '';
-      
+
       // Remove old minibar if it exists
       if (discordMinibar) {
         discordMinibar.remove();
         discordMinibar = null;
       }
-      
+
       // Reset editor reference
       discordEditor = null;
-      
+
       // Reinitialize the text interceptor
       setTimeout(setupDiscordTextInterceptor, 500);
     }
   });
-  
+
   // Start observing with the current URL
   discordObserver.lastUrl = window.location.href;
   discordObserver.observe(document.body, { childList: true, subtree: true });

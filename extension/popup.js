@@ -1,26 +1,39 @@
 
-// IndexedDB wrapper for emote storage (same as background.js)
+// IndexedDB wrapper for emote storage - stores blobs directly as values
 const emoteDB = {
   db: null,
-  dbName: 'MojifyEmoteDB',
-  version: 1,
+  dbName: 'MojifyEmotes',
+  version: 3,
 
   async init() {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(this.dbName, this.version);
 
       request.onerror = () => reject(request.error);
+
       request.onsuccess = () => {
         this.db = request.result;
+        console.log('[IndexedDB] Database opened successfully');
         resolve();
       };
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
-        if (!db.objectStoreNames.contains('emotes')) {
-          const emotesStore = db.createObjectStore('emotes', { keyPath: 'key' });
-          emotesStore.createIndex('channel', 'channel', { unique: false });
-          emotesStore.createIndex('url', 'url', { unique: false });
+        console.log('[IndexedDB] Creating fresh database...');
+
+        // Create emote blobs object store (stores blob directly as value)
+        if (!db.objectStoreNames.contains('emoteBlobs')) {
+          const blobsStore = db.createObjectStore('emoteBlobs');
+          console.log('[IndexedDB] Created emoteBlobs object store');
+        }
+
+        // Create emote metadata object store
+        if (!db.objectStoreNames.contains('emoteMetadata')) {
+          const metadataStore = db.createObjectStore('emoteMetadata', { keyPath: 'key' });
+          metadataStore.createIndex('channel', 'channel', { unique: false });
+          metadataStore.createIndex('url', 'url', { unique: false });
+          metadataStore.createIndex('timestamp', 'timestamp', { unique: false });
+          console.log('[IndexedDB] Created emoteMetadata object store');
         }
       };
     });
@@ -30,12 +43,65 @@ const emoteDB = {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emotes'], 'readonly');
-      const store = transaction.objectStore('emotes');
-      const request = store.get(key);
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readonly');
+      const blobsStore = transaction.objectStore('emoteBlobs');
+      const metadataStore = transaction.objectStore('emoteMetadata');
 
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      let blob = null;
+      let metadataResult = null;
+      let blobComplete = false;
+      let metadataComplete = false;
+
+      const checkComplete = () => {
+        if (blobComplete && metadataComplete) {
+          if (blob && metadataResult) {
+            // Validate blob
+            if (!(blob instanceof Blob) || blob.size === 0) {
+              console.error(`[IndexedDB] Emote ${key} has corrupted or missing blob`);
+              resolve(null);
+              return;
+            }
+
+            console.log(`[IndexedDB] Retrieved emote ${key}: ${blob.size} bytes, type: ${blob.type}`);
+
+            // Return combined result with blob directly accessible
+            resolve({
+              key: key,
+              blob: blob,
+              ...metadataResult
+            });
+          } else {
+            console.warn(`[IndexedDB] Emote ${key} not found or incomplete`);
+            resolve(null);
+          }
+        }
+      };
+
+      // Get blob directly (it's stored as the value)
+      const blobRequest = blobsStore.get(key);
+      blobRequest.onsuccess = () => {
+        blob = blobRequest.result;
+        blobComplete = true;
+        checkComplete();
+      };
+      blobRequest.onerror = () => {
+        console.error(`[IndexedDB] Failed to retrieve blob for ${key}:`, blobRequest.error);
+        blobComplete = true;
+        checkComplete();
+      };
+
+      // Get metadata
+      const metadataRequest = metadataStore.get(key);
+      metadataRequest.onsuccess = () => {
+        metadataResult = metadataRequest.result;
+        metadataComplete = true;
+        checkComplete();
+      };
+      metadataRequest.onerror = () => {
+        console.error(`[IndexedDB] Failed to retrieve metadata for ${key}:`, metadataRequest.error);
+        metadataComplete = true;
+        checkComplete();
+      };
     });
   },
 
@@ -43,34 +109,109 @@ const emoteDB = {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emotes'], 'readonly');
-      const store = transaction.objectStore('emotes');
-      const request = store.getAll();
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readonly');
+      const blobsStore = transaction.objectStore('emoteBlobs');
+      const metadataStore = transaction.objectStore('emoteMetadata');
 
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => reject(request.error);
+      // First get all metadata
+      const metadataRequest = metadataStore.getAll();
+      metadataRequest.onsuccess = () => {
+        const metadataResults = metadataRequest.result || [];
+
+        if (metadataResults.length === 0) {
+          resolve([]);
+          return;
+        }
+
+        const results = [];
+        let completed = 0;
+
+        // Get blobs for each metadata entry
+        metadataResults.forEach(metadata => {
+          const blobRequest = blobsStore.get(metadata.key);
+          blobRequest.onsuccess = () => {
+            const blob = blobRequest.result;
+            if (blob && blob instanceof Blob) {
+              results.push({
+                ...metadata,
+                blob: blob
+              });
+            }
+            completed++;
+            if (completed === metadataResults.length) {
+              resolve(results);
+            }
+          };
+          blobRequest.onerror = () => {
+            completed++;
+            if (completed === metadataResults.length) {
+              resolve(results);
+            }
+          };
+        });
+      };
+      metadataRequest.onerror = () => reject(metadataRequest.error);
     });
   },
 
-  async storeEmote(key, url, dataUrl, metadata = {}) {
+  async storeEmote(key, url, blob, metadata = {}) {
     if (!this.db) await this.init();
 
-    return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emotes'], 'readwrite');
-      const store = transaction.objectStore('emotes');
+    // Validate blob before storing
+    if (!blob || !(blob instanceof Blob) || blob.size === 0) {
+      console.error(`[IndexedDB] Cannot store emote ${key}: invalid or empty blob`);
+      throw new Error(`Invalid blob for emote ${key}`);
+    }
 
-      const emoteData = {
+    console.log(`[IndexedDB] Storing emote ${key}: ${blob.size} bytes, type: ${blob.type}`);
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
+      const blobsStore = transaction.objectStore('emoteBlobs');
+      const metadataStore = transaction.objectStore('emoteMetadata');
+
+      // Store metadata separately
+      const metadataData = {
         key: key,
         url: url,
-        html: `<img src="${dataUrl}">`,
-        dataUrl: dataUrl,
+        filename: key + (blob.type === 'image/gif' ? '.gif' : '.png'),
+        mimeType: blob.type || 'image/png',
+        size: blob.size,
         timestamp: Date.now(),
         ...metadata
       };
 
-      const request = store.put(emoteData);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      let blobStored = false;
+      let metadataStored = false;
+
+      const checkComplete = () => {
+        if (blobStored && metadataStored) {
+          console.log(`[IndexedDB] Successfully stored emote ${key}`);
+          resolve();
+        }
+      };
+
+      // Store blob directly as value (key-value pair)
+      const blobRequest = blobsStore.put(blob, key);
+      blobRequest.onsuccess = () => {
+        blobStored = true;
+        checkComplete();
+      };
+      blobRequest.onerror = () => {
+        console.error(`[IndexedDB] Failed to store blob for ${key}:`, blobRequest.error);
+        reject(blobRequest.error);
+      };
+
+      // Store metadata
+      const metadataRequest = metadataStore.put(metadataData);
+      metadataRequest.onsuccess = () => {
+        metadataStored = true;
+        checkComplete();
+      };
+      metadataRequest.onerror = () => {
+        console.error(`[IndexedDB] Failed to store metadata for ${key}:`, metadataRequest.error);
+        reject(metadataRequest.error);
+      };
     });
   },
 
@@ -78,12 +219,40 @@ const emoteDB = {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emotes'], 'readwrite');
-      const store = transaction.objectStore('emotes');
-      const request = store.clear();
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
+      const blobsStore = transaction.objectStore('emoteBlobs');
+      const metadataStore = transaction.objectStore('emoteMetadata');
 
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      let blobsCleared = false;
+      let metadataCleared = false;
+
+      const checkComplete = () => {
+        if (blobsCleared && metadataCleared) {
+          resolve();
+        }
+      };
+
+      // Clear blobs
+      const blobsRequest = blobsStore.clear();
+      blobsRequest.onsuccess = () => {
+        blobsCleared = true;
+        checkComplete();
+      };
+      blobsRequest.onerror = () => {
+        blobsCleared = true; // Continue even if clear fails
+        checkComplete();
+      };
+
+      // Clear metadata
+      const metadataRequest = metadataStore.clear();
+      metadataRequest.onsuccess = () => {
+        metadataCleared = true;
+        checkComplete();
+      };
+      metadataRequest.onerror = () => {
+        metadataCleared = true; // Continue even if clear fails
+        checkComplete();
+      };
     });
   }
 };
@@ -103,7 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const tabPanes = document.querySelectorAll('.tab-pane');
   const tabIndicator = document.querySelector('.tab-indicator');
   // Remove this line as it's declared too early
-  
+
   // Auto-focus on search input when popup opens
   searchInput.focus();
 
@@ -344,11 +513,34 @@ document.addEventListener('DOMContentLoaded', () => {
         showToast('Inserting emote...', 'loading');
 
         try {
-          // Send message to content script to handle the insertion
-          chrome.tabs.sendMessage(currentTab.id, {
-            action: 'insertEmote',
-            emoteTrigger: emoteTrigger
-          }, (response) => {
+          // Get the blob from IndexedDB and convert to base64 for sending
+          if (!emoteDB.db) {
+            await emoteDB.init();
+          }
+
+          const cachedEmote = await emoteDB.getEmote(emoteTrigger);
+          if (!cachedEmote || !cachedEmote.blob) {
+            showToast('Emote not found in cache', 'error');
+            if (emoteElement) resetEmoteLoadingState(emoteElement);
+            return;
+          }
+
+          // Convert blob to base64 for reliable transmission
+          const base64Data = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('Failed to convert blob to base64'));
+            reader.readAsDataURL(cachedEmote.blob);
+          });
+
+          const filename = cachedEmote.filename || emoteTrigger + '.png';
+
+          // Send base64 data to content script
+          chrome.scripting.executeScript({
+            target: { tabId: currentTab.id },
+            func: insertEmoteFromBase64,
+            args: [base64Data, filename, emoteTrigger]
+          }, (result) => {
             // Reset loading state
             if (emoteElement) resetEmoteLoadingState(emoteElement);
 
@@ -359,6 +551,7 @@ document.addEventListener('DOMContentLoaded', () => {
               return;
             }
 
+            const response = result && result[0] && result[0].result;
             if (response && response.success) {
               showToast('Emote inserted successfully!');
             } else {
@@ -407,12 +600,89 @@ document.addEventListener('DOMContentLoaded', () => {
             }
           });
         } catch (error) {
-          console.error('Mojify Error:', error);
+          console.error('[Mojify] Error inserting emote:', error);
           showToast(`Error: ${error.message}`, 'error');
           if (emoteElement) resetEmoteLoadingState(emoteElement);
         }
       });
     });
+  }
+
+  // Function to inject into content script for emote insertion from base64
+  function insertEmoteFromBase64(base64Data, filename, trigger) {
+    console.log("[Mojify Debug] insertEmoteFromBase64 called with:", filename, trigger);
+
+    try {
+      // Convert base64 back to blob
+      const base64 = base64Data.split(',')[1];
+      const mimeMatch = base64Data.match(/data:([^;]+)/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+
+      const byteCharacters = atob(base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: mimeType });
+
+      console.log("[Mojify] Recreated blob:", blob.size, "bytes, type:", blob.type);
+
+      // Create File object
+      const file = new File([blob], filename, { type: blob.type });
+      console.log("[Mojify] Created file:", file.name, file.size, "bytes");
+
+      // Find input field
+      const inputSelectors = [
+        '[contenteditable="true"][role="textbox"]',
+        '[contenteditable="true"]',
+        'input[type="text"]',
+        'textarea',
+        '[data-testid="msg-input"]',
+        '.public-DraftEditor-content',
+        '#message-input'
+      ];
+
+      let inputField = null;
+      for (const selector of inputSelectors) {
+        const elements = document.querySelectorAll(selector);
+        for (const element of elements) {
+          if (element.offsetWidth > 0 && element.offsetHeight > 0) {
+            inputField = element;
+            break;
+          }
+        }
+        if (inputField) break;
+      }
+
+      if (!inputField) {
+        console.error("[Mojify] No input field found");
+        return { success: false, error: 'Could not find input field' };
+      }
+
+      // Focus the input field
+      inputField.focus();
+
+      // Create drag and drop event
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+
+      ['dragenter', 'dragover', 'drop'].forEach(eventType => {
+        const event = new DragEvent(eventType, {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer
+        });
+        inputField.dispatchEvent(event);
+      });
+
+      console.log("[Mojify] File insertion completed for:", trigger);
+      return { success: true };
+
+    } catch (error) {
+      console.error("[Mojify] Error in insertEmoteFromBase64:", error);
+      return { success: false, error: error.message };
+    }
   }
 
   // Load emotes from storage
@@ -612,15 +882,18 @@ document.addEventListener('DOMContentLoaded', () => {
         // Get emote data from IndexedDB
         const emoteDbData = emoteDataMap.get(key);
 
-        // Only render if we have IndexedDB data
-        if (emoteDbData?.dataUrl) {
+        // Only render if we have IndexedDB data with blob
+        if (emoteDbData?.blob) {
           const emoteItem = document.createElement('div');
           emoteItem.className = 'emote-item';
           emoteItem.setAttribute('data-emote-key', key);
 
+          // Create image URL from blob
+          const imageUrl = URL.createObjectURL(emoteDbData.blob);
+
           emoteItem.innerHTML = `
             <div class="emote-img-container">
-              <img src="${emoteDbData.dataUrl}" alt="${emoteName}" class="emote-img">
+              <img src="${imageUrl}" alt="${emoteName}" class="emote-img">
             </div>
             <div class="emote-details">
               <div class="emote-name">${emoteName}</div>
@@ -696,15 +969,18 @@ document.addEventListener('DOMContentLoaded', () => {
           // Get emote data from IndexedDB
           const emoteDbData = emoteDataMap.get(key);
 
-          // Only render if we have IndexedDB data
-          if (emoteDbData?.dataUrl) {
+          // Only render if we have IndexedDB data with blob
+          if (emoteDbData?.blob) {
             const emoteItem = document.createElement('div');
             emoteItem.className = 'emote-item';
             emoteItem.setAttribute('data-emote-key', key);
 
+            // Create image URL from blob
+            const imageUrl = URL.createObjectURL(emoteDbData.blob);
+
             emoteItem.innerHTML = `
               <div class="emote-img-container">
-                <img src="${emoteDbData.dataUrl}" alt="${emoteName}" class="emote-img">
+                <img src="${imageUrl}" alt="${emoteName}" class="emote-img">
               </div>
               <div class="emote-details">
                 <div class="emote-name">${emoteName}</div>
@@ -1364,7 +1640,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Get references to the storage elements
     const localStorageUsed = document.getElementById('local-storage-used');
     const indexedDBStorageUsed = document.getElementById('indexeddb-storage-used');
-    
+
     // Get Chrome storage data
     chrome.storage.local.get(['emoteMapping', 'channels', 'emoteImageData'], async (result) => {
       const emoteCount = result.emoteMapping ? Object.keys(result.emoteMapping).length : 0;
@@ -1375,34 +1651,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // Calculate Chrome storage usage (localStorage)
       let localStorageSize = 0;
-      
+
       // Calculate size of emoteMapping and channels
       const storageString = JSON.stringify(result);
       localStorageSize = new Blob([storageString]).size;
-      
+
       // Format and display local storage size
       localStorageUsed.textContent = formatSize(localStorageSize);
-      
+
       // Calculate IndexedDB storage size
       let indexedDBSize = 0;
-      
+
       try {
         // Initialize IndexedDB if needed
         if (!emoteDB.db) {
           await emoteDB.init();
         }
-        
+
         // Get all emotes from IndexedDB
         const indexedDBEmotes = await emoteDB.getAllEmotes();
-        
-        // Calculate size of all emote data URLs
+
+        // Calculate size of all emote blobs
         indexedDBEmotes.forEach(emote => {
-          if (emote.dataUrl) {
-            // Estimate size of data URL
-            indexedDBSize += emote.dataUrl.length;
+          if (emote.blob) {
+            indexedDBSize += emote.blob.size;
           }
         });
-        
+
         // Format and display IndexedDB storage size
         indexedDBStorageUsed.textContent = formatSize(indexedDBSize);
       } catch (error) {
@@ -1411,11 +1686,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
-  
+
   // Helper function to format size in B, KB, or MB
   function formatSize(bytes) {
     if (bytes === 0) return '0 B';
-    
+
     if (bytes < 1024) {
       return `${bytes} B`;
     } else if (bytes < 1024 * 1024) {
@@ -1433,34 +1708,34 @@ document.addEventListener('DOMContentLoaded', () => {
       if (channels.length > 0) {
         channelManagement.style.display = 'block';
         channelList.innerHTML = '';
-        
+
         try {
           // Initialize IndexedDB if needed
           if (!emoteDB.db) {
             await emoteDB.init();
           }
-          
+
           // Get all emotes from IndexedDB
           const indexedDBEmotes = await emoteDB.getAllEmotes();
-          
+
           // Get the emoteMapping to check which emotes belong to which channel
           const { emoteMapping } = await new Promise((resolve) => {
             chrome.storage.local.get(['emoteMapping'], (result) => resolve(result));
           });
-          
+
           // Count emotes per channel based on the channel's emotes in emoteMapping
           const emoteCountByChannel = {};
-          
+
           // For each channel, count how many of its emotes are actually in IndexedDB
           channels.forEach(channel => {
             if (!channel.id) return;
-            
+
             // Get all emote keys for this channel
             const channelEmoteKeys = new Set();
             if (channel.emotes) {
               Object.keys(channel.emotes).forEach(key => channelEmoteKeys.add(key));
             }
-            
+
             // Count how many of these emotes are in IndexedDB
             const indexedDBEmoteKeys = new Set(indexedDBEmotes.map(e => e.key));
             let count = 0;
@@ -1469,14 +1744,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 count++;
               }
             });
-            
+
             emoteCountByChannel[channel.id] = count;
           });
-          
+
           // Create channel list items
           channels.forEach(channel => {
             // Use the count from IndexedDB or fallback to channel.emotes
-            const emoteCount = emoteCountByChannel[channel.id] || 
+            const emoteCount = emoteCountByChannel[channel.id] ||
                              (channel.emotes ? Object.keys(channel.emotes).length : 0);
 
             const channelItem = document.createElement('div');
@@ -1497,7 +1772,7 @@ document.addEventListener('DOMContentLoaded', () => {
           });
         } catch (error) {
           console.error('Error updating channel management:', error);
-          
+
           // Fallback to simple display if IndexedDB fails
           channels.forEach(channel => {
             const emoteCount = channel.emotes ? Object.keys(channel.emotes).length : 0;
@@ -2068,10 +2343,22 @@ async function clearAllStorage() {
         const allEmotes = await emoteDB.getAllEmotes();
         // Process emotes to include only essential data
         for (const emote of allEmotes) {
+          let dataUrl = emote.dataUrl;
+
+          // If we have a blob instead of dataUrl (new format), convert it
+          if (!dataUrl && emote.blob) {
+            dataUrl = await new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = () => reject(new Error("Failed to convert blob to data URL"));
+              reader.readAsDataURL(emote.blob);
+            });
+          }
+
           emoteData.push({
             key: emote.key,
             url: emote.url,
-            dataUrl: emote.dataUrl,
+            dataUrl: dataUrl,
             channel: emote.channel,
             timestamp: emote.timestamp
           });
@@ -2290,10 +2577,23 @@ async function clearAllStorage() {
         for (let i = 0; i < emotes.length; i++) {
           const emote = emotes[i];
           if (emote.key && emote.dataUrl) {
+            // Convert dataUrl to blob for new storage format
+            const base64Data = emote.dataUrl.split(',')[1];
+            const mimeMatch = emote.dataUrl.match(/data:([^;]+)/);
+            const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+
+            const byteCharacters = atob(base64Data);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+              byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: mimeType });
+
             await emoteDB.storeEmote(
               emote.key,
               emote.url || '',
-              emote.dataUrl,
+              blob,
               {
                 channel: emote.channel || 'unknown',
                 timestamp: emote.timestamp || Date.now()
@@ -2364,7 +2664,7 @@ async function clearAllStorage() {
             newEmoteMapping[emote.key] = emote.url;
           }
         });
-        
+
         // Save the updated emoteMapping to chrome.storage
         await new Promise((resolve, reject) => {
           chrome.storage.local.set({ emoteMapping: newEmoteMapping }, () => {
@@ -2380,10 +2680,10 @@ async function clearAllStorage() {
         console.error('Failed to update emoteMapping:', error);
       }
     }
-    
+
     // We'll let loadEmotes handle the channel emote mapping
     // since it already has the logic to match emotes to channels
-    
+
     // Refresh UI components
     setTimeout(() => {
       loadEmotes();

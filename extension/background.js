@@ -1,16 +1,17 @@
 const TWITCH_API_BASE_URL = "https://7tv.io/v3/users/twitch";
 
-// IndexedDB wrapper for emote storage
+// IndexedDB wrapper for emote storage - stores blobs directly as values
 const emoteDB = {
   db: null,
-  dbName: 'MojifyEmoteDB',
-  version: 1,
+  dbName: 'MojifyEmotes',
+  version: 3,
 
   async init() {
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(this.dbName, this.version);
 
       request.onerror = () => reject(request.error);
+
       request.onsuccess = () => {
         this.db = request.result;
         console.log('[IndexedDB] Database opened successfully');
@@ -19,37 +20,84 @@ const emoteDB = {
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
+        console.log('[IndexedDB] Creating fresh database...');
 
-        // Create emotes object store
-        if (!db.objectStoreNames.contains('emotes')) {
-          const emotesStore = db.createObjectStore('emotes', { keyPath: 'key' });
-          emotesStore.createIndex('channel', 'channel', { unique: false });
-          emotesStore.createIndex('url', 'url', { unique: false });
-          console.log('[IndexedDB] Created emotes object store');
+        // Create emote blobs object store (stores blob directly as value)
+        if (!db.objectStoreNames.contains('emoteBlobs')) {
+          const blobsStore = db.createObjectStore('emoteBlobs');
+          console.log('[IndexedDB] Created emoteBlobs object store');
+        }
+
+        // Create emote metadata object store
+        if (!db.objectStoreNames.contains('emoteMetadata')) {
+          const metadataStore = db.createObjectStore('emoteMetadata', { keyPath: 'key' });
+          metadataStore.createIndex('channel', 'channel', { unique: false });
+          metadataStore.createIndex('url', 'url', { unique: false });
+          metadataStore.createIndex('timestamp', 'timestamp', { unique: false });
+          console.log('[IndexedDB] Created emoteMetadata object store');
         }
       };
     });
   },
 
-  async storeEmote(key, url, dataUrl, metadata = {}) {
+  async storeEmote(key, url, blob, metadata = {}) {
     if (!this.db) await this.init();
 
-    return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emotes'], 'readwrite');
-      const store = transaction.objectStore('emotes');
+    // Validate blob before storing
+    if (!blob || !(blob instanceof Blob) || blob.size === 0) {
+      console.error(`[IndexedDB] Cannot store emote ${key}: invalid or empty blob`);
+      throw new Error(`Invalid blob for emote ${key}`);
+    }
 
-      const emoteData = {
+    console.log(`[IndexedDB] Storing emote ${key}: ${blob.size} bytes, type: ${blob.type}`);
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
+      const blobsStore = transaction.objectStore('emoteBlobs');
+      const metadataStore = transaction.objectStore('emoteMetadata');
+
+      // Store metadata separately
+      const metadataData = {
         key: key,
         url: url,
-        html: `<img src="${dataUrl}">`,
-        dataUrl: dataUrl,
+        filename: key + (blob.type === 'image/gif' ? '.gif' : '.png'),
+        mimeType: blob.type || 'image/png',
+        size: blob.size,
         timestamp: Date.now(),
         ...metadata
       };
 
-      const request = store.put(emoteData);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      let blobStored = false;
+      let metadataStored = false;
+
+      const checkComplete = () => {
+        if (blobStored && metadataStored) {
+          console.log(`[IndexedDB] Successfully stored emote ${key}`);
+          resolve();
+        }
+      };
+
+      // Store blob directly as value (key-value pair)
+      const blobRequest = blobsStore.put(blob, key);
+      blobRequest.onsuccess = () => {
+        blobStored = true;
+        checkComplete();
+      };
+      blobRequest.onerror = () => {
+        console.error(`[IndexedDB] Failed to store blob for ${key}:`, blobRequest.error);
+        reject(blobRequest.error);
+      };
+
+      // Store metadata
+      const metadataRequest = metadataStore.put(metadataData);
+      metadataRequest.onsuccess = () => {
+        metadataStored = true;
+        checkComplete();
+      };
+      metadataRequest.onerror = () => {
+        console.error(`[IndexedDB] Failed to store metadata for ${key}:`, metadataRequest.error);
+        reject(metadataRequest.error);
+      };
     });
   },
 
@@ -57,12 +105,65 @@ const emoteDB = {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emotes'], 'readonly');
-      const store = transaction.objectStore('emotes');
-      const request = store.get(key);
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readonly');
+      const blobsStore = transaction.objectStore('emoteBlobs');
+      const metadataStore = transaction.objectStore('emoteMetadata');
 
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
+      let blob = null;
+      let metadataResult = null;
+      let blobComplete = false;
+      let metadataComplete = false;
+
+      const checkComplete = () => {
+        if (blobComplete && metadataComplete) {
+          if (blob && metadataResult) {
+            // Validate blob
+            if (!(blob instanceof Blob) || blob.size === 0) {
+              console.error(`[IndexedDB] Emote ${key} has corrupted or missing blob`);
+              resolve(null);
+              return;
+            }
+
+            console.log(`[IndexedDB] Retrieved emote ${key}: ${blob.size} bytes, type: ${blob.type}`);
+
+            // Return combined result with blob directly accessible
+            resolve({
+              key: key,
+              blob: blob,
+              ...metadataResult
+            });
+          } else {
+            console.warn(`[IndexedDB] Emote ${key} not found or incomplete`);
+            resolve(null);
+          }
+        }
+      };
+
+      // Get blob directly (it's stored as the value)
+      const blobRequest = blobsStore.get(key);
+      blobRequest.onsuccess = () => {
+        blob = blobRequest.result;
+        blobComplete = true;
+        checkComplete();
+      };
+      blobRequest.onerror = () => {
+        console.error(`[IndexedDB] Failed to retrieve blob for ${key}:`, blobRequest.error);
+        blobComplete = true;
+        checkComplete();
+      };
+
+      // Get metadata
+      const metadataRequest = metadataStore.get(key);
+      metadataRequest.onsuccess = () => {
+        metadataResult = metadataRequest.result;
+        metadataComplete = true;
+        checkComplete();
+      };
+      metadataRequest.onerror = () => {
+        console.error(`[IndexedDB] Failed to retrieve metadata for ${key}:`, metadataRequest.error);
+        metadataComplete = true;
+        checkComplete();
+      };
     });
   },
 
@@ -70,12 +171,48 @@ const emoteDB = {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emotes'], 'readonly');
-      const store = transaction.objectStore('emotes');
-      const request = store.getAll();
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readonly');
+      const blobsStore = transaction.objectStore('emoteBlobs');
+      const metadataStore = transaction.objectStore('emoteMetadata');
 
-      request.onsuccess = () => resolve(request.result || []);
-      request.onerror = () => reject(request.error);
+      // First get all metadata
+      const metadataRequest = metadataStore.getAll();
+      metadataRequest.onsuccess = () => {
+        const metadataResults = metadataRequest.result || [];
+
+        if (metadataResults.length === 0) {
+          resolve([]);
+          return;
+        }
+
+        const results = [];
+        let completed = 0;
+
+        // Get blobs for each metadata entry
+        metadataResults.forEach(metadata => {
+          const blobRequest = blobsStore.get(metadata.key);
+          blobRequest.onsuccess = () => {
+            const blob = blobRequest.result;
+            if (blob && blob instanceof Blob) {
+              results.push({
+                ...metadata,
+                blob: blob
+              });
+            }
+            completed++;
+            if (completed === metadataResults.length) {
+              resolve(results);
+            }
+          };
+          blobRequest.onerror = () => {
+            completed++;
+            if (completed === metadataResults.length) {
+              resolve(results);
+            }
+          };
+        });
+      };
+      metadataRequest.onerror = () => reject(metadataRequest.error);
     });
   },
 
@@ -83,12 +220,40 @@ const emoteDB = {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emotes'], 'readwrite');
-      const store = transaction.objectStore('emotes');
-      const request = store.delete(key);
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
+      const blobsStore = transaction.objectStore('emoteBlobs');
+      const metadataStore = transaction.objectStore('emoteMetadata');
 
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      let blobDeleted = false;
+      let metadataDeleted = false;
+
+      const checkComplete = () => {
+        if (blobDeleted && metadataDeleted) {
+          resolve();
+        }
+      };
+
+      // Delete blob
+      const blobRequest = blobsStore.delete(key);
+      blobRequest.onsuccess = () => {
+        blobDeleted = true;
+        checkComplete();
+      };
+      blobRequest.onerror = () => {
+        blobDeleted = true; // Continue even if blob delete fails
+        checkComplete();
+      };
+
+      // Delete metadata
+      const metadataRequest = metadataStore.delete(key);
+      metadataRequest.onsuccess = () => {
+        metadataDeleted = true;
+        checkComplete();
+      };
+      metadataRequest.onerror = () => {
+        metadataDeleted = true; // Continue even if metadata delete fails
+        checkComplete();
+      };
     });
   },
 
@@ -96,12 +261,40 @@ const emoteDB = {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emotes'], 'readwrite');
-      const store = transaction.objectStore('emotes');
-      const request = store.clear();
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
+      const blobsStore = transaction.objectStore('emoteBlobs');
+      const metadataStore = transaction.objectStore('emoteMetadata');
 
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
+      let blobsCleared = false;
+      let metadataCleared = false;
+
+      const checkComplete = () => {
+        if (blobsCleared && metadataCleared) {
+          resolve();
+        }
+      };
+
+      // Clear blobs
+      const blobsRequest = blobsStore.clear();
+      blobsRequest.onsuccess = () => {
+        blobsCleared = true;
+        checkComplete();
+      };
+      blobsRequest.onerror = () => {
+        blobsCleared = true; // Continue even if clear fails
+        checkComplete();
+      };
+
+      // Clear metadata
+      const metadataRequest = metadataStore.clear();
+      metadataRequest.onsuccess = () => {
+        metadataCleared = true;
+        checkComplete();
+      };
+      metadataRequest.onerror = () => {
+        metadataCleared = true; // Continue even if clear fails
+        checkComplete();
+      };
     });
   }
 };
@@ -530,15 +723,10 @@ async function downloadEmotes() {
 
         if (response.ok) {
           const blob = await response.blob();
-          if (blob.size > 0) {
-            // Convert blob to base64 data URL
-            const dataUrl = await new Promise((resolve) => {
-              const reader = new FileReader();
-              reader.onload = () => resolve(reader.result);
-              reader.readAsDataURL(blob);
-            });
+          console.log(`[Download] Downloaded ${key}: ${blob.size} bytes, type: ${blob.type}`);
 
-            await emoteDB.storeEmote(key, url, dataUrl, {
+          if (blob.size > 0) {
+            await emoteDB.storeEmote(key, url, blob, {
               channel: channel,
               channelId: channelId
             });
@@ -931,23 +1119,15 @@ async function insertEmoteIntoMessenger(tabId, emoteUrl, emoteTrigger) {
   console.log(`[Mojify] Attempting to insert emote ${emoteTrigger} into tab ${tabId} using drag and drop`);
 
   try {
-    // First, get the emote blob from IndexedDB
+    // Get the emote blob from IndexedDB
     const emoteData = await emoteDB.getEmote(emoteTrigger);
-    let imageBlob = null;
 
-    if (emoteData && emoteData.blob) {
-      imageBlob = emoteData.blob;
-      console.log(`[Mojify] Using cached blob for ${emoteTrigger}`);
-    } else {
-      // Fallback: fetch the image if not in IndexedDB
-      console.log(`[Mojify] Fetching ${emoteTrigger} from URL: ${emoteUrl}`);
-      const response = await fetch(emoteUrl);
-      if (response.ok) {
-        imageBlob = await response.blob();
-      } else {
-        throw new Error(`Failed to fetch emote: ${response.status}`);
-      }
+    if (!emoteData || !emoteData.blob) {
+      throw new Error(`Emote ${emoteTrigger} not found in cache. Please download emotes first.`);
     }
+
+    const imageBlob = emoteData.blob;
+    console.log(`[Mojify] Using cached blob for ${emoteTrigger}`);
 
     // Execute script to drag and drop the emote
     const result = await chrome.scripting.executeScript({
