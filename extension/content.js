@@ -40,7 +40,7 @@
   let discordMinibar = null;
   let discordEditor = null;
 
-// IndexedDB wrapper for emote storage (same as background.js)
+// IndexedDB wrapper for emote storage - using message passing to background script
 const emoteDB = {
   async getEmote(key) {
     return new Promise((resolve, reject) => {
@@ -451,8 +451,21 @@ async function showDiscordEmoteSuggestions(query) {
             object-fit: contain;
         `;
 
-        if (cachedEmote.blob) {
-            emoteImg.src = URL.createObjectURL(cachedEmote.blob);
+        if (cachedEmote.dataUrl) {
+            // Convert dataUrl back to blob for display with URL.createObjectURL
+            const base64 = cachedEmote.dataUrl.split(',')[1];
+            const mimeMatch = cachedEmote.dataUrl.match(/data:([^;]+)/);
+            const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+
+            const byteCharacters = atob(base64);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: mimeType });
+
+            emoteImg.src = URL.createObjectURL(blob);
         }
 
         emoteItem.appendChild(emoteImg);
@@ -1084,11 +1097,24 @@ function showEmoteSuggestions(query, inputElement) {
         // Load emote preview if available
         if (typeof emoteDB !== 'undefined') {
             emoteDB.getEmote(emoteKey).then(cachedEmote => {
-                if (cachedEmote && cachedEmote.blob) {
-                    emoteImg.src = URL.createObjectURL(cachedEmote.blob);
+                if (cachedEmote && cachedEmote.dataUrl) {
+                    // Convert dataUrl back to blob for display with URL.createObjectURL
+                    const base64 = cachedEmote.dataUrl.split(',')[1];
+                    const mimeMatch = cachedEmote.dataUrl.match(/data:([^;]+)/);
+                    const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+
+                    const byteCharacters = atob(base64);
+                    const byteNumbers = new Array(byteCharacters.length);
+                    for (let i = 0; i < byteCharacters.length; i++) {
+                        byteNumbers[i] = byteCharacters.charCodeAt(i);
+                    }
+                    const byteArray = new Uint8Array(byteNumbers);
+                    const blob = new Blob([byteArray], { type: mimeType });
+
+                    emoteImg.src = URL.createObjectURL(blob);
                 }
             }).catch(() => {
-                // Do nothing - only show emotes with blobs
+                // Do nothing - only show emotes with dataUrl
             });
         }
 
@@ -1374,20 +1400,29 @@ async function insertEmoteFromSuggestion(emoteKey, inputElement) {
         // Clear the stored partial text info
         currentPartialTextInfo = null;
 
-        // Get the blob from IndexedDB and create file directly
+        // Get the emote from IndexedDB and create File directly from base64
         try {
             const cachedEmote = await emoteDB.getEmote(emoteKey);
-            if (!cachedEmote || !cachedEmote.blob) {
-                debugLog("❌ Emote not found or missing blob:", emoteKey);
+            if (!cachedEmote || !cachedEmote.dataUrl) {
+                debugLog("❌ Emote not found or missing dataUrl:", emoteKey);
                 return;
             }
 
-            debugLog("✅ Retrieved blob from IndexedDB:", cachedEmote.blob.size, "bytes");
+            debugLog("✅ Retrieved emote with dataUrl from IndexedDB");
 
-            // Create File object directly from blob
-            const blob = cachedEmote.blob;
+            // Create File directly from base64 (faster - no blob conversion)
+            const base64 = cachedEmote.dataUrl.split(',')[1];
+            const mimeMatch = cachedEmote.dataUrl.match(/data:([^;]+)/);
+            const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+
+            const byteCharacters = atob(base64);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
             const filename = cachedEmote.filename || emoteKey + '.png';
-            const file = new File([blob], filename, { type: blob.type });
+            const file = new File([byteArray], filename, { type: mimeType });
 
             debugLog("✅ Created file from suggestion:", file.name, file.size, "bytes");
 

@@ -2138,14 +2138,47 @@ async function detectAndReplaceEmotes(tabId) {
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getEmote') {
     emoteDB.getEmote(request.key)
-      .then(result => sendResponse(result))
+      .then(async result => {
+        if (result && result.blob) {
+          // Convert blob to base64 for serialization
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = () => reject(new Error('Failed to convert blob to base64'));
+            reader.readAsDataURL(result.blob);
+          });
+          // Replace blob with dataUrl for transmission
+          sendResponse({ ...result, dataUrl: dataUrl, blob: null });
+        } else {
+          sendResponse(result);
+        }
+      })
       .catch(error => sendResponse(null));
     return true; // Keep the message channel open for async response
   }
 
   if (request.action === 'getAllEmotes') {
     emoteDB.getAllEmotes()
-      .then(result => sendResponse(result))
+      .then(async result => {
+        if (result && result.length > 0) {
+          // Convert all blobs to base64 for serialization
+          const processedResults = await Promise.all(result.map(async emote => {
+            if (emote.blob) {
+              const dataUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => reject(new Error('Failed to convert blob to base64'));
+                reader.readAsDataURL(emote.blob);
+              });
+              return { ...emote, dataUrl: dataUrl, blob: null };
+            }
+            return emote;
+          }));
+          sendResponse(processedResults);
+        } else {
+          sendResponse(result);
+        }
+      })
       .catch(error => sendResponse([]));
     return true; // Keep the message channel open for async response
   }
