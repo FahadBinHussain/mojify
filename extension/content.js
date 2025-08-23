@@ -840,38 +840,49 @@ async function insertFileOnTelegram(file, targetElement) {
 }
 
 // Discord-specific file insertion
-function insertFileOnDiscord(file, targetElement) {
-    debugLog("Using Discord-specific insertion method");
+async function insertFileOnDiscord(file, targetElement) {
+    debugLog("Using Discord-specific insertion method for Slate.js editor");
 
-    // Try multiple Discord insertion methods
     try {
-        // Method 1: Try paste event with files
+        // Method 1: Try DataTransfer with paste event (most reliable for Discord)
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+
+        // Create and dispatch paste event
         const pasteEvent = new ClipboardEvent('paste', {
             bubbles: true,
             cancelable: true,
-            clipboardData: new DataTransfer()
+            clipboardData: dataTransfer
         });
-        pasteEvent.clipboardData.items.add(file);
-        const pasteResult = targetElement.dispatchEvent(pasteEvent);
-        debugLog("Discord paste method result:", pasteResult);
 
-        // Method 2: Try input event
+        // Focus the target element first
+        targetElement.focus();
+
+        // Small delay to ensure focus is set
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        const pasteResult = targetElement.dispatchEvent(pasteEvent);
+        debugLog("Discord paste event dispatched:", pasteResult);
+
+        // Method 2: Try drag and drop as backup
+        if (!pasteResult) {
+            debugLog("Paste failed, trying drag and drop");
+            return simulateFileDrop(file, targetElement);
+        }
+
+        // Method 3: Try input event to trigger any remaining handlers
         const inputEvent = new InputEvent('input', {
             bubbles: true,
             cancelable: true,
-            data: null,
             inputType: 'insertFromPaste'
         });
-        const inputResult = targetElement.dispatchEvent(inputEvent);
-        debugLog("Discord input method result:", inputResult);
-
-        // Method 3: Fallback to drag and drop
-        simulateFileDrop(file, targetElement);
+        targetElement.dispatchEvent(inputEvent);
 
         return true;
+
     } catch (error) {
         debugLog("Discord insertion error:", error);
-        // Fallback to standard method
+        // Final fallback to drag and drop
         return simulateFileDrop(file, targetElement);
     }
 }
@@ -1465,8 +1476,68 @@ function simulateFileDrop(file, targetElement) {
     });
 }
 
-// Main emote insertion function (adapted from example)
-// insertEmote function removed - now handled by direct script injection from popup
+// Main emote insertion function with Discord Slate.js support
+async function insertEmote(emoteKey, targetElement = null) {
+    debugLog(`[Mojify] Inserting emote: ${emoteKey}`);
+
+    try {
+        // Get emote from database/storage
+        const cachedEmote = await emoteDB.getEmote(emoteKey);
+        if (!cachedEmote || !cachedEmote.dataUrl) {
+            debugLog(`[Mojify] Emote ${emoteKey} not found in cache`);
+            return false;
+        }
+
+        // Convert data URL to blob then to File
+        const response = await fetch(cachedEmote.dataUrl);
+        const blob = await response.blob();
+
+        debugLog(`[Mojify] Converted base64 to bytes: ${blob.size} bytes`);
+
+        // Create File object from blob
+        const file = new File([blob], cachedEmote.filename, {
+            type: blob.type
+        });
+
+        debugLog(`[Mojify] Created file: ${file.name} ${file.size} bytes`);
+
+        // Find target input element
+        const inputField = targetElement || findInputField();
+        if (!inputField) {
+            debugLog('[Mojify] No input field found');
+            return false;
+        }
+
+        // Focus the input field
+        inputField.focus();
+
+        // Platform-specific insertion
+        const platform = getCurrentPlatform();
+        let success = false;
+
+        if (platform === 'discord') {
+            success = await insertFileOnDiscord(file, inputField);
+        } else if (platform === 'telegram') {
+            success = await insertFileOnTelegram(file, inputField);
+        } else if (platform === 'whatsapp') {
+            success = await insertFileOnWhatsApp(file, inputField);
+        } else {
+            success = await insertFileOnPlatform(file, inputField);
+        }
+
+        if (success) {
+            debugLog(`[Mojify] Successfully inserted ${emoteKey}`);
+        } else {
+            debugLog(`[Mojify] Failed to insert ${emoteKey}`);
+        }
+
+        return success;
+
+    } catch (error) {
+        debugLog(`[Mojify] Error inserting emote:`, error);
+        return false;
+    }
+}
 
 // Message listener - insertEmote handling removed, now using direct script injection
 try {
