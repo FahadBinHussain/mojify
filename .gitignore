@@ -3,3 +3,6 @@
 /frontend/public/7tv_emotes
 /frontend/public/emote_mapping.json
 extension/example
+webapp/.env
+.gitignore
+web/.env

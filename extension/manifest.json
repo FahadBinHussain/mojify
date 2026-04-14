@@ -14,6 +14,14 @@
   ],
   "host_permissions": [
     "https://7tv.io/*",
+    "https://api.giphy.com/*",
+    "https://*.giphy.com/*",
+    "https://api.klipy.com/*",
+    "https://*.klipy.com/*",
+    "https://pixabay.com/*",
+    "https://*.pixabay.com/*",
+    "http://localhost:3000/*",
+    "https://*.vercel.app/*",
     "https://*.messenger.com/*",
     "https://*.discord.com/*",
     "https://*.discordapp.com/*",
@@ -42,6 +50,7 @@
       "128": "icons/icon128.png"
     }
   },
+  "options_page": "options.html",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

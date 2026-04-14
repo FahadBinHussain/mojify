@@ -14,8 +14,8 @@ body {
 
 /* App Container */
 .app-container {
-  width: 380px;
-  min-height: 500px;
+  width: 520px;
+  min-height: 680px;
   max-height: none;
   display: flex;
   flex-direction: column;
@@ -155,6 +155,34 @@ body {
 .search-container {
   padding: 14px 16px;
   background: #ffffff;
+}
+
+.media-tabs {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.media-tab-btn {
+  border: 1px solid #e4e4e7;
+  background: #f8fafc;
+  color: #52525b;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.media-tab-btn:hover {
+  background: #f1f5f9;
+}
+
+.media-tab-btn.active {
+  color: #fff;
+  background: #7050c7;
+  border-color: #7050c7;
 }
 
 .search-input-wrapper {
@@ -393,6 +421,42 @@ body {
   overflow-x: hidden;
 }
 
+.giphy-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.giphy-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.giphy-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+}
+
+.giphy-item img {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  display: block;
+}
+
+.giphy-caption {
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #3f3f46;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .emote-item {
   background: white;
   border-radius: 8px;
@@ -536,7 +600,25 @@ textarea {
   transition: border-color 0.2s;
 }
 
+input[type="text"],
+select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d4d4d8;
+  border-radius: 6px;
+  font-family: 'Inter', sans-serif;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  background: #fff;
+}
+
 textarea:focus {
+  border-color: #7050c7;
+}
+
+input[type="text"]:focus,
+select:focus {
   border-color: #7050c7;
 }
 

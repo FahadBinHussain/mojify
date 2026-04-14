@@ -1,0 +1,237 @@
+@import url("https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap");
+
+:root {
+  --bg: #070b14;
+  --bg2: #0e1628;
+  --line: rgba(255, 255, 255, 0.16);
+  --text: #f3f6ff;
+  --muted: #a4afc7;
+  --accent: #4de2c7;
+  --accent2: #7aa5ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Sora", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(1200px 520px at 110% -20%, #2c3e86 0%, transparent 70%),
+    radial-gradient(900px 500px at -10% 0%, #155f66 0%, transparent 72%),
+    linear-gradient(160deg, var(--bg) 0%, var(--bg2) 100%);
+}
+
+.page {
+  min-height: 100vh;
+}
+
+.content {
+  width: min(860px, 100% - 40px);
+  margin-inline: auto;
+}
+
+.hero {
+  min-height: 28vh;
+  display: grid;
+  align-items: end;
+  padding: 22px 0 14px;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+  overflow: hidden;
+}
+
+.hero::before {
+  content: "";
+  position: absolute;
+  width: 380px;
+  height: 380px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(77, 226, 199, 0.34) 0%, rgba(77, 226, 199, 0) 72%);
+  right: -90px;
+  top: -80px;
+  filter: blur(12px);
+  animation: drift 8s ease-in-out infinite;
+}
+
+.heroInner {
+  max-width: 720px;
+  z-index: 1;
+  animation: riseIn 0.65s ease-out;
+}
+
+.kicker {
+  margin: 0 0 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(32px, 5.2vw, 56px);
+  letter-spacing: -0.03em;
+  line-height: 1.03;
+}
+
+.lead {
+  max-width: 620px;
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: clamp(14px, 2.2vw, 18px);
+}
+
+.contentTranslator {
+  margin-top: 8px;
+}
+
+.translator {
+  width: 100%;
+  margin: 0 auto 28px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(8, 12, 23, 0.76);
+  backdrop-filter: blur(10px);
+  animation: riseIn 0.75s ease-out;
+}
+
+.translatorHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 14px;
+}
+
+.translatorHead h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.translatorHead span {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.controls {
+  display: grid;
+  gap: 9px;
+}
+
+label {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+input,
+select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font: inherit;
+  transition: border-color 0.2s ease, transform 0.2s ease;
+}
+
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--accent2);
+  transform: translateY(-1px);
+}
+
+button {
+  margin-top: 6px;
+  border: 0;
+  border-radius: 12px;
+  padding: 12px 14px;
+  color: #05131f;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(74, 170, 255, 0.28);
+}
+
+button:disabled {
+  opacity: 0.72;
+  cursor: default;
+  transform: none;
+}
+
+.result {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  color: #d8ffef;
+  background: rgba(13, 45, 39, 0.45);
+  animation: fadeIn 0.28s ease-out;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.copyBtn {
+  margin-top: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  min-width: 74px;
+}
+
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes drift {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-16px, 14px); }
+}
+
+@media (max-width: 720px) {
+  .content {
+    width: calc(100% - 22px);
+  }
+  .hero {
+    min-height: 22vh;
+    padding-top: 16px;
+  }
+  .heroInner {
+    max-width: 100%;
+  }
+  .translator {
+    margin: 0 0 22px;
+    padding: 16px;
+  }
+}
