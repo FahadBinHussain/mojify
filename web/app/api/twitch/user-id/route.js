@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { findTwitchUser } from "../../../../lib/twitch";
+import { isAllowedClient } from "../../../../lib/access";
 
 export async function GET(request) {
   try {
+    if (!isAllowedClient(request)) {
+      return NextResponse.json({ error: "forbidden" }, { status: 403 });
+    }
+
     const { searchParams } = new URL(request.url);
     const username = (searchParams.get("username") || "").trim().toLowerCase();
     if (!username) {

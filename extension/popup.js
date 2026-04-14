@@ -305,6 +305,33 @@ document.addEventListener('DOMContentLoaded', () => {
   let translatedTwitchUserId = '';
   let giphySearchTimeout = null;
   let emoteDataMap = new Map();
+  const MOJIFY_TRANSLATOR_BASE_URL = 'https://mojify.vercel.app';
+
+  function normalizeChannelIdentifier(value) {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  function dedupeChannelIds(channelIds) {
+    const seen = new Set();
+    const deduped = [];
+    (channelIds || []).forEach((id) => {
+      const normalized = normalizeChannelIdentifier(id);
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      deduped.push(String(id).trim());
+    });
+    return deduped;
+  }
+
+  function dedupeChannelsById(channelList) {
+    const seen = new Set();
+    return (channelList || []).filter((channel) => {
+      const key = normalizeChannelIdentifier(channel?.id || channel?.username);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
 
   // Notification function
   function showToast(message, type = 'info') {
@@ -708,7 +735,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (storageData.emoteMapping && Object.keys(storageData.emoteMapping).length > 0) {
         allEmotes = storageData.emoteMapping;
-        channels = storageData.channels || [];
+        channels = dedupeChannelsById(storageData.channels || []);
+        if ((storageData.channels || []).length !== channels.length) {
+          chrome.storage.local.set({ channels });
+        }
 
         console.log('All emotes count:', Object.keys(allEmotes).length);
         console.log('Channels count:', channels.length);
@@ -1487,8 +1517,9 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    chrome.storage.local.set({ channelIds }, () => {
-      if (channelIds.length === 0) {
+    const uniqueChannelIds = dedupeChannelIds(channelIds);
+    chrome.storage.local.set({ channelIds: uniqueChannelIds }, () => {
+      if (uniqueChannelIds.length === 0) {
         // Channel IDs were cleared
         showToast('Channel IDs cleared');
 
@@ -1503,7 +1534,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       } else {
         // Channel IDs were saved
-        showToast('Channel IDs saved - emotes will download automatically');
+        showToast(`Channel IDs saved (${uniqueChannelIds.length}) - emotes will download automatically`);
 
         // Set up progress monitoring for the automatic download that will be triggered by storage listener
         setTimeout(() => {
@@ -2114,7 +2145,11 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateChannelManagement() {
     // First get the channels
     chrome.storage.local.get(['channels'], async (result) => {
-      const channels = result.channels || [];
+      const rawChannels = result.channels || [];
+      const channels = dedupeChannelsById(rawChannels);
+      if (rawChannels.length !== channels.length) {
+        chrome.storage.local.set({ channels });
+      }
 
       if (channels.length > 0) {
         channelManagement.style.display = 'block';
@@ -2232,35 +2267,42 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    chrome.storage.local.get(['channels', 'emoteMapping', 'emoteImageData'], (result) => {
-      const channels = result.channels || [];
+    chrome.storage.local.get(['channels', 'emoteMapping', 'emoteImageData', 'channelIds'], (result) => {
+      const channels = dedupeChannelsById(result.channels || []);
       const emoteMapping = result.emoteMapping || {};
       const emoteImageData = result.emoteImageData || {};
+      const channelIds = dedupeChannelIds(result.channelIds || []);
 
-      // Find the channel to delete
-      const channelIndex = channels.findIndex(c => c.id === channelId);
-      if (channelIndex === -1) return;
-
-      const channel = channels[channelIndex];
+      const targetId = normalizeChannelIdentifier(channelId);
+      const targetChannel = channels.find(c => normalizeChannelIdentifier(c.id) === targetId);
+      if (!targetChannel) return;
 
       // Remove emotes from global mappings
-      if (channel.emotes) {
-        Object.keys(channel.emotes).forEach(emoteKey => {
+      if (targetChannel.emotes) {
+        Object.keys(targetChannel.emotes).forEach(emoteKey => {
           delete emoteMapping[emoteKey];
           delete emoteImageData[emoteKey];
         });
       }
 
-      // Remove channel
-      channels.splice(channelIndex, 1);
+      // Remove all matching channel entries (in case of previous duplicates)
+      const cleanedChannels = channels.filter(c => normalizeChannelIdentifier(c.id) !== targetId);
+      const targetUsername = normalizeChannelIdentifier(targetChannel.username);
+      const cleanedChannelIds = channelIds.filter((id) => {
+        const normalized = normalizeChannelIdentifier(id);
+        return normalized !== targetId && normalized !== targetUsername;
+      });
 
       // Save updated data
       chrome.storage.local.set({
-        channels,
+        channels: cleanedChannels,
+        channelIds: cleanedChannelIds,
         emoteMapping,
         emoteImageData
       }, () => {
-        showToast(`Channel "${channel.username}" deleted successfully`);
+        showToast(`Channel "${targetChannel.username}" deleted successfully`);
+        channelIdsInput.value = cleanedChannelIds.join('\n');
+        updateChannelManagement();
         loadEmotes();
       });
     });
@@ -2567,14 +2609,9 @@ document.addEventListener('DOMContentLoaded', () => {
         translateButton.disabled = true;
         translateButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Translating...</span>';
 
-        const { apiKeys = {} } = await new Promise((resolve) => {
-          chrome.storage.local.get(['apiKeys'], resolve);
-        });
-
-        const baseUrl = (apiKeys.translatorBaseUrl || 'http://localhost:3000').replace(/\/+$/, '');
         const endpoint = type === 'username'
-          ? `${baseUrl}/api/twitch/user-id?username=${encodeURIComponent(rawValue)}`
-          : `${baseUrl}/api/twitch/username?id=${encodeURIComponent(rawValue)}`;
+          ? `${MOJIFY_TRANSLATOR_BASE_URL}/api/twitch/user-id?username=${encodeURIComponent(rawValue)}`
+          : `${MOJIFY_TRANSLATOR_BASE_URL}/api/twitch/username?id=${encodeURIComponent(rawValue)}`;
 
         const response = await fetch(endpoint);
         const payload = await response.json();
@@ -2694,8 +2731,9 @@ async function saveChannelIds() {
       .split(/[,\n]/)
       .map(id => id.trim())
       .filter(id => id.length > 0);
+    const uniqueChannelIds = dedupeChannelIds(channelIds);
 
-    if (channelIds.length === 0) {
+    if (uniqueChannelIds.length === 0) {
       showToast('Please enter valid channel IDs', 'error');
       return;
     }
@@ -2710,10 +2748,10 @@ async function saveChannelIds() {
 
     // Save channel IDs
     await new Promise((resolve) => {
-      chrome.storage.local.set({ channelIds }, resolve);
+      chrome.storage.local.set({ channelIds: uniqueChannelIds }, resolve);
     });
 
-    showToast(`Saved ${channelIds.length} channel ID(s)`, 'success');
+    showToast(`Saved ${uniqueChannelIds.length} channel ID(s)`, 'success');
 
     if (shouldSkipDownload) {
       showToast('Skipping download - emotes recently restored', 'info');

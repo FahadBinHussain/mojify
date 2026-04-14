@@ -89,14 +89,35 @@
         <!-- Settings Tab -->
         <div class="tab-pane" id="settings-tab">
           <div class="settings-section">
-            <h2 class="section-title">Channel Configuration</h2>
-            <p class="section-description">Enter Twitch channel IDs to load their 7TV emotes</p>
+            <h2 class="section-title">Channel Setup</h2>
+            <p class="section-description">Add channel IDs or translate username to ID, then save.</p>
 
             <div class="form-group">
               <label for="channel-ids">Twitch Channel IDs</label>
               <textarea id="channel-ids" placeholder="Enter channel IDs, one per line or comma-separated"></textarea>
               <div class="helper-text">Example: xqc, forsen, sodapoppin</div>
             </div>
+            
+            <div class="form-group">
+              <label for="twitch-translate-value">Translate Username / User ID</label>
+              <input id="twitch-translate-value" type="text" placeholder="e.g. xqc or 71092938">
+            </div>
+            <div class="form-group">
+              <label for="twitch-translate-type">Input Type</label>
+              <select id="twitch-translate-type">
+                <option value="username">Username</option>
+                <option value="userid">User ID</option>
+              </select>
+            </div>
+            <button id="translate-twitch-button" class="secondary-button">
+              <i class="fas fa-exchange-alt"></i>
+              <span>Translate</span>
+            </button>
+            <div id="twitch-translate-result" class="helper-text" style="margin-top: 10px;"></div>
+            <button id="add-translated-channel" class="primary-button hidden" style="margin-top: 10px;">
+              <i class="fas fa-plus"></i>
+              <span>Add Translated ID</span>
+            </button>
 
             <div class="info-box" style="background: #e3f2fd; border: 1px solid #2196f3; border-radius: 8px; padding: 12px; margin: 16px 0; font-size: 14px;">
               <div style="display: flex; align-items: center; margin-bottom: 8px;">
@@ -117,31 +138,6 @@
             <div class="channel-list" id="channel-list">
               <!-- Channels will be populated here -->
             </div>
-          </div>
-
-          <div class="settings-section">
-            <h2 class="section-title">Twitch Translator</h2>
-            <p class="section-description">Translate Twitch Username ↔ User ID via Mojify web API and add IDs to channel config.</p>
-            <div class="form-group">
-              <label for="twitch-translate-value">Username or User ID</label>
-              <input id="twitch-translate-value" type="text" placeholder="e.g. xqc or 71092938">
-            </div>
-            <div class="form-group">
-              <label for="twitch-translate-type">Input Type</label>
-              <select id="twitch-translate-type">
-                <option value="username">Username</option>
-                <option value="userid">User ID</option>
-              </select>
-            </div>
-            <button id="translate-twitch-button" class="secondary-button">
-              <i class="fas fa-exchange-alt"></i>
-              <span>Translate</span>
-            </button>
-            <div id="twitch-translate-result" class="helper-text" style="margin-top: 10px;"></div>
-            <button id="add-translated-channel" class="primary-button hidden" style="margin-top: 10px;">
-              <i class="fas fa-plus"></i>
-              <span>Add User ID to Channel IDs</span>
-            </button>
           </div>
 
           <div class="settings-section backup-restore">
@@ -358,3 +354,4 @@
   <script src="popup.js"></script>
 </body>
 </html>
+
