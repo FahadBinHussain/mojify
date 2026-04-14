@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mojify API Keys</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main class="container">
+    <header class="header">
+      <h1>API Key Settings</h1>
+      <p>Store API keys used by Mojify integrations.</p>
+    </header>
+
+    <section class="card">
+      <h2>GIF Provider APIs</h2>
+      <p class="description">Add API keys for Tenor, Giphy, Klipy, and Pixabay.</p>
+
+      <label for="tenor-api-key">Tenor API Key</label>
+      <input
+        id="tenor-api-key"
+        type="password"
+        placeholder="Enter Tenor API key"
+        autocomplete="off"
+      >
+
+      <label for="giphy-api-key">Giphy API Key</label>
+      <input
+        id="giphy-api-key"
+        type="password"
+        placeholder="Enter Giphy API key"
+        autocomplete="off"
+      >
+
+      <label for="klipy-api-key">Klipy API Key</label>
+      <input
+        id="klipy-api-key"
+        type="password"
+        placeholder="Enter Klipy API key"
+        autocomplete="off"
+      >
+
+      <label for="pixabay-api-key">Pixabay API Key</label>
+      <input
+        id="pixabay-api-key"
+        type="password"
+        placeholder="Enter Pixabay API key"
+        autocomplete="off"
+      >
+
+      <label for="translator-base-url">Translator API Base URL</label>
+      <input
+        id="translator-base-url"
+        type="text"
+        placeholder="http://localhost:3000"
+        autocomplete="off"
+      >
+
+      <div class="actions">
+        <button id="save-api-keys" class="primary">Save</button>
+      </div>
+
+      <p id="status-message" class="status" aria-live="polite"></p>
+    </section>
+  </main>
+
+  <script src="options.js"></script>
+</body>
+</html>
