@@ -6,3 +6,6 @@ extension/example
 webapp/.env
 .gitignore
 web/.env
+mojify.pem
+extension/mojify.pem
+dist/
