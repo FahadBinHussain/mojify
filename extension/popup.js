@@ -268,6 +268,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const loadMoreContainer = document.getElementById('load-more');
   const loadMoreBtn = document.getElementById('load-more-btn');
   const searchInput = document.getElementById('search-emotes');
+  const mediaTabButtons = document.querySelectorAll('.media-tab-btn');
   const tabButtons = document.querySelectorAll('.tab-btn');
   const tabPanes = document.querySelectorAll('.tab-pane');
   const tabIndicator = document.querySelector('.tab-indicator');
@@ -297,6 +298,12 @@ document.addEventListener('DOMContentLoaded', () => {
   let displayedEmotes = [];
   let currentPage = 1;
   let searchTerm = '';
+  let activeMediaTab = 'twitch';
+  let giphyResults = [];
+  let klipyResults = [];
+  let pixabayResults = [];
+  let translatedTwitchUserId = '';
+  let giphySearchTimeout = null;
   let emoteDataMap = new Map();
 
   // Notification function
@@ -795,6 +802,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Filter emotes based on search term
   function filterAndDisplayEmotes(resetPage = true) {
+    if (activeMediaTab === 'giphy') {
+      if (resetPage) {
+        currentPage = 1;
+      }
+      searchAndRenderGiphy();
+      return;
+    }
+    if (activeMediaTab === 'klipy') {
+      if (resetPage) {
+        currentPage = 1;
+      }
+      searchAndRenderKlipy();
+      return;
+    }
+    if (activeMediaTab === 'pixabay') {
+      if (resetPage) {
+        currentPage = 1;
+      }
+      searchAndRenderPixabay();
+      return;
+    }
+
     if (resetPage) {
       currentPage = 1;
     }
@@ -824,6 +853,381 @@ document.addEventListener('DOMContentLoaded', () => {
       // Display a subset of emotes for the current page
       renderEmoteGrid();
     }
+  }
+
+  function initMediaTabs() {
+    mediaTabButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        const selectedTab = button.dataset.mediaTab;
+        if (!selectedTab || selectedTab === activeMediaTab) return;
+
+        activeMediaTab = selectedTab;
+        mediaTabButtons.forEach(btn => btn.classList.remove('active'));
+        button.classList.add('active');
+        filterAndDisplayEmotes(true);
+      });
+    });
+  }
+
+  async function searchAndRenderGiphy() {
+    loadMoreContainer.classList.add('hidden');
+    emoteGrid.innerHTML = '';
+
+    if (searchTerm === '') {
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message" style="grid-column: 1 / -1;">
+          <p>Search for GIFs on Giphy</p>
+        </div>
+      `;
+      return;
+    }
+
+    const { apiKeys = {} } = await new Promise((resolve) => {
+      chrome.storage.local.get(['apiKeys'], resolve);
+    });
+
+    if (!apiKeys.giphy) {
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message" style="grid-column: 1 / -1;">
+          <p>Add your Giphy API key first in API Key Settings.</p>
+        </div>
+      `;
+      return;
+    }
+
+    try {
+      const requestUrl = new URL('https://api.giphy.com/v1/gifs/search');
+      requestUrl.searchParams.set('api_key', apiKeys.giphy);
+      requestUrl.searchParams.set('q', searchTerm);
+      requestUrl.searchParams.set('limit', '24');
+      requestUrl.searchParams.set('offset', '0');
+      requestUrl.searchParams.set('rating', 'pg-13');
+      requestUrl.searchParams.set('lang', 'en');
+
+      const response = await fetch(requestUrl.toString());
+      if (!response.ok) {
+        throw new Error(`Giphy request failed (${response.status})`);
+      }
+
+      const payload = await response.json();
+      giphyResults = payload.data || [];
+      renderGiphyGrid();
+    } catch (error) {
+      console.error('Giphy search failed:', error);
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message" style="grid-column: 1 / -1;">
+          <p>Could not load Giphy results.</p>
+        </div>
+      `;
+    }
+  }
+
+  async function searchAndRenderKlipy() {
+    loadMoreContainer.classList.add('hidden');
+    emoteGrid.innerHTML = '';
+
+    if (searchTerm === '') {
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message" style="grid-column: 1 / -1;">
+          <p>Search for GIFs on Klipy</p>
+        </div>
+      `;
+      return;
+    }
+
+    const { apiKeys = {} } = await new Promise((resolve) => {
+      chrome.storage.local.get(['apiKeys'], resolve);
+    });
+
+    if (!apiKeys.klipy) {
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message" style="grid-column: 1 / -1;">
+          <p>Add your Klipy API key first in API Key Settings.</p>
+        </div>
+      `;
+      return;
+    }
+
+    try {
+      const requestUrl = new URL('https://api.klipy.com/v2/search');
+      requestUrl.searchParams.set('key', apiKeys.klipy);
+      requestUrl.searchParams.set('q', searchTerm);
+      requestUrl.searchParams.set('limit', '24');
+      requestUrl.searchParams.set('locale', 'en_US');
+      requestUrl.searchParams.set('media_filter', 'gif');
+
+      const response = await fetch(requestUrl.toString());
+      if (!response.ok) {
+        throw new Error(`Klipy request failed (${response.status})`);
+      }
+
+      const payload = await response.json();
+      klipyResults = payload.results || payload.data || [];
+      renderKlipyGrid();
+    } catch (error) {
+      console.error('Klipy search failed:', error);
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message" style="grid-column: 1 / -1;">
+          <p>Could not load Klipy results.</p>
+        </div>
+      `;
+    }
+  }
+
+  async function searchAndRenderPixabay() {
+    loadMoreContainer.classList.add('hidden');
+    emoteGrid.innerHTML = '';
+
+    if (searchTerm === '') {
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message" style="grid-column: 1 / -1;">
+          <p>Search for images on Pixabay</p>
+        </div>
+      `;
+      return;
+    }
+
+    const { apiKeys = {} } = await new Promise((resolve) => {
+      chrome.storage.local.get(['apiKeys'], resolve);
+    });
+
+    if (!apiKeys.pixabay) {
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message" style="grid-column: 1 / -1;">
+          <p>Add your Pixabay API key first in API Key Settings.</p>
+        </div>
+      `;
+      return;
+    }
+
+    try {
+      const requestUrl = new URL('https://pixabay.com/api/');
+      requestUrl.searchParams.set('key', apiKeys.pixabay);
+      requestUrl.searchParams.set('q', searchTerm);
+      requestUrl.searchParams.set('per_page', '24');
+      requestUrl.searchParams.set('safesearch', 'true');
+      requestUrl.searchParams.set('image_type', 'photo');
+
+      const response = await fetch(requestUrl.toString());
+      if (!response.ok) {
+        throw new Error(`Pixabay request failed (${response.status})`);
+      }
+
+      const payload = await response.json();
+      pixabayResults = payload.hits || [];
+      renderPixabayGrid();
+    } catch (error) {
+      console.error('Pixabay search failed:', error);
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message" style="grid-column: 1 / -1;">
+          <p>Could not load Pixabay results.</p>
+        </div>
+      `;
+    }
+  }
+
+  function renderGiphyGrid() {
+    emoteGrid.innerHTML = '';
+
+    if (giphyResults.length === 0) {
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message" style="grid-column: 1 / -1;">
+          <p>No GIFs found for "${searchTerm}"</p>
+        </div>
+      `;
+      return;
+    }
+
+    const section = document.createElement('div');
+    section.className = 'channel-section';
+    section.innerHTML = `
+      <div class="channel-header">
+        <div class="channel-header-content">
+          <span class="channel-name">Giphy Results</span>
+          <span class="channel-emote-count">${giphyResults.length} GIFs</span>
+        </div>
+      </div>
+    `;
+
+    const grid = document.createElement('div');
+    grid.className = 'giphy-grid';
+
+    giphyResults.forEach((item) => {
+      const previewUrl = item?.images?.fixed_height_small?.url || item?.images?.preview_gif?.url;
+      const fullGifUrl = item?.images?.original?.url || previewUrl;
+      if (!previewUrl || !fullGifUrl) return;
+
+      const card = document.createElement('div');
+      card.className = 'giphy-item';
+      card.innerHTML = `
+        <img src="${previewUrl}" alt="${item.title || 'GIF'}">
+        <div class="giphy-caption">${item.title || 'Untitled GIF'}</div>
+      `;
+
+      card.addEventListener('click', () => {
+        insertRemoteMediaIntoActiveTab(fullGifUrl, item.title || 'giphy');
+      });
+
+      grid.appendChild(card);
+    });
+
+    section.appendChild(grid);
+    emoteGrid.appendChild(section);
+  }
+
+  function renderKlipyGrid() {
+    emoteGrid.innerHTML = '';
+
+    if (klipyResults.length === 0) {
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message" style="grid-column: 1 / -1;">
+          <p>No GIFs found for "${searchTerm}"</p>
+        </div>
+      `;
+      return;
+    }
+
+    const section = document.createElement('div');
+    section.className = 'channel-section';
+    section.innerHTML = `
+      <div class="channel-header">
+        <div class="channel-header-content">
+          <span class="channel-name">Klipy Results</span>
+          <span class="channel-emote-count">${klipyResults.length} GIFs</span>
+        </div>
+      </div>
+    `;
+
+    const grid = document.createElement('div');
+    grid.className = 'giphy-grid';
+
+    klipyResults.forEach((item) => {
+      const previewUrl =
+        item?.media_formats?.tinygif?.url ||
+        item?.media_formats?.gif?.url ||
+        item?.media?.[0]?.tinygif?.url;
+      const fullGifUrl =
+        item?.media_formats?.gif?.url ||
+        item?.media_formats?.tinygif?.url ||
+        item?.media?.[0]?.gif?.url ||
+        previewUrl;
+
+      if (!previewUrl || !fullGifUrl) return;
+
+      const card = document.createElement('div');
+      card.className = 'giphy-item';
+      card.innerHTML = `
+        <img src="${previewUrl}" alt="${item.title || 'GIF'}">
+        <div class="giphy-caption">${item.title || 'Untitled GIF'}</div>
+      `;
+
+      card.addEventListener('click', () => {
+        insertRemoteMediaIntoActiveTab(fullGifUrl, item.title || 'klipy');
+      });
+
+      grid.appendChild(card);
+    });
+
+    section.appendChild(grid);
+    emoteGrid.appendChild(section);
+  }
+
+  function renderPixabayGrid() {
+    emoteGrid.innerHTML = '';
+
+    if (pixabayResults.length === 0) {
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message" style="grid-column: 1 / -1;">
+          <p>No images found for "${searchTerm}"</p>
+        </div>
+      `;
+      return;
+    }
+
+    const section = document.createElement('div');
+    section.className = 'channel-section';
+    section.innerHTML = `
+      <div class="channel-header">
+        <div class="channel-header-content">
+          <span class="channel-name">Pixabay Results</span>
+          <span class="channel-emote-count">${pixabayResults.length} images</span>
+        </div>
+      </div>
+    `;
+
+    const grid = document.createElement('div');
+    grid.className = 'giphy-grid';
+
+    pixabayResults.forEach((item) => {
+      const previewUrl = item?.webformatURL || item?.previewURL;
+      const fullUrl = item?.largeImageURL || item?.webformatURL || item?.previewURL;
+      if (!previewUrl || !fullUrl) return;
+
+      const card = document.createElement('div');
+      card.className = 'giphy-item';
+      card.innerHTML = `
+        <img src="${previewUrl}" alt="${item.tags || 'Image'}">
+        <div class="giphy-caption">${item.tags || 'Untitled image'}</div>
+      `;
+
+      card.addEventListener('click', () => {
+        insertRemoteMediaIntoActiveTab(fullUrl, item.tags || 'pixabay');
+      });
+
+      grid.appendChild(card);
+    });
+
+    section.appendChild(grid);
+    emoteGrid.appendChild(section);
+  }
+
+  function insertRemoteMediaIntoActiveTab(mediaUrl, title) {
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      if (tabs.length === 0) {
+        showToast('No active tab found', 'error');
+        return;
+      }
+
+      const currentTab = tabs[0];
+
+      try {
+        const response = await fetch(mediaUrl);
+        if (!response.ok) {
+          throw new Error('Failed to download media');
+        }
+
+        const blob = await response.blob();
+        const safeTitle = (title || 'media').replace(/[^a-z0-9-_]/gi, '_').slice(0, 40);
+        const extension = (blob.type.split('/')[1] || 'bin').replace(/[^a-z0-9]/gi, '');
+        const base64Data = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('Failed to convert media'));
+          reader.readAsDataURL(blob);
+        });
+
+        chrome.scripting.executeScript({
+          target: { tabId: currentTab.id },
+          func: insertEmoteFromBase64,
+          args: [base64Data, `${safeTitle}.${extension}`, `:${safeTitle}:`]
+        }, (result) => {
+          if (chrome.runtime.lastError) {
+            showToast('Connection error - refresh the page and retry', 'error');
+            return;
+          }
+
+          const insertionResponse = result?.[0]?.result;
+          if (insertionResponse?.success) {
+            showToast('Media inserted successfully', 'success');
+          } else {
+            showToast(insertionResponse?.error || 'Could not insert media', 'error');
+          }
+        });
+      } catch (error) {
+        console.error('Insert media failed:', error);
+        showToast('Failed to insert media', 'error');
+      }
+    });
   }
 
   // Render the emote grid
@@ -1035,6 +1439,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load more emotes when button is clicked
   loadMoreBtn.addEventListener('click', () => {
+    if (activeMediaTab !== 'twitch') {
+      return;
+    }
     currentPage++;
     renderEmoteGrid();
   });
@@ -1042,7 +1449,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // Search functionality
   searchInput.addEventListener('input', (e) => {
     searchTerm = e.target.value.trim();
-    filterAndDisplayEmotes();
+    if (giphySearchTimeout) {
+      clearTimeout(giphySearchTimeout);
+    }
+    giphySearchTimeout = setTimeout(() => {
+      filterAndDisplayEmotes();
+    }, 250);
   });
 
   // Load saved channel IDs
@@ -2071,12 +2483,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initialize
   function init() {
     initTabs();
+    initMediaTabs();
     loadEmotes();
     loadChannelIds();
     addButtonEffects();
     initDebugSection();
     checkDownloadStatus();
     initSaveButton();
+    initTwitchTranslator();
 
     // Check current platform and show warnings
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -2097,6 +2511,7 @@ document.addEventListener('DOMContentLoaded', () => {
   init();
   initBackupRestore();
   initDownloadButton();
+  initApiKeysPageButton();
   // Backup and Restore functionality
   function initBackupRestore() {
     const createBackupBtn = document.getElementById('create-backup');
@@ -2115,6 +2530,97 @@ document.addEventListener('DOMContentLoaded', () => {
     if (downloadButton) {
       downloadButton.addEventListener('click', handleManualRefresh);
     }
+  }
+
+  function initApiKeysPageButton() {
+    const openApiKeysPageButton = document.getElementById('open-api-keys-page');
+    if (!openApiKeysPageButton) return;
+
+    openApiKeysPageButton.addEventListener('click', () => {
+      chrome.runtime.openOptionsPage();
+    });
+  }
+
+  function initTwitchTranslator() {
+    const translateButton = document.getElementById('translate-twitch-button');
+    const addChannelButton = document.getElementById('add-translated-channel');
+    const resultElement = document.getElementById('twitch-translate-result');
+
+    if (!translateButton || !addChannelButton || !resultElement) return;
+
+    translateButton.addEventListener('click', async () => {
+      const valueInput = document.getElementById('twitch-translate-value');
+      const typeInput = document.getElementById('twitch-translate-type');
+      const rawValue = valueInput?.value?.trim() || '';
+      const type = typeInput?.value || 'username';
+
+      translatedTwitchUserId = '';
+      addChannelButton.classList.add('hidden');
+      resultElement.textContent = '';
+
+      if (!rawValue) {
+        resultElement.textContent = 'Enter a username or user ID first.';
+        return;
+      }
+
+      try {
+        translateButton.disabled = true;
+        translateButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Translating...</span>';
+
+        const { apiKeys = {} } = await new Promise((resolve) => {
+          chrome.storage.local.get(['apiKeys'], resolve);
+        });
+
+        const baseUrl = (apiKeys.translatorBaseUrl || 'http://localhost:3000').replace(/\/+$/, '');
+        const endpoint = type === 'username'
+          ? `${baseUrl}/api/twitch/user-id?username=${encodeURIComponent(rawValue)}`
+          : `${baseUrl}/api/twitch/username?id=${encodeURIComponent(rawValue)}`;
+
+        const response = await fetch(endpoint);
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload?.error || 'Translator request failed');
+        }
+
+        translatedTwitchUserId = payload.id;
+        if (type === 'username') {
+          resultElement.textContent = `User ID: ${payload.id} (username: ${payload.login})`;
+        } else {
+          resultElement.textContent = `Username: ${payload.login} (user id: ${payload.id})`;
+        }
+        addChannelButton.classList.remove('hidden');
+      } catch (error) {
+        console.error('Twitch translate failed:', error);
+        resultElement.textContent = 'Translation failed. Verify translator API URL and try again.';
+      } finally {
+        translateButton.disabled = false;
+        translateButton.innerHTML = '<i class="fas fa-exchange-alt"></i> <span>Translate</span>';
+      }
+    });
+
+    addChannelButton.addEventListener('click', () => {
+      if (!translatedTwitchUserId) {
+        showToast('No translated user ID available', 'error');
+        return;
+      }
+
+      const channelIdsInput = document.getElementById('channel-ids');
+      if (!channelIdsInput) return;
+
+      const existing = channelIdsInput.value
+        .split(/[,\n]/)
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+
+      if (existing.includes(translatedTwitchUserId)) {
+        showToast('User ID already exists in Channel IDs', 'info');
+        return;
+      }
+
+      existing.push(translatedTwitchUserId);
+      channelIdsInput.value = existing.join('\n');
+      showToast('Added translated user ID to Channel IDs', 'success');
+    });
   }
 
   async function handleManualRefresh() {

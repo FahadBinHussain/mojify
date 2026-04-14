@@ -42,6 +42,12 @@
               <i class="fas fa-search"></i>
               <input type="text" id="search-emotes" placeholder="Search emotes">
             </div>
+            <div class="media-tabs">
+              <button class="media-tab-btn active" data-media-tab="twitch">Twitch</button>
+              <button class="media-tab-btn" data-media-tab="giphy">Giphy</button>
+              <button class="media-tab-btn" data-media-tab="klipy">Klipy</button>
+              <button class="media-tab-btn" data-media-tab="pixabay">Pixabay</button>
+            </div>
           </div>
 
           <div class="emote-stats">
@@ -113,6 +119,31 @@
             </div>
           </div>
 
+          <div class="settings-section">
+            <h2 class="section-title">Twitch Translator</h2>
+            <p class="section-description">Translate Twitch Username ↔ User ID via Mojify web API and add IDs to channel config.</p>
+            <div class="form-group">
+              <label for="twitch-translate-value">Username or User ID</label>
+              <input id="twitch-translate-value" type="text" placeholder="e.g. xqc or 71092938">
+            </div>
+            <div class="form-group">
+              <label for="twitch-translate-type">Input Type</label>
+              <select id="twitch-translate-type">
+                <option value="username">Username</option>
+                <option value="userid">User ID</option>
+              </select>
+            </div>
+            <button id="translate-twitch-button" class="secondary-button">
+              <i class="fas fa-exchange-alt"></i>
+              <span>Translate</span>
+            </button>
+            <div id="twitch-translate-result" class="helper-text" style="margin-top: 10px;"></div>
+            <button id="add-translated-channel" class="primary-button hidden" style="margin-top: 10px;">
+              <i class="fas fa-plus"></i>
+              <span>Add User ID to Channel IDs</span>
+            </button>
+          </div>
+
           <div class="settings-section backup-restore">
             <h2 class="section-title">Backup & Restore</h2>
             <p class="section-description">Backup and restore all your emotes, settings, and configurations</p>
@@ -159,6 +190,15 @@
                 <div class="progress-fill" id="backup-progress-fill"></div>
               </div>
             </div>
+          </div>
+
+          <div class="settings-section">
+            <h2 class="section-title">API Keys</h2>
+            <p class="section-description">Manage API keys in a dedicated extension page.</p>
+            <button id="open-api-keys-page" class="secondary-button">
+              <i class="fas fa-key"></i>
+              <span>Open API Key Settings</span>
+            </button>
           </div>
 
           <div class="settings-section storage-info">
