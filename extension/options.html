@@ -3,59 +3,165 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mojify API Keys</title>
+  <title>Mojify Provider Keys</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap">
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
-  <main class="container">
-    <header class="header">
-      <h1>API Key Settings</h1>
-      <p>Store API keys used by Mojify integrations.</p>
-    </header>
-
-    <section class="card">
-      <h2>GIF Provider APIs</h2>
-      <p class="description">Add API keys for Tenor, Giphy, Klipy, and Pixabay.</p>
-
-      <label for="tenor-api-key">Tenor API Key</label>
-      <input
-        id="tenor-api-key"
-        type="password"
-        placeholder="Enter Tenor API key"
-        autocomplete="off"
-      >
-
-      <label for="giphy-api-key">Giphy API Key</label>
-      <input
-        id="giphy-api-key"
-        type="password"
-        placeholder="Enter Giphy API key"
-        autocomplete="off"
-      >
-
-      <label for="klipy-api-key">Klipy API Key</label>
-      <input
-        id="klipy-api-key"
-        type="password"
-        placeholder="Enter Klipy API key"
-        autocomplete="off"
-      >
-
-      <label for="pixabay-api-key">Pixabay API Key</label>
-      <input
-        id="pixabay-api-key"
-        type="password"
-        placeholder="Enter Pixabay API key"
-        autocomplete="off"
-      >
-
-      <div class="actions">
-        <button id="save-api-keys" class="primary">Save</button>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <span class="eyebrow">Mojify Control</span>
+        <h1>Provider Keys</h1>
+        <p>Keep Twitch and your media providers wired into Mojify from one clean local control surface.</p>
       </div>
 
-      <p id="status-message" class="status" aria-live="polite"></p>
-    </section>
-  </main>
+      <div class="hero-status">
+        <div class="status-tile">
+          <span class="tile-label">Configured</span>
+          <strong id="configured-count">0 / 6</strong>
+        </div>
+        <div class="status-tile">
+          <span class="tile-label">Storage</span>
+          <strong>Chrome Local</strong>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="main-panel">
+        <div class="section-block">
+          <div class="section-head">
+            <span class="section-kicker">Media</span>
+            <h2>GIF and image providers</h2>
+            <p>Use only the providers you actually need. Empty fields stay disabled until you add a key.</p>
+          </div>
+
+          <div class="field-grid">
+            <label class="field" for="tenor-api-key">
+              <span class="field-label">Tenor API Key</span>
+              <input
+                id="tenor-api-key"
+                type="password"
+                placeholder="Enter Tenor API key"
+                autocomplete="off"
+              >
+            </label>
+
+            <label class="field" for="giphy-api-key">
+              <span class="field-label">Giphy API Key</span>
+              <input
+                id="giphy-api-key"
+                type="password"
+                placeholder="Enter Giphy API key"
+                autocomplete="off"
+              >
+            </label>
+
+            <label class="field" for="klipy-api-key">
+              <span class="field-label">Klipy API Key</span>
+              <input
+                id="klipy-api-key"
+                type="password"
+                placeholder="Enter Klipy API key"
+                autocomplete="off"
+              >
+            </label>
+
+            <label class="field" for="pixabay-api-key">
+              <span class="field-label">Pixabay API Key</span>
+              <input
+                id="pixabay-api-key"
+                type="password"
+                placeholder="Enter Pixabay API key"
+                autocomplete="off"
+              >
+            </label>
+
+            <div class="field-note">Tenor, Giphy, Klipy, and Pixabay power the non-Twitch media tabs inside the popup.</div>
+          </div>
+        </div>
+
+        <div class="section-block">
+          <div class="section-head">
+            <span class="section-kicker">Twitch</span>
+            <h2>Identity conversion</h2>
+            <p>These credentials let Mojify convert usernames to numeric Twitch IDs before downloading channel emotes.</p>
+          </div>
+
+          <div class="field-grid">
+            <label class="field" for="twitch-client-id">
+              <span class="field-label">Twitch Client ID</span>
+              <input
+                id="twitch-client-id"
+                type="text"
+                placeholder="Enter Twitch app client ID"
+                autocomplete="off"
+              >
+            </label>
+
+            <label class="field" for="twitch-client-secret">
+              <span class="field-label">Twitch Client Secret</span>
+              <input
+                id="twitch-client-secret"
+                type="password"
+                placeholder="Enter Twitch app client secret"
+                autocomplete="off"
+              >
+            </label>
+          </div>
+        </div>
+
+        <div class="action-row">
+          <button id="save-api-keys" class="primary" type="button">Save Keys</button>
+          <p id="status-message" class="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <aside class="side-panel">
+        <div class="side-block">
+          <span class="section-kicker">Transfer</span>
+          <h2>Copy or paste JSON</h2>
+          <p>Move your Mojify provider setup between browsers, profiles, or machines without retyping everything.</p>
+
+          <div class="side-actions">
+            <button id="copy-api-keys" class="secondary" type="button">Copy JSON</button>
+            <button id="export-api-keys" class="secondary" type="button">Download JSON</button>
+          </div>
+
+          <label class="paste-block" for="import-api-keys-text">
+            <span class="field-label">Paste JSON</span>
+            <textarea
+              id="import-api-keys-text"
+              placeholder="Paste exported Mojify provider JSON or a raw apiKeys object"
+              spellcheck="false"
+            ></textarea>
+          </label>
+
+          <button id="import-api-keys" class="secondary" type="button">Import Pasted JSON</button>
+        </div>
+
+        <div class="side-block">
+          <span class="section-kicker">Included</span>
+          <h2>Supported keys</h2>
+          <ul class="support-list">
+            <li>Tenor API key</li>
+            <li>Giphy API key</li>
+            <li>Klipy API key</li>
+            <li>Pixabay API key</li>
+            <li>Twitch client ID</li>
+            <li>Twitch client secret</li>
+          </ul>
+        </div>
+
+        <div class="side-block info-block">
+          <span class="section-kicker">Note</span>
+          <h2>Local by default</h2>
+          <p>Mojify stores these values in <code>chrome.storage.local</code>. Exported JSON includes only provider credentials, not your full emote library.</p>
+        </div>
+      </aside>
+    </main>
+  </div>
 
   <script src="options.js"></script>
 </body>

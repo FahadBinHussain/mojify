@@ -305,7 +305,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let translatedTwitchUserId = '';
   let giphySearchTimeout = null;
   let emoteDataMap = new Map();
-  const MOJIFY_TRANSLATOR_BASE_URL = 'https://mojify.vercel.app';
+  let channelManagementRenderToken = 0;
+  let lastChannelManagementRefreshAt = 0;
+  let progressPollInterval = null;
+  let downloadCompletionHandled = false;
 
   function normalizeChannelIdentifier(value) {
     return String(value || '').trim().toLowerCase();
@@ -324,13 +327,58 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function dedupeChannelsById(channelList) {
-    const seen = new Set();
-    return (channelList || []).filter((channel) => {
-      const key = normalizeChannelIdentifier(channel?.id || channel?.username);
-      if (!key || seen.has(key)) return false;
-      seen.add(key);
-      return true;
+    const byId = new Map();
+    const byUsername = new Map();
+    const merged = [];
+
+    function scoreChannel(channel) {
+      const emoteCount = channel?.emotes ? Object.keys(channel.emotes).length : 0;
+      const hasId = normalizeChannelIdentifier(channel?.id).length > 0 ? 1 : 0;
+      return emoteCount * 10 + hasId;
+    }
+
+    function mergeChannel(base, incoming) {
+      return {
+        ...base,
+        ...incoming,
+        id: incoming.id || base.id,
+        username: incoming.username || base.username,
+        emotes: {
+          ...(base.emotes || {}),
+          ...(incoming.emotes || {})
+        }
+      };
+    }
+
+    (channelList || []).forEach((channel) => {
+      const idKey = normalizeChannelIdentifier(channel?.id);
+      const usernameKey = normalizeChannelIdentifier(channel?.username);
+
+      let existing = null;
+      if (idKey && byId.has(idKey)) existing = byId.get(idKey);
+      if (!existing && usernameKey && byUsername.has(usernameKey)) existing = byUsername.get(usernameKey);
+
+      if (!existing) {
+        const entry = { ...channel, emotes: { ...(channel?.emotes || {}) } };
+        merged.push(entry);
+        if (idKey) byId.set(idKey, entry);
+        if (usernameKey) byUsername.set(usernameKey, entry);
+        return;
+      }
+
+      const combined = mergeChannel(existing, channel);
+      if (scoreChannel(combined) >= scoreChannel(existing)) {
+        Object.keys(existing).forEach((k) => delete existing[k]);
+        Object.assign(existing, combined);
+      }
+
+      const finalIdKey = normalizeChannelIdentifier(existing?.id);
+      const finalUsernameKey = normalizeChannelIdentifier(existing?.username);
+      if (finalIdKey) byId.set(finalIdKey, existing);
+      if (finalUsernameKey) byUsername.set(finalUsernameKey, existing);
     });
+
+    return merged.filter((channel) => normalizeChannelIdentifier(channel?.id || channel?.username));
   }
 
   // Notification function
@@ -1500,83 +1548,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Save channel IDs
-  saveButton.addEventListener('click', () => {
-    const text = channelIdsInput.value.trim();
-    let channelIds;
-
-    // Handle both comma-separated and newline-separated formats
-    if (text.includes(',')) {
-      channelIds = text.split(',').map(id => id.trim()).filter(id => id);
-    } else {
-      channelIds = text.split('\n').map(id => id.trim()).filter(id => id);
-    }
-
-    if (channelIds.length === 0) {
-      showToast('Please enter at least one channel ID', 'error');
-      return;
-    }
-
-    const uniqueChannelIds = dedupeChannelIds(channelIds);
-    chrome.storage.local.set({ channelIds: uniqueChannelIds }, () => {
-      if (uniqueChannelIds.length === 0) {
-        // Channel IDs were cleared
-        showToast('Channel IDs cleared');
-
-        // Clear any existing download progress
-        downloadProgress.classList.add('hidden');
-
-        // Clear storage data
-        chrome.storage.local.remove(['downloadInProgress', 'downloadProgress'], () => {
-          loadEmotes(); // Reload emotes (will show empty state)
-          updateChannelManagement();
-          updateStorageInfo();
-        });
-      } else {
-        // Channel IDs were saved
-        showToast(`Channel IDs saved (${uniqueChannelIds.length}) - emotes will download automatically`);
-
-        // Set up progress monitoring for the automatic download that will be triggered by storage listener
-        setTimeout(() => {
-          // Show loading state and progress
-          downloadProgress.classList.remove('hidden');
-          progressFill.style.width = '0%';
-          progressText.textContent = 'Starting automatic download...';
-          progressCount.textContent = '0/0';
-
-          const progressListener = (message) => {
-            if (message.type === 'downloadProgress') {
-              const { current, total, currentEmote, completed, newEmote } = message;
-              const percentage = total > 0 ? (current / total) * 100 : 0;
-
-              progressFill.style.width = `${percentage}%`;
-              progressCount.textContent = `${current}/${total}`;
-              progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
-
-              if (newEmote) {
-                loadEmotes();
-              }
-
-              if (completed) {
-                setTimeout(() => {
-                  downloadProgress.classList.add('hidden');
-                  chrome.runtime.onMessage.removeListener(progressListener);
-                  loadEmotes();
-                  showToast('Emotes downloaded successfully');
-                }, 1000);
-              }
-            }
-          };
-
-          chrome.runtime.onMessage.addListener(progressListener);
-
-          // Start polling for progress in case popup closes and reopens
-          startProgressPolling();
-        }, 500); // Small delay to show the save success message first
-      }
-    });
-  });
-
   // Clear all storage
   clearAllStorageBtn.addEventListener('click', async () => {
     const confirmed = await showConfirmDialog(
@@ -1610,82 +1581,44 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Download/refresh emotes
   downloadButton.addEventListener('click', () => {
-    // Check if download is already in progress
-    chrome.storage.local.get(['downloadInProgress'], (result) => {
+    chrome.storage.local.get(['downloadInProgress', 'channelIds'], (result) => {
       if (result.downloadInProgress) {
         showToast('Download already in progress', 'error');
         return;
       }
 
-      // Check if there are channel IDs configured
-      chrome.storage.local.get(['channelIds'], (checkResult) => {
-        if (!checkResult.channelIds || checkResult.channelIds.length === 0) {
-          showToast('No channel IDs configured', 'error');
+      if (!result.channelIds || result.channelIds.length === 0) {
+        showToast('No channel IDs configured', 'error');
+        document.querySelector('.tab-btn[data-tab="settings"]').click();
+        return;
+      }
 
-          // Switch to settings tab
-          document.querySelector('.tab-btn[data-tab="settings"]').click();
+      downloadCompletionHandled = false;
+      setDownloadUiActive('Starting download...');
+      startProgressPolling();
+
+      chrome.runtime.sendMessage({ action: 'downloadEmotes' }, (response) => {
+        if (!response) {
           return;
         }
 
-        // Show loading state and progress
-        downloadButton.disabled = true;
-        downloadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Downloading...</span>';
-        downloadProgress.classList.remove('hidden');
-        progressFill.style.width = '0%';
-        progressText.textContent = 'Starting download...';
-        progressCount.textContent = '0/0';
+        if (!response.success) {
+          finishDownloadFlow({ error: response.error || 'Unknown error' });
+          return;
+        }
 
-        // Listen for progress updates
-        const progressListener = (message) => {
-          if (message.type === 'downloadProgress') {
-            const { current, total, currentEmote, completed, newEmote } = message;
-            const percentage = total > 0 ? (current / total) * 100 : 0;
+        if (response.skipped || response.message === 'All emotes up to date') {
+          finishDownloadFlow({
+            completed: true,
+            toastMessage: response.message === 'All emotes up to date'
+              ? 'All emotes are up to date - no new downloads needed'
+              : response.message
+          });
+          return;
+        }
 
-            progressFill.style.width = `${percentage}%`;
-            progressCount.textContent = `${current}/${total}`;
-            progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
-
-            if (newEmote) {
-              loadEmotes();
-            }
-
-            if (completed) {
-              setTimeout(() => {
-                downloadButton.disabled = false;
-                downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
-                downloadProgress.classList.add('hidden');
-                chrome.runtime.onMessage.removeListener(progressListener);
-                loadEmotes();
-              }, 1000);
-            }
-          }
-        };
-
-        chrome.runtime.onMessage.addListener(progressListener);
-
-        // Start polling for progress in case popup closes and reopens
-        startProgressPolling();
-
-        chrome.runtime.sendMessage({ type: 'downloadEmotes' }, (response) => {
-          if (response && response.success) {
-            if (response.message === "All emotes up to date") {
-              showToast('All emotes are up to date - no new downloads needed');
-            } else {
-              showToast('Emotes downloaded successfully');
-            }
-            loadEmotes(); // Reload emotes
-            searchInput.value = ''; // Clear search
-            searchTerm = '';
-          } else {
-            showToast(`Error downloading emotes: ${response?.error || 'Unknown error'}`, 'error');
-            downloadButton.disabled = false;
-            downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
-            downloadProgress.classList.add('hidden');
-          }
-
-          // Remove progress listener
-          chrome.runtime.onMessage.removeListener(progressListener);
-        });
+        searchInput.value = '';
+        searchTerm = '';
       });
     });
   });
@@ -2143,6 +2076,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateChannelManagement() {
+    const renderToken = ++channelManagementRenderToken;
     // First get the channels
     chrome.storage.local.get(['channels'], async (result) => {
       const rawChannels = result.channels || [];
@@ -2150,6 +2084,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (rawChannels.length !== channels.length) {
         chrome.storage.local.set({ channels });
       }
+      if (renderToken !== channelManagementRenderToken) return;
 
       if (channels.length > 0) {
         channelManagement.style.display = 'block';
@@ -2168,36 +2103,30 @@ document.addEventListener('DOMContentLoaded', () => {
           const { emoteMapping } = await new Promise((resolve) => {
             chrome.storage.local.get(['emoteMapping'], (result) => resolve(result));
           });
+          if (renderToken !== channelManagementRenderToken) return;
 
-          // Count emotes per channel based on the channel's emotes in emoteMapping
+          // Count emotes per channel using live IndexedDB metadata (updates during download)
           const emoteCountByChannel = {};
+          indexedDBEmotes.forEach((emote) => {
+            const channelKey = normalizeChannelIdentifier(emote.channelId || emote.channel);
+            if (!channelKey) return;
+            emoteCountByChannel[channelKey] = (emoteCountByChannel[channelKey] || 0) + 1;
+          });
 
-          // For each channel, count how many of its emotes are actually in IndexedDB
+          // Ensure each channel has a key in the map
           channels.forEach(channel => {
-            if (!channel.id) return;
-
-            // Get all emote keys for this channel
-            const channelEmoteKeys = new Set();
-            if (channel.emotes) {
-              Object.keys(channel.emotes).forEach(key => channelEmoteKeys.add(key));
+            const channelKey = normalizeChannelIdentifier(channel.id || channel.username);
+            if (!channelKey) return;
+            if (!Object.prototype.hasOwnProperty.call(emoteCountByChannel, channelKey)) {
+              emoteCountByChannel[channelKey] = 0;
             }
-
-            // Count how many of these emotes are in IndexedDB
-            const indexedDBEmoteKeys = new Set(indexedDBEmotes.map(e => e.key));
-            let count = 0;
-            channelEmoteKeys.forEach(key => {
-              if (indexedDBEmoteKeys.has(key)) {
-                count++;
-              }
-            });
-
-            emoteCountByChannel[channel.id] = count;
           });
 
           // Create channel list items
           channels.forEach(channel => {
             // Use the count from IndexedDB or fallback to channel.emotes
-            const emoteCount = emoteCountByChannel[channel.id] ||
+            const channelKey = normalizeChannelIdentifier(channel.id || channel.username);
+            const emoteCount = emoteCountByChannel[channelKey] ??
                              (channel.emotes ? Object.keys(channel.emotes).length : 0);
 
             const channelItem = document.createElement('div');
@@ -2218,6 +2147,7 @@ document.addEventListener('DOMContentLoaded', () => {
           });
         } catch (error) {
           console.error('Error updating channel management:', error);
+          if (renderToken !== channelManagementRenderToken) return;
 
           // Fallback to simple display if IndexedDB fails
           channels.forEach(channel => {
@@ -2328,107 +2258,178 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Check for ongoing downloads
+  function setDownloadUiActive(statusText = 'Downloading emotes...') {
+    downloadCompletionHandled = false;
+    downloadButton.disabled = true;
+    downloadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Downloading...</span>';
+    downloadProgress.classList.remove('hidden');
+
+    if (!progressText.textContent || progressText.textContent === 'Starting download...') {
+      progressText.textContent = statusText;
+    }
+  }
+
+  function resetDownloadUi() {
+    downloadButton.disabled = false;
+    downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
+    downloadProgress.classList.add('hidden');
+    progressFill.style.width = '0%';
+    progressText.textContent = '';
+    progressCount.textContent = '0/0';
+  }
+
+  function maybeRefreshChannelManagement(force = false) {
+    const settingsTab = document.getElementById('settings-tab');
+    if (!settingsTab?.classList.contains('active')) {
+      return;
+    }
+
+    const now = Date.now();
+    if (!force && now - lastChannelManagementRefreshAt < 2500) {
+      return;
+    }
+
+    lastChannelManagementRefreshAt = now;
+    updateChannelManagement();
+  }
+
+  function applyDownloadProgressState(progressData = {}) {
+    const current = Number(progressData.current || 0);
+    const total = Number(progressData.total || 0);
+    const percentage = total > 0 ? (current / total) * 100 : 0;
+
+    setDownloadUiActive(progressData.currentEmote || 'Downloading emotes...');
+    progressFill.style.width = `${percentage}%`;
+    progressCount.textContent = `${current}/${total}`;
+    progressText.textContent = progressData.currentEmote
+      ? `Downloading: ${progressData.currentEmote}`
+      : 'Downloading emotes...';
+  }
+
+  function stopProgressPolling() {
+    if (progressPollInterval) {
+      clearInterval(progressPollInterval);
+      progressPollInterval = null;
+    }
+  }
+
+  function finishDownloadFlow({ completed = false, error = '', toastMessage = '' } = {}) {
+    if (downloadCompletionHandled) {
+      return;
+    }
+
+    downloadCompletionHandled = true;
+    stopProgressPolling();
+    resetDownloadUi();
+
+    if (completed) {
+      loadEmotes();
+      if (toastMessage) {
+        showToast(toastMessage, 'success');
+      }
+    } else if (error) {
+      showToast(`Download failed: ${error}`, 'error');
+    }
+
+    chrome.storage.local.remove(['downloadProgress']);
+  }
+
   function checkDownloadStatus() {
     chrome.storage.local.get(['downloadInProgress', 'downloadProgress'], (result) => {
-      if (result.downloadInProgress) {
-        downloadButton.disabled = true;
-        downloadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Downloading...</span>';
-        downloadProgress.classList.remove('hidden');
+      const downloadInProgress = result.downloadInProgress;
+      const downloadProgressData = result.downloadProgress;
 
-        if (result.downloadProgress) {
-          const { current, total, currentEmote } = result.downloadProgress;
-          const percentage = total > 0 ? (current / total) * 100 : 0;
-          progressFill.style.width = `${percentage}%`;
-          progressCount.textContent = `${current}/${total}`;
-          progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
-        }
-
-        startProgressPolling();
-      } else if (result.downloadProgress?.completed) {
-        loadEmotes();
-        showToast('Emotes downloaded successfully');
-        chrome.storage.local.remove(['downloadProgress']);
-      } else if (result.downloadProgress?.error) {
-        showToast(`Download failed: ${result.downloadProgress.error}`, 'error');
-        chrome.storage.local.remove(['downloadProgress']);
+      if (downloadProgressData?.reset) {
+        stopProgressPolling();
+        resetDownloadUi();
+        chrome.storage.local.set({
+          downloadProgress: {
+            current: 0,
+            total: 0,
+            completed: false,
+            reset: false
+          }
+        });
+        return;
       }
+
+      if (downloadInProgress && downloadProgressData) {
+        applyDownloadProgressState(downloadProgressData);
+        startProgressPolling();
+        return;
+      }
+
+      if (downloadProgressData?.completed) {
+        finishDownloadFlow({
+          completed: true,
+          toastMessage: 'Download completed successfully'
+        });
+        return;
+      }
+
+      if (downloadProgressData?.error) {
+        finishDownloadFlow({ error: downloadProgressData.error });
+        return;
+      }
+
+      stopProgressPolling();
+      resetDownloadUi();
     });
   }
 
   function startProgressPolling() {
-    const pollInterval = setInterval(() => {
+    if (progressPollInterval) {
+      return;
+    }
+
+    progressPollInterval = setInterval(() => {
       chrome.storage.local.get(['downloadInProgress', 'downloadProgress'], (result) => {
-        if (!result.downloadInProgress) {
-          clearInterval(pollInterval);
-          downloadButton.disabled = false;
-          downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
-          downloadProgress.classList.add('hidden');
-
-          if (result.downloadProgress?.completed) {
-            loadEmotes();
-            showToast('Emotes downloaded successfully');
-          } else if (result.downloadProgress?.error) {
-            showToast(`Download failed: ${result.downloadProgress.error}`, 'error');
-          }
-
-          chrome.storage.local.remove(['downloadProgress']);
-        } else if (result.downloadProgress) {
-          const { current, total, currentEmote } = result.downloadProgress;
-          const percentage = total > 0 ? (current / total) * 100 : 0;
-          progressFill.style.width = `${percentage}%`;
-          progressCount.textContent = `${current}/${total}`;
-          progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
-
-          if (current > 0 && current % 5 === 0) {
-            loadEmotes();
-          }
+        if (result.downloadInProgress && result.downloadProgress) {
+          applyDownloadProgressState(result.downloadProgress);
+          maybeRefreshChannelManagement();
+          return;
         }
+
+        if (result.downloadProgress?.completed) {
+          finishDownloadFlow({
+            completed: true,
+            toastMessage: 'Download completed successfully'
+          });
+          return;
+        }
+
+        if (result.downloadProgress?.error) {
+          finishDownloadFlow({ error: result.downloadProgress.error });
+          return;
+        }
+
+        stopProgressPolling();
       });
-    }, 1000);
+    }, 1200);
   }
 
-  // Listen for automatic download notifications from background script
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    // Add error handling for message listeners
+  chrome.runtime.onMessage.addListener((message) => {
     try {
       if (message.type === 'automaticDownloadStarted') {
         showToast(`Starting automatic download for ${message.channelIds.length} channel(s)`);
+        setDownloadUiActive('Starting automatic download...');
+        progressFill.style.width = '0%';
+        progressCount.textContent = '0/0';
+        startProgressPolling();
+      }
 
-        // Show progress UI if not already shown
-        if (downloadProgress.classList.contains('hidden')) {
-          downloadProgress.classList.remove('hidden');
-          progressFill.style.width = '0%';
-          progressText.textContent = 'Starting automatic download...';
-          progressCount.textContent = '0/0';
+      if (message.type === 'downloadProgress') {
+        if (message.completed) {
+          finishDownloadFlow({
+            completed: true,
+            toastMessage: 'Download completed successfully'
+          });
+          return;
         }
+
+        applyDownloadProgressState(message);
       }
 
-    // Handle download progress updates
-    if (message.type === 'downloadProgress') {
-      const { current, total, currentEmote, newEmote, completed } = message;
-
-      if (!downloadProgress.classList.contains('hidden')) {
-        const percentage = total > 0 ? (current / total) * 100 : 0;
-        progressFill.style.width = `${percentage}%`;
-        progressCount.textContent = `${current}/${total}`;
-        progressText.textContent = currentEmote ? `Downloading: ${currentEmote}` : 'Downloading emotes...';
-      }
-
-      if (newEmote) {
-        loadEmotes();
-      }
-
-      if (completed) {
-        setTimeout(() => {
-          downloadProgress.classList.add('hidden');
-          loadEmotes();
-          showToast('Download completed successfully');
-        }, 1000);
-      }
-    }
-
-      // Handle toast notifications from background script
       if (message.type === 'showToast') {
         showToast(message.message, message.toastType || 'success');
       }
@@ -2436,50 +2437,6 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error('[Mojify] Error in message listener:', error);
     }
   });
-
-  // Check download status and reset UI if needed
-  function checkDownloadStatus() {
-    chrome.storage.local.get(['downloadInProgress', 'downloadProgress'], (result) => {
-      const downloadInProgress = result.downloadInProgress;
-      const downloadProgressData = result.downloadProgress;
-
-      // If download progress has reset flag or no actual download in progress
-      if (downloadProgressData?.reset || !downloadInProgress) {
-        console.log('[Popup] Clearing stuck download progress UI');
-
-        // Hide progress UI
-        downloadProgress.classList.add('hidden');
-
-        // Reset progress elements
-        progressFill.style.width = '0%';
-        progressText.textContent = '';
-        progressCount.textContent = '0/0';
-
-        // Clear the reset flag
-        if (downloadProgressData?.reset) {
-          chrome.storage.local.set({
-            downloadProgress: {
-              current: 0,
-              total: 0,
-              completed: false,
-              reset: false
-            }
-          });
-        }
-      } else if (downloadInProgress && downloadProgressData) {
-        // Resume showing progress if actually downloading
-        console.log('[Popup] Resuming download progress display');
-        downloadProgress.classList.remove('hidden');
-
-        const { current, total, currentEmote } = downloadProgressData;
-        const percentage = total > 0 ? (current / total) * 100 : 0;
-
-        progressFill.style.width = `${percentage}%`;
-        progressCount.textContent = `${current}/${total}`;
-        progressText.textContent = currentEmote || 'Downloading emotes...';
-      }
-    });
-  }
 
   // Show platform-specific warnings
   function showPlatformWarning(platform, url) {
@@ -2532,7 +2489,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initDebugSection();
     checkDownloadStatus();
     initSaveButton();
-    initTwitchTranslator();
 
     // Check current platform and show warnings
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -2592,9 +2548,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     translateButton.addEventListener('click', async () => {
       const valueInput = document.getElementById('twitch-translate-value');
-      const typeInput = document.getElementById('twitch-translate-type');
       const rawValue = valueInput?.value?.trim() || '';
-      const type = typeInput?.value || 'username';
+      const type = /^\d+$/.test(rawValue) ? 'userid' : 'username';
 
       translatedTwitchUserId = '';
       addChannelButton.classList.add('hidden');
@@ -2609,26 +2564,63 @@ document.addEventListener('DOMContentLoaded', () => {
         translateButton.disabled = true;
         translateButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Translating...</span>';
 
-        const endpoint = type === 'username'
-          ? `${MOJIFY_TRANSLATOR_BASE_URL}/api/twitch/user-id?username=${encodeURIComponent(rawValue)}`
-          : `${MOJIFY_TRANSLATOR_BASE_URL}/api/twitch/username?id=${encodeURIComponent(rawValue)}`;
+        const { apiKeys = {} } = await new Promise((resolve) => {
+          chrome.storage.local.get(['apiKeys'], resolve);
+        });
 
-        const response = await fetch(endpoint);
-        const payload = await response.json();
-        if (!response.ok) {
-          throw new Error(payload?.error || 'Translator request failed');
+        const clientId = apiKeys.twitchClientId;
+        const clientSecret = apiKeys.twitchClientSecret;
+        if (!clientId || !clientSecret) {
+          resultElement.textContent = 'Missing Twitch Client ID/Secret. Add them in API Key Settings.';
+          return;
         }
 
-        translatedTwitchUserId = payload.id;
+        const tokenResponse = await fetch(`https://id.twitch.tv/oauth2/token?client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}&grant_type=client_credentials`, {
+          method: 'POST'
+        });
+
+        if (!tokenResponse.ok) {
+          throw new Error('Could not get Twitch app token');
+        }
+
+        const tokenPayload = await tokenResponse.json();
+        const accessToken = tokenPayload.access_token;
+
+        const usersUrl = new URL('https://api.twitch.tv/helix/users');
         if (type === 'username') {
-          resultElement.textContent = `User ID: ${payload.id} (username: ${payload.login})`;
+          usersUrl.searchParams.set('login', rawValue);
         } else {
-          resultElement.textContent = `Username: ${payload.login} (user id: ${payload.id})`;
+          usersUrl.searchParams.set('id', rawValue);
+        }
+
+        const userResponse = await fetch(usersUrl.toString(), {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Client-Id': clientId
+          }
+        });
+
+        if (!userResponse.ok) {
+          throw new Error('Twitch lookup failed');
+        }
+
+        const userPayload = await userResponse.json();
+        const user = userPayload?.data?.[0];
+        if (!user) {
+          resultElement.textContent = 'No Twitch user found.';
+          return;
+        }
+
+        translatedTwitchUserId = user.id;
+        if (type === 'username') {
+          resultElement.textContent = `User ID: ${user.id} (username: ${user.login})`;
+        } else {
+          resultElement.textContent = `Username: ${user.login} (user id: ${user.id})`;
         }
         addChannelButton.classList.remove('hidden');
       } catch (error) {
         console.error('Twitch translate failed:', error);
-        resultElement.textContent = 'Translation failed. Verify translator API URL and try again.';
+        resultElement.textContent = 'Translation failed. Verify credentials and try again.';
       } finally {
         translateButton.disabled = false;
         translateButton.innerHTML = '<i class="fas fa-exchange-alt"></i> <span>Translate</span>';
@@ -2660,41 +2652,6 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  async function handleManualRefresh() {
-    const downloadButton = document.getElementById('download-button');
-
-    try {
-      downloadButton.disabled = true;
-      downloadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Refreshing...</span>';
-
-      // Set manual refresh flag to bypass restore skip logic
-      await new Promise((resolve) => {
-        chrome.storage.local.set({ manualRefresh: true }, resolve);
-      });
-
-      // Trigger download
-      chrome.runtime.sendMessage({ action: 'downloadEmotes' }, (response) => {
-        if (response && response.success) {
-          if (response.skipped) {
-            showToast(response.message, 'info');
-          } else {
-            showToast('Emotes refresh started', 'success');
-            startProgressPolling();
-          }
-        } else {
-          showToast('Refresh failed: ' + (response?.error || 'Unknown error'), 'error');
-        }
-      });
-
-    } catch (error) {
-      console.error('Manual refresh failed:', error);
-      showToast('Refresh failed: ' + error.message, 'error');
-    } finally {
-      downloadButton.disabled = false;
-      downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
-    }
-  }
-
 // Save button functionality
 function initSaveButton() {
   const saveButton = document.getElementById('save-button');
@@ -2718,7 +2675,7 @@ async function saveChannelIds() {
 
   const input = channelIdsInput.value.trim();
   if (!input) {
-    showToast('Please enter at least one channel ID', 'error');
+    showToast('Please enter at least one Twitch username or ID', 'error');
     return;
   }
 
@@ -2726,15 +2683,16 @@ async function saveChannelIds() {
     saveButton.disabled = true;
     saveButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Saving...</span>';
 
-    // Parse channel IDs (support both newline and comma separation)
-    const channelIds = input
+    // Parse channel IDs/usernames (support both newline and comma separation)
+    const rawIdentifiers = input
       .split(/[,\n]/)
       .map(id => id.trim())
       .filter(id => id.length > 0);
-    const uniqueChannelIds = dedupeChannelIds(channelIds);
+    const resolvedIdentifiers = await resolveTwitchIdentifiers(rawIdentifiers);
+    const uniqueChannelIds = dedupeChannelIds(resolvedIdentifiers);
 
     if (uniqueChannelIds.length === 0) {
-      showToast('Please enter valid channel IDs', 'error');
+      showToast('Please enter valid Twitch usernames or IDs', 'error');
       return;
     }
 
@@ -2751,24 +2709,13 @@ async function saveChannelIds() {
       chrome.storage.local.set({ channelIds: uniqueChannelIds }, resolve);
     });
 
-    showToast(`Saved ${uniqueChannelIds.length} channel ID(s)`, 'success');
+    showToast(`Saved ${uniqueChannelIds.length} channel${uniqueChannelIds.length === 1 ? '' : 's'}`, 'success');
 
     if (shouldSkipDownload) {
       showToast('Skipping download - emotes recently restored', 'info');
     } else {
-      // Trigger download
-      chrome.runtime.sendMessage({ action: 'downloadEmotes' }, (response) => {
-        if (response && response.success) {
-          if (response.skipped) {
-            showToast(response.message, 'info');
-          } else {
-            showToast('Emotes download started', 'success');
-            startProgressPolling();
-          }
-        } else {
-          showToast('Download failed: ' + (response?.error || 'Unknown error'), 'error');
-        }
-      });
+      showToast('Saved channels. Auto-download starting...', 'success');
+      startProgressPolling();
     }
 
     // Update UI
@@ -2780,8 +2727,85 @@ async function saveChannelIds() {
     showToast('Save failed: ' + error.message, 'error');
   } finally {
     saveButton.disabled = false;
-    saveButton.innerHTML = '<i class="fas fa-save"></i> <span>Save Channel IDs</span>';
+    saveButton.innerHTML = '<i class="fas fa-save"></i> <span>Save Channels</span>';
   }
+}
+
+async function resolveTwitchIdentifiers(identifiers) {
+  if (!identifiers || identifiers.length === 0) return [];
+
+  const { apiKeys = {} } = await new Promise((resolve) => {
+    chrome.storage.local.get(['apiKeys'], resolve);
+  });
+
+  const clientId = apiKeys.twitchClientId;
+  const clientSecret = apiKeys.twitchClientSecret;
+  const numericIds = [];
+  const usernames = [];
+  identifiers.forEach((value) => {
+    if (/^\d+$/.test(value)) {
+      numericIds.push(value);
+    } else {
+      usernames.push(value.toLowerCase());
+    }
+  });
+
+  if (!clientId || !clientSecret) {
+    if (usernames.length > 0) {
+      throw new Error('Usernames require Twitch Client ID and Client Secret in API Key Settings. Add credentials or use numeric channel IDs.');
+    }
+    return numericIds;
+  }
+
+  if (usernames.length === 0) {
+    return numericIds;
+  }
+
+  const tokenResponse = await fetch(
+    `https://id.twitch.tv/oauth2/token?client_id=${encodeURIComponent(clientId)}&client_secret=${encodeURIComponent(clientSecret)}&grant_type=client_credentials`,
+    { method: 'POST' }
+  );
+  if (!tokenResponse.ok) {
+    throw new Error('Could not get Twitch token for username conversion');
+  }
+
+  const { access_token: accessToken } = await tokenResponse.json();
+  const convertedIds = [...numericIds];
+  const resolvedUsernames = new Set();
+
+  for (let i = 0; i < usernames.length; i += 100) {
+    const chunk = usernames.slice(i, i + 100);
+    const usersUrl = new URL('https://api.twitch.tv/helix/users');
+    chunk.forEach((name) => usersUrl.searchParams.append('login', name));
+
+    const response = await fetch(usersUrl.toString(), {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Client-Id': clientId
+      }
+    });
+    if (!response.ok) {
+      throw new Error('Failed to convert usernames to IDs');
+    }
+
+    const payload = await response.json();
+    (payload?.data || []).forEach((user) => {
+      if (user?.id) {
+        convertedIds.push(user.id);
+        if (user.login) {
+          resolvedUsernames.add(user.login.toLowerCase());
+        }
+      }
+    });
+  }
+
+  const unresolved = usernames.filter((name) => !resolvedUsernames.has(name));
+  if (unresolved.length > 0) {
+    const preview = unresolved.slice(0, 3).join(', ');
+    throw new Error(`Could not resolve Twitch username${unresolved.length > 1 ? 's' : ''}: ${preview}`);
+  }
+
+  return convertedIds;
 }
 
 async function clearAllStorage() {
