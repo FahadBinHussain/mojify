@@ -216,6 +216,32 @@ const emoteDB = {
     });
   },
 
+  async getAllEmoteKeys() {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emoteMetadata'], 'readonly');
+      const metadataStore = transaction.objectStore('emoteMetadata');
+      const request = metadataStore.getAllKeys();
+
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  async getEmoteCount() {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emoteMetadata'], 'readonly');
+      const metadataStore = transaction.objectStore('emoteMetadata');
+      const request = metadataStore.count();
+
+      request.onsuccess = () => resolve(request.result || 0);
+      request.onerror = () => reject(request.error);
+    });
+  },
+
   async deleteEmote(key) {
     if (!this.db) await this.init();
 
@@ -432,11 +458,10 @@ async function downloadEmotes() {
       // Clear the skip flag
       await chrome.storage.local.remove(['skipNextDownload']);
 
-      const allEmotes = await emoteDB.getAllEmotes();
       return {
         success: true,
         message: "Skipped download - emotes restored from backup",
-        totalEmotes: allEmotes.length,
+        totalEmotes: await emoteDB.getEmoteCount(),
         skipped: true
       };
     }
@@ -447,6 +472,17 @@ async function downloadEmotes() {
     }
 
     if (!channelIds || channelIds.length === 0) {
+      downloadState.isDownloading = false;
+      return { success: false, error: "No channel IDs configured" };
+    }
+
+    const uniqueChannelIds = [...new Set(
+      channelIds
+        .map((channelId) => String(channelId || '').trim())
+        .filter(Boolean)
+    )];
+
+    if (uniqueChannelIds.length === 0) {
       downloadState.isDownloading = false;
       return { success: false, error: "No channel IDs configured" };
     }
@@ -464,72 +500,77 @@ async function downloadEmotes() {
     // Get existing data from chrome.storage (metadata only) and IndexedDB (images)
     const existing = await chrome.storage.local.get(['emoteMapping', 'channels']);
     const globalEmoteMapping = existing.emoteMapping || {};
-    const channels = existing.channels || [];
+    const channelsById = new Map();
+    (existing.channels || []).forEach((channel) => {
+      const id = String(channel?.id || '').trim();
+      if (id && uniqueChannelIds.includes(id)) {
+        channelsById.set(id, channel);
+      }
+    });
 
-    // Get existing emotes from IndexedDB
-    const existingEmotes = await emoteDB.getAllEmotes();
-    const existingEmoteKeys = new Set(existingEmotes.map(e => e.key));
+    // Get existing emote keys from IndexedDB metadata only
+    const existingEmoteKeys = new Set(await emoteDB.getAllEmoteKeys());
 
     // Pre-fetch channel names and create channels immediately
     const channelEmotes = [];
     let totalNewEmotes = 0;
 
-    // First pass: fetch channel info and create channels with real names
-    for (const channelId of channelIds) {
-      const trimmedChannelId = channelId.trim();
-      if (!trimmedChannelId) continue;
+    let successfulChannelFetches = 0;
+    let totalResolvedEmotes = 0;
 
-      try {
-        const result = await get7TVEmotes(trimmedChannelId);
+    const channelResults = await Promise.allSettled(
+      uniqueChannelIds.map(async (channelId) => ({
+        channelId,
+        result: await get7TVEmotes(channelId)
+      }))
+    );
 
-        // Update or create channel with real username immediately
-        const existingChannelIndex = channels.findIndex(ch => ch.id === trimmedChannelId);
-        if (existingChannelIndex >= 0) {
-          channels[existingChannelIndex] = {
-            id: trimmedChannelId,
-            username: result.username,
-            emotes: result.emotes
-          };
-        } else {
-          channels.push({
-            id: trimmedChannelId,
-            username: result.username,
-            emotes: result.emotes
-          });
-        }
+    channelResults.forEach((channelResult) => {
+      if (channelResult.status !== 'fulfilled') {
+        console.error('[Download] Error resolving channel:', channelResult.reason);
+        return;
+      }
 
-        if (Object.keys(result.emotes).length > 0) {
-          // INCREMENTAL CHECK: Compare server emotes vs locally stored emotes
-          const newEmotes = {};
-          Object.entries(result.emotes).forEach(([key, url]) => {
-            if (!existingEmoteKeys.has(key)) {
-              newEmotes[key] = url;
-            }
-          });
+      const { channelId, result } = channelResult.value;
+      const resolvedEmoteCount = Object.keys(result.emotes || {}).length;
+      if (resolvedEmoteCount > 0 || result.username !== channelId) {
+        successfulChannelFetches++;
+      }
+      totalResolvedEmotes += resolvedEmoteCount;
 
-          if (Object.keys(newEmotes).length > 0) {
-            channelEmotes.push({
-              channelId: trimmedChannelId,
-              username: result.username,
-              emotes: newEmotes,
-              allEmotes: result.emotes
-            });
-            totalNewEmotes += Object.keys(newEmotes).length;
+      channelsById.set(channelId, {
+        id: channelId,
+        username: result.username,
+        emotes: result.emotes
+      });
+
+      if (resolvedEmoteCount > 0) {
+        const newEmotes = {};
+        Object.entries(result.emotes).forEach(([key, url]) => {
+          if (!existingEmoteKeys.has(key)) {
+            newEmotes[key] = url;
           }
-        }
-      } catch (error) {
-        console.error(`[Download] Error fetching emotes for ${trimmedChannelId}:`, error);
-        // Create channel with ID as fallback name
-        const existingChannelIndex = channels.findIndex(ch => ch.id === trimmedChannelId);
-        if (existingChannelIndex === -1) {
-          channels.push({
-            id: trimmedChannelId,
-            username: trimmedChannelId,
-            emotes: {}
+        });
+
+        if (Object.keys(newEmotes).length > 0) {
+          channelEmotes.push({
+            channelId,
+            username: result.username,
+            emotes: newEmotes,
+            allEmotes: result.emotes
           });
+          totalNewEmotes += Object.keys(newEmotes).length;
         }
       }
-    }
+    });
+
+    const channels = uniqueChannelIds.map((channelId) => (
+      channelsById.get(channelId) || {
+        id: channelId,
+        username: channelId,
+        emotes: {}
+      }
+    ));
 
     // Save channels with real names immediately before download starts
     await chrome.storage.local.set({
@@ -540,15 +581,21 @@ async function downloadEmotes() {
     downloadState.total = totalNewEmotes;
     downloadState.current = 0;
 
+    if (successfulChannelFetches === 0 && totalResolvedEmotes === 0) {
+      console.log("[Download] No valid channels resolved from configured identifiers");
+      downloadState.isDownloading = false;
+      await chrome.storage.local.set({ channels, downloadInProgress: false });
+      return { success: false, error: "No valid 7TV channels found" };
+    }
+
     if (totalNewEmotes === 0) {
       console.log("[Download] No new emotes to download - all emotes already cached locally");
       downloadState.isDownloading = false;
       await chrome.storage.local.set({ channels, downloadInProgress: false });
-      const allEmotes = await emoteDB.getAllEmotes();
-      return { success: true, totalEmotes: allEmotes.length, message: "All emotes up to date" };
+      return { success: true, totalEmotes: await emoteDB.getEmoteCount(), message: "All emotes up to date" };
     }
 
-    console.log(`[Download] Found ${totalNewEmotes} new emotes to download (skipping ${existingEmotes.length} already cached)`);
+    console.log(`[Download] Found ${totalNewEmotes} new emotes to download (skipping ${existingEmoteKeys.size} already cached)`);
 
     // Set download progress
     await chrome.storage.local.set({
@@ -748,7 +795,7 @@ async function downloadEmotes() {
             }
 
             console.log(`[Download] ✓ ${key} (${blob.size} bytes, ${responseTime}ms, attempt ${cacheEntry.attempts})`);
-            return { success: true, key, url, channel, responseTime, size: blob.size };
+            return { success: true, key, url, channel, channelId, responseTime, size: blob.size };
           } else {
             throw new Error("Empty blob received");
           }
@@ -759,7 +806,7 @@ async function downloadEmotes() {
         const responseTime = Date.now() - startTime;
         totalFailedDownloads++;
 console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
-        return { success: false, key, url, channel, error: error.message, responseTime };
+        return { success: false, key, url, channel, channelId, error: error.message, responseTime };
       }
     };
 
@@ -834,30 +881,6 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
         }
 
         downloadState.current++;
-
-        // Update progress after each emote
-        if (downloadState.current % 3 === 0 || downloadState.current === downloadState.total) {
-          await chrome.storage.local.set({
-            emoteMapping: globalEmoteMapping,
-            downloadProgress: {
-              current: downloadState.current,
-              total: downloadState.total,
-              currentEmote: `Batch ${currentBatch} completed`
-            }
-          });
-
-          try {
-            chrome.runtime.sendMessage({
-              type: 'downloadProgress',
-              current: downloadState.current,
-              total: downloadState.total,
-              currentEmote: `Downloading batch ${currentBatch}...`,
-              newEmote: true
-            });
-          } catch (e) {
-            // Popup is closed, continue silently
-          }
-        }
       }
 
       // Record batch completion time
@@ -873,6 +896,25 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
       // Keep only last 10 batch records
       if (downloadState.performanceMetrics.batchTimes.length > 10) {
         downloadState.performanceMetrics.batchTimes.shift();
+      }
+
+      await chrome.storage.local.set({
+        downloadProgress: {
+          current: downloadState.current,
+          total: downloadState.total,
+          currentEmote: `Batch ${currentBatch}/${totalBatches}`
+        }
+      });
+
+      try {
+        chrome.runtime.sendMessage({
+          type: 'downloadProgress',
+          current: downloadState.current,
+          total: downloadState.total,
+          currentEmote: `Downloading batch ${currentBatch}/${totalBatches}...`
+        });
+      } catch (e) {
+        // Popup is closed, continue silently
       }
 
       // Detect server throttling pattern: successful downloads followed by timeouts
@@ -986,7 +1028,7 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
 
       const RETRY_BATCH_SIZE = 5; // Smaller batches for retries
       const retryDownload = async (emoteData, retryAttempt = 1) => {
-        const { key, url, channel } = emoteData;
+        const { key, url, channel, channelId } = emoteData;
 
         try {
           // Exponential timeout for retries: 20s, 30s, 45s for multiple attempts
@@ -1010,6 +1052,7 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
             if (blob.size > 0) {
               await emoteDB.storeEmote(key, url, blob, {
                 channel: channel,
+                channelId: channelId,
                 retried: true
               });
 
@@ -1093,9 +1136,9 @@ await new Promise(resolve => setTimeout(resolve, exponentialDelay));
     }
 
     // Get final count from IndexedDB
-    const allEmotes = await emoteDB.getAllEmotes();
-    console.log(`[Download] Completed! Downloaded ${totalNewEmotes} new emotes. Total stored: ${allEmotes.length}`);
-    return { success: true, totalEmotes: allEmotes.length };
+    const totalStoredEmotes = await emoteDB.getEmoteCount();
+    console.log(`[Download] Completed! Downloaded ${totalNewEmotes} new emotes. Total stored: ${totalStoredEmotes}`);
+    return { success: true, totalEmotes: totalStoredEmotes };
 
   } catch (error) {
     console.error("[Download] Error:", error);
@@ -1742,223 +1785,104 @@ function insertImageFromDataUrl(dataUrl, altText) {
 // Function to simulate paste operation using Chrome debugger API
 // Removed simulatePasteWithDebugger - using direct insertion instead
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
-    id: "downloadEmotes",
-    title: "Download Emotes",
-    contexts: ["action"],
+function sendRuntimeMessage(message) {
+  try {
+    chrome.runtime.sendMessage(message);
+  } catch (error) {
+    console.log('[Mojify] Runtime message skipped:', error.message);
+  }
+}
+
+async function handleChannelIdsChanged(oldChannelIds = [], newChannelIds = []) {
+  console.log('[Auto-Download] Channel IDs changed:', { old: oldChannelIds, new: newChannelIds });
+
+  if (JSON.stringify(newChannelIds) === JSON.stringify(oldChannelIds)) {
+    console.log('[Auto-Download] Channel IDs unchanged, skipping');
+    return;
+  }
+
+  if (newChannelIds.length === 0 && oldChannelIds.length > 0) {
+    console.log('[Auto-Download] Channel IDs cleared, cleaning up storage');
+    try {
+      await emoteDB.clearAll();
+      await chrome.storage.local.remove([
+        'channels',
+        'emoteMapping',
+        'downloadInProgress',
+        'downloadProgress',
+        'emoteImageData'
+      ]);
+      sendRuntimeMessage({
+        type: 'showToast',
+        message: 'Channel IDs cleared - storage cleaned up',
+        toastType: 'success'
+      });
+    } catch (error) {
+      console.error('[Auto-Download] Error cleaning up storage:', error);
+    }
+    return;
+  }
+
+  if (newChannelIds.length === 0) {
+    return;
+  }
+
+  sendRuntimeMessage({
+    type: 'automaticDownloadStarted',
+    channelIds: newChannelIds
   });
-});
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === "downloadEmotes") {
-    downloadEmotes();
-  }
-});
-
-// Storage change listener for automatic downloads
-chrome.storage.onChanged.addListener(async (changes, area) => {
-  if (area === 'local' && changes.channelIds) {
-    const oldChannelIds = changes.channelIds.oldValue || [];
-    const newChannelIds = changes.channelIds.newValue || [];
-
-    console.log('[Auto-Download] Channel IDs changed:', { old: oldChannelIds, new: newChannelIds });
-
-    // If channelIds were cleared, clean up storage
-    if (newChannelIds.length === 0 && oldChannelIds.length > 0) {
-      console.log('[Auto-Download] Channel IDs cleared, cleaning up storage');
-      try {
-        await emoteDB.clearAll();
-        await chrome.storage.local.remove(['channels', 'emoteMapping', 'downloadInProgress', 'downloadProgress']);
-
-        // Notify popup
-        try {
-          chrome.runtime.sendMessage({
-            type: 'showToast',
-            message: 'Channel IDs cleared - storage cleaned up',
-            toastType: 'success'
-          });
-        } catch (e) {
-          // Popup closed, continue silently
-        }
-      } catch (error) {
-        console.error('[Auto-Download] Error cleaning up storage:', error);
-      }
-      return;
+  try {
+    const result = await downloadEmotes();
+    if (!result?.success) {
+      sendRuntimeMessage({
+        type: 'showToast',
+        message: `Download failed: ${result.error}`,
+        toastType: 'error'
+      });
+    } else if (result?.skipped) {
+      console.log('[Auto-Download] Download already in progress, skipping duplicate notification');
     }
-
-    // If channelIds were added/changed and not empty, start automatic download
-    if (newChannelIds.length > 0) {
-      console.log('[Auto-Download] Starting automatic download for channel IDs:', newChannelIds);
-
-      // Notify popup that automatic download is starting
-      try {
-        chrome.runtime.sendMessage({
-          type: 'automaticDownloadStarted',
-          channelIds: newChannelIds
-        });
-      } catch (e) {
-        // Popup closed, continue silently
-      }
-
-      // Start download in background
-      try {
-        const result = await downloadEmotes();
-
-        // Notify popup of completion
-        try {
-          if (result.skipped) {
-            // Don't show notification for skipped downloads
-            console.log('[Auto-Download] Download was already in progress, skipped notification');
-          } else {
-            chrome.runtime.sendMessage({
-              type: 'showToast',
-              message: result.success ?
-                `Emotes downloaded successfully (${result.totalEmotes} total)` :
-                `Download failed: ${result.error}`,
-              toastType: result.success ? 'success' : 'error'
-            });
-          }
-        } catch (e) {
-          // Popup closed, continue silently
-        }
-      } catch (error) {
-        console.error('[Auto-Download] Error during automatic download:', error);
-
-        try {
-          chrome.runtime.sendMessage({
-            type: 'showToast',
-            message: `Automatic download failed: ${error.message}`,
-            toastType: 'error'
-          });
-        } catch (e) {
-          // Popup closed, continue silently
-        }
-      }
-    }
+  } catch (error) {
+    console.error('[Auto-Download] Error during automatic download:', error);
+    sendRuntimeMessage({
+      type: 'showToast',
+      message: `Automatic download failed: ${error.message}`,
+      toastType: 'error'
+    });
   }
-});
+}
 
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener((details) => {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
-      id: "downloadEmotes",
-      title: "Download Emotes",
-      contexts: ["action"],
+      id: 'downloadEmotes',
+      title: 'Download Emotes',
+      contexts: ['action']
     });
   });
+
+  console.log('[Mojify] Extension installed/updated:', details.reason);
+  initializeEmoteMapping();
 });
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === "downloadEmotes") {
+chrome.contextMenus.onClicked.addListener((info) => {
+  if (info.menuItemId === 'downloadEmotes') {
     downloadEmotes();
   }
 });
 
-// Message handler
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // Handle downloading emotes
-  if (request.type === 'downloadEmotes') {
-    downloadEmotes()
-      .then(result => {
-        if (sendResponse) sendResponse(result);
-      })
-      .catch(error => {
-        if (sendResponse) sendResponse({ success: false, error: error.message });
-      });
-    return true; // Keep message channel open for async response
-  }
-
-  // Handle emote insertion
-  if (request.type === 'insertEmote') {
-    insertEmoteIntoMessenger(sender.tab.id, request.emoteUrl, request.emoteTrigger)
-      .then(result => {
-        if (sendResponse) sendResponse(result);
-      })
-      .catch(error => {
-        if (sendResponse) sendResponse({ success: false, error: error.message });
-      });
-    return true; // Keep message channel open for async response
-  }
-});
-
-
-
-// Storage change listener for automatic downloads
 chrome.storage.onChanged.addListener((changes, area) => {
-  console.log("[Mojify] Storage changed:", { area, changes: Object.keys(changes) });
+  console.log('[Mojify] Storage changed:', { area, changes: Object.keys(changes) });
 
-  if (area === 'local' && changes.channelIds) {
-    const newChannelIds = changes.channelIds.newValue;
-    const oldChannelIds = changes.channelIds.oldValue;
-
-    console.log("[Mojify] Channel IDs storage change detected:", {
-      oldValue: oldChannelIds,
-      newValue: newChannelIds,
-      oldStringified: JSON.stringify(oldChannelIds),
-      newStringified: JSON.stringify(newChannelIds)
-    });
-
-    // Check if channel IDs actually changed
-    if (JSON.stringify(newChannelIds) !== JSON.stringify(oldChannelIds)) {
-      console.log("[Mojify] Channel IDs changed, processing...");
-
-      // If channel IDs were cleared or set to empty
-      if (!newChannelIds || newChannelIds.length === 0) {
-        console.log("[Mojify] Channel IDs cleared, cleaning up storage");
-
-        // Clear all emote-related data
-        chrome.storage.local.remove([
-          'emoteMapping',
-          'channels',
-          'emoteImageData',
-          'downloadInProgress',
-          'downloadProgress'
-        ]).then(() => {
-          console.log("[Mojify] Storage cleaned up successfully");
-        }).catch((error) => {
-          console.error("[Mojify] Error cleaning up storage:", error);
-        });
-      }
-      // If new channel IDs were added
-      else if (newChannelIds.length > 0) {
-        console.log("[Mojify] New channel IDs detected, automatically starting download:", newChannelIds);
-
-        // Notify popup that automatic download is starting
-        try {
-          chrome.runtime.sendMessage({
-            type: 'automaticDownloadStarted',
-            channelIds: newChannelIds
-          });
-          console.log("[Mojify] Sent automatic download notification to popup");
-        } catch (error) {
-          console.log("[Mojify] Could not send automatic download notification (popup might be closed):", error.message);
-        }
-
-        // Add a small delay to ensure storage is fully committed
-        setTimeout(() => {
-          console.log("[Mojify] Starting automatic download after delay...");
-
-          // Start download automatically
-          downloadEmotes().then((result) => {
-            console.log("[Mojify] Download result:", result);
-            if (result.success) {
-              console.log("[Mojify] Automatic download completed successfully, total emotes:", result.totalEmotes);
-            } else {
-              console.error("[Mojify] Automatic download failed:", result.error);
-            }
-          }).catch((error) => {
-            console.error("[Mojify] Automatic download error:", error);
-            console.error("[Mojify] Error stack:", error.stack);
-          });
-        }, 100);
-      }
-    } else {
-      console.log("[Mojify] Channel IDs did not actually change (same JSON), skipping download");
-    }
-  } else {
-    console.log("[Mojify] Storage change not for channelIds or not local area");
+  if (area !== 'local' || !changes.channelIds) {
+    console.log('[Mojify] Storage change not for channelIds or not local area');
+    return;
   }
+
+  const oldChannelIds = changes.channelIds.oldValue || [];
+  const newChannelIds = changes.channelIds.newValue || [];
+  handleChannelIdsChanged(oldChannelIds, newChannelIds);
 });
 
 // Initialize emote mapping on startup
@@ -1989,11 +1913,6 @@ async function initializeEmoteMapping() {
 // Extension startup listeners
 chrome.runtime.onStartup.addListener(() => {
   console.log("[Mojify] Extension startup detected");
-  initializeEmoteMapping();
-});
-
-chrome.runtime.onInstalled.addListener((details) => {
-  console.log("[Mojify] Extension installed/updated:", details.reason);
   initializeEmoteMapping();
 });
 
@@ -2134,55 +2053,22 @@ async function detectAndReplaceEmotes(tabId) {
 }
 
 // Set up input monitoring for active tabs
-// Message handlers for content script communication
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'getEmote') {
-    emoteDB.getEmote(request.key)
-      .then(async result => {
-        if (result && result.blob) {
-          // Convert blob to base64 for serialization
-          const dataUrl = await new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = () => reject(new Error('Failed to convert blob to base64'));
-            reader.readAsDataURL(result.blob);
-          });
-          // Replace blob with dataUrl for transmission
-          sendResponse({ ...result, dataUrl: dataUrl, blob: null });
-        } else {
-          sendResponse(result);
-        }
-      })
-      .catch(error => sendResponse(null));
-    return true; // Keep the message channel open for async response
+async function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('Failed to convert blob to base64'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function serializeStoredEmote(result) {
+  if (result && result.blob) {
+    return { ...result, dataUrl: await blobToDataUrl(result.blob), blob: null };
   }
 
-  if (request.action === 'getAllEmotes') {
-    emoteDB.getAllEmotes()
-      .then(async result => {
-        if (result && result.length > 0) {
-          // Convert all blobs to base64 for serialization
-          const processedResults = await Promise.all(result.map(async emote => {
-            if (emote.blob) {
-              const dataUrl = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = () => reject(new Error('Failed to convert blob to base64'));
-                reader.readAsDataURL(emote.blob);
-              });
-              return { ...emote, dataUrl: dataUrl, blob: null };
-            }
-            return emote;
-          }));
-          sendResponse(processedResults);
-        } else {
-          sendResponse(result);
-        }
-      })
-      .catch(error => sendResponse([]));
-    return true; // Keep the message channel open for async response
-  }
-});
+  return result;
+}
 
 let monitoringTabs = new Set();
 
@@ -2244,35 +2130,52 @@ async function startMonitoringTab(tabId) {
   }
 }
 
-// Message handler
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // Handle downloading emotes
-  if (request.type === 'downloadEmotes') {
-    downloadEmotes()
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // Keep message channel open for async response
+function handleRuntimeMessage(request, sender, sendResponse) {
+  if (request.action === 'getEmote') {
+    emoteDB.getEmote(request.key)
+      .then(serializeStoredEmote)
+      .then((result) => sendResponse(result))
+      .catch(() => sendResponse(null));
+    return true;
   }
 
-  // Handle emote insertion
+  if (request.action === 'getAllEmotes') {
+    emoteDB.getAllEmotes()
+      .then(async (result) => {
+        if (!result || result.length === 0) return result;
+        return Promise.all(result.map(serializeStoredEmote));
+      })
+      .then((result) => sendResponse(result))
+      .catch(() => sendResponse([]));
+    return true;
+  }
+
+  if (request.type === 'downloadEmotes' || request.action === 'downloadEmotes') {
+    downloadEmotes()
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
   if (request.type === 'insertEmote') {
     insertEmoteIntoMessenger(sender.tab.id, request.emoteUrl, request.emoteTrigger)
-      .then(result => sendResponse(result))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // Keep message channel open for async response
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
   }
 
-  // Handle emote detection trigger
   if (request.type === 'checkForEmotes') {
     detectAndReplaceEmotes(sender.tab.id)
       .then(() => sendResponse({ success: true }))
-      .catch(error => {
+      .catch((error) => {
         console.error("[Mojify] Error in checkForEmotes:", error);
         sendResponse({ success: false, error: error.message });
       });
-    return true; // Keep message channel open for async response
+    return true;
   }
-});
+
+  return false;
+}
 
 // Auto-start monitoring when tabs become active
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
@@ -2297,14 +2200,4 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 // Initialize on script load as well (for service worker reactivation)
 initializeEmoteMapping();
 
-// Message handler for popup communication
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'downloadEmotes') {
-    downloadEmotes().then(result => {
-      sendResponse(result);
-    }).catch(error => {
-      sendResponse({ success: false, error: error.message });
-    });
-    return true; // Will respond asynchronously
-  }
-});
+chrome.runtime.onMessage.addListener(handleRuntimeMessage);

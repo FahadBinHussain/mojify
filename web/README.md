@@ -3,7 +3,7 @@
 ## 1) Install dependencies
 
 ```bash
-cd webapp
+cd web
 pnpm install
 ```
 
@@ -14,7 +14,6 @@ Copy `.env.example` to `.env.local` and set:
 - `TWITCH_CLIENT_ID`
 - `TWITCH_CLIENT_SECRET`
 - `MOJIFY_WEB_ORIGINS` (usually `https://mojify.vercel.app`)
-- `MOJIFY_EXTENSION_IDS` (comma-separated extension IDs allowed to call API)
 
 ## 3) Run locally
 
@@ -31,10 +30,3 @@ Open `http://localhost:3000`.
 
 Requests are allowed only for:
 - web app origin(s) listed in `MOJIFY_WEB_ORIGINS`
-- extension origins derived from IDs in `MOJIFY_EXTENSION_IDS` (`chrome-extension://<id>`)
-
-## Extension integration
-
-Extension translator is hardcoded to:
-
-- `https://mojify.vercel.app`

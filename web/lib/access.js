@@ -13,9 +13,5 @@ export function isAllowedClient(request) {
 
   const webOrigins = parseCsv(process.env.MOJIFY_WEB_ORIGINS);
   const allowedWebOrigins = webOrigins.length > 0 ? webOrigins : DEFAULT_WEB_ORIGINS;
-  const allowedExtensionOrigins = parseCsv(process.env.MOJIFY_EXTENSION_IDS).map(
-    (id) => `chrome-extension://${id}`
-  );
-
-  return [...allowedWebOrigins, ...allowedExtensionOrigins].includes(origin);
+  return allowedWebOrigins.includes(origin);
 }

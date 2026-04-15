@@ -4,30 +4,33 @@
 <head>
   <title>Mojify</title>
   <link rel="stylesheet" type="text/css" href="popup.css">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 </head>
 <body>
   <div class="app-container">
     <div class="header">
+      <div class="header-glow" aria-hidden="true"></div>
       <div class="logo">
         <div class="logo-icon">
           <img src="icons/icon48.png" alt="Mojify" class="logo-png">
         </div>
         <div class="logo-text">
+          <span class="eyebrow">Universal Emote Deck</span>
           <h1>Mojify</h1>
-          <span class="version">v1.0</span>
+          <p class="header-subtitle">Search, insert, and sync your reaction library without leaving the page.</p>
         </div>
+        <span class="version-chip">v1.0</span>
       </div>
     </div>
 
     <div class="tab-container">
       <div class="tab-header">
-        <button class="tab-btn active" data-tab="emotes">
+        <button class="tab-btn active" data-tab="emotes" type="button">
           <i class="fas fa-grin"></i>
           <span>Emotes</span>
         </button>
-        <button class="tab-btn" data-tab="settings">
+        <button class="tab-btn" data-tab="settings" type="button">
           <i class="fas fa-cog"></i>
           <span>Settings</span>
         </button>
@@ -38,15 +41,19 @@
         <!-- Emotes Tab -->
         <div class="tab-pane active" id="emotes-tab">
           <div class="search-container">
+            <div class="pane-meta">
+              <span class="pane-kicker">Workspace</span>
+              <span class="pane-detail">Twitch plus reaction media</span>
+            </div>
             <div class="search-input-wrapper">
               <i class="fas fa-search"></i>
-              <input type="text" id="search-emotes" placeholder="Search emotes">
+              <input type="text" id="search-emotes" placeholder="Search emotes, GIFs, or reaction media">
             </div>
             <div class="media-tabs">
-              <button class="media-tab-btn active" data-media-tab="twitch">Twitch</button>
-              <button class="media-tab-btn" data-media-tab="giphy">Giphy</button>
-              <button class="media-tab-btn" data-media-tab="klipy">Klipy</button>
-              <button class="media-tab-btn" data-media-tab="pixabay">Pixabay</button>
+              <button class="media-tab-btn active" data-media-tab="twitch" type="button">Twitch</button>
+              <button class="media-tab-btn" data-media-tab="giphy" type="button">Giphy</button>
+              <button class="media-tab-btn" data-media-tab="klipy" type="button">Klipy</button>
+              <button class="media-tab-btn" data-media-tab="pixabay" type="button">Pixabay</button>
             </div>
           </div>
 
@@ -55,7 +62,7 @@
               <span class="stat-number" id="emote-count">0</span>
               <span class="stat-label">Emotes</span>
             </div>
-            <button id="download-button" class="action-button">
+            <button id="download-button" class="action-button" type="button">
               <i class="fas fa-sync-alt"></i>
               <span>Refresh Emotes</span>
             </button>
@@ -75,84 +82,71 @@
             <div class="no-emotes-message" id="no-emotes-message">
               <i class="fas fa-ghost empty-icon"></i>
               <p>No emotes loaded</p>
-              <p class="empty-subtitle">Add channel IDs in Settings tab and click Refresh Emotes</p>
+              <p class="empty-subtitle">Add channels in Settings and Mojify will build your library here.</p>
             </div>
 
             <div class="emote-grid" id="emote-grid"></div>
 
             <div class="load-more hidden" id="load-more">
-              <button id="load-more-btn">Load More</button>
+              <button id="load-more-btn" type="button">Load More</button>
             </div>
           </div>
         </div>
 
         <!-- Settings Tab -->
         <div class="tab-pane" id="settings-tab">
-          <div class="settings-section">
-            <h2 class="section-title">Channel Setup</h2>
-            <p class="section-description">Add channel IDs or translate username to ID, then save.</p>
+          <div class="settings-shell">
+            <div class="settings-intro">
+              <span class="pane-kicker">Configuration</span>
+              <h2 class="settings-headline">Keep channels, backups, and provider access in one place.</h2>
+              <p class="settings-copy">Use usernames or numeric IDs, keep providers connected, and manage your local library without leaving the popup.</p>
+            </div>
 
-            <div class="form-group">
-              <label for="channel-ids">Twitch Channel IDs</label>
-              <textarea id="channel-ids" placeholder="Enter channel IDs, one per line or comma-separated"></textarea>
-              <div class="helper-text">Example: xqc, forsen, sodapoppin</div>
-            </div>
-            
-            <div class="form-group">
-              <label for="twitch-translate-value">Translate Username / User ID</label>
-              <input id="twitch-translate-value" type="text" placeholder="e.g. xqc or 71092938">
-            </div>
-            <div class="form-group">
-              <label for="twitch-translate-type">Input Type</label>
-              <select id="twitch-translate-type">
-                <option value="username">Username</option>
-                <option value="userid">User ID</option>
-              </select>
-            </div>
-            <button id="translate-twitch-button" class="secondary-button">
-              <i class="fas fa-exchange-alt"></i>
-              <span>Translate</span>
-            </button>
-            <div id="twitch-translate-result" class="helper-text" style="margin-top: 10px;"></div>
-            <button id="add-translated-channel" class="primary-button hidden" style="margin-top: 10px;">
-              <i class="fas fa-plus"></i>
-              <span>Add Translated ID</span>
-            </button>
+            <div class="settings-section">
+              <h2 class="section-title">Channels</h2>
+              <p class="section-description">Paste Twitch usernames or numeric IDs. Mojify resolves usernames on save and starts the download automatically.</p>
 
-            <div class="info-box" style="background: #e3f2fd; border: 1px solid #2196f3; border-radius: 8px; padding: 12px; margin: 16px 0; font-size: 14px;">
-              <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                <i class="fas fa-info-circle" style="color: #2196f3; margin-right: 8px;"></i>
-                <strong>Automatic Downloads</strong>
+              <div class="form-group">
+                <label for="channel-ids">Twitch Usernames or IDs</label>
+                <textarea id="channel-ids" placeholder="Enter usernames or IDs, one per line or comma-separated"></textarea>
+                <div class="helper-text">Example: xqc, forsen, sodapoppin</div>
               </div>
-              <p style="margin: 0; color: #666;">Emotes will automatically download when you save channel IDs. Progress will be shown and emotes will be ready to use immediately after download completes.</p>
-            </div>
 
-            <button id="save-button" class="primary-button">
-              <i class="fas fa-save"></i>
-              <span>Save Channel IDs</span>
-            </button>
-          </div>
+              <div class="info-box">
+                <div class="info-box-header">
+                  <i class="fas fa-info-circle"></i>
+                  <strong>Automatic Downloads</strong>
+                </div>
+                <p>Emotes download as soon as you save. Progress appears live in the popup, and new emotes become available as they land.</p>
+              </div>
+
+              <button id="save-button" class="primary-button" type="button">
+                <i class="fas fa-save"></i>
+                <span>Save Channels</span>
+              </button>
+            </div>
 
           <div class="settings-section channel-management" id="channel-management" style="display: none;">
-            <h2 class="section-title">Channel Management</h2>
+            <h2 class="section-title">Active Channels</h2>
+            <p class="section-description">Live counts update from your local library while downloads are running.</p>
             <div class="channel-list" id="channel-list">
               <!-- Channels will be populated here -->
             </div>
           </div>
 
           <div class="settings-section backup-restore">
-            <h2 class="section-title">Backup & Restore</h2>
-            <p class="section-description">Backup and restore all your emotes, settings, and configurations</p>
+            <h2 class="section-title">Backups</h2>
+            <p class="section-description">Capture the full library, settings, and channel setup so you can restore it anytime.</p>
 
             <div class="backup-restore-actions">
-              <button id="create-backup" class="primary-button">
+              <button id="create-backup" class="primary-button" type="button">
                 <i class="fas fa-download"></i>
                 <span>Create Backup</span>
               </button>
 
               <div class="restore-section">
                 <input type="file" id="restore-file" accept=".json" style="display: none;">
-                <button id="restore-backup" class="secondary-button">
+                <button id="restore-backup" class="secondary-button" type="button">
                   <i class="fas fa-upload"></i>
                   <span>Restore Backup</span>
                 </button>
@@ -189,16 +183,16 @@
           </div>
 
           <div class="settings-section">
-            <h2 class="section-title">API Keys</h2>
-            <p class="section-description">Manage API keys in a dedicated extension page.</p>
-            <button id="open-api-keys-page" class="secondary-button">
+            <h2 class="section-title">Provider Keys</h2>
+            <p class="section-description">Open the dedicated API page for Twitch, Giphy, Klipy, Pixabay, and Tenor credentials.</p>
+            <button id="open-api-keys-page" class="secondary-button" type="button">
               <i class="fas fa-key"></i>
               <span>Open API Key Settings</span>
             </button>
           </div>
 
           <div class="settings-section storage-info">
-            <h2 class="section-title">Storage Information</h2>
+            <h2 class="section-title">Library Status</h2>
             <div class="storage-details">
               <div class="storage-item">
                 <span class="storage-label">Total Emotes:</span>
@@ -217,19 +211,19 @@
                 <span class="storage-value" id="channels-count">0</span>
               </div>
             </div>
-            <button id="clear-all-storage" class="danger-button">
+            <button id="clear-all-storage" class="danger-button" type="button">
               <i class="fas fa-trash"></i>
               <span>Clear All Data</span>
             </button>
           </div>
 
           <div class="settings-section usage-section">
-            <h2 class="section-title">Usage Instructions</h2>
+            <h2 class="section-title">Quick Tips</h2>
             <div class="usage-item">
               <i class="fas fa-keyboard"></i>
               <div>
                 <h3>Type Emote Code</h3>
-                <p>Type an emote code surrounded by colons (e.g., <code>:kappa:</code>) anywhere on the web to automatically replace it with the emote.</p>
+                <p>Use colon-wrapped codes such as <code>:kappa:</code> anywhere supported text replacement is active.</p>
               </div>
             </div>
 
@@ -237,7 +231,7 @@
               <i class="fas fa-mouse-pointer"></i>
               <div>
                 <h3>Click to Insert</h3>
-                <p>Click on any emote in the extension popup to instantly insert it into text fields on supported websites.</p>
+                <p>Pick any emote or GIF in the popup to insert it into the active text field on supported sites.</p>
               </div>
             </div>
 
@@ -253,7 +247,7 @@
               <i class="fas fa-download"></i>
               <div>
                 <h3>Add New Emotes</h3>
-                <p>Add Twitch channel IDs in the Channel Configuration section and click "Save Channel IDs" to download their emotes.</p>
+                <p>Paste usernames or IDs in Channels and save. Mojify handles conversion and download from there.</p>
               </div>
             </div>
 
@@ -261,56 +255,40 @@
               <i class="fas fa-cloud-download-alt"></i>
               <div>
                 <h3>Backup & Restore</h3>
-                <p>Create backups of your emote collection regularly and restore them when needed using the Backup & Restore section.</p>
+                <p>Keep a backup of your library if you switch browsers, profiles, or machines.</p>
               </div>
             </div>
           </div>
 
-          <div class="settings-section about-section">
-            <h2 class="section-title">About Mojify</h2>
-            <p class="about-text">Mojify is a browser extension that brings Twitch emotes to any website. Use your favorite emotes anywhere on the web!</p>
-            <p class="about-text">Features:</p>
-            <ul class="about-features">
-              <li>Auto-complete emotes by typing <code>:</code> followed by the emote name</li>
-              <li>Smart suggestions based on your typing context</li>
-              <li>Click any emote in the popup to instantly insert it</li>
-              <li>Search through your entire emote collection</li>
-              <li>Add emotes from any Twitch channel</li>
-              <li>Backup and restore your emote collection</li>
-            </ul>
-            <p class="about-text">Version: 1.0</p>
-            <p class="powered-by">Powered by 7TV</p>
-          </div>
-
           <div class="settings-section debug-section">
             <h2 class="section-title">
-              Debug Tools
-              <button id="toggle-debug" class="toggle-button">Show</button>
+              Diagnostics
+              <button id="toggle-debug" class="toggle-button" type="button">Show</button>
             </h2>
 
             <div id="debug-content" class="debug-content" style="display: none;">
               <div class="debug-info">
-                <p>These tools help diagnose problems with text field detection.</p>
+                <p>Use these when Mojify cannot find the active text field or media insertion behaves strangely.</p>
               </div>
 
               <div class="debug-actions">
-                <button id="debug-find-field" class="debug-button">
+                <button id="debug-find-field" class="debug-button" type="button">
                   <i class="fas fa-search"></i> Find Text Field
                 </button>
 
-                <button id="debug-insert-text" class="debug-button">
+                <button id="debug-insert-text" class="debug-button" type="button">
                   <i class="fas fa-font"></i> Insert Test Text
                 </button>
 
-                <button id="debug-detect-page" class="debug-button">
+                <button id="debug-detect-page" class="debug-button" type="button">
                   <i class="fas fa-code"></i> Analyze Page
                 </button>
 
-                <button id="debug-test-dragdrop" class="debug-button">
+                <button id="debug-test-dragdrop" class="debug-button" type="button">
                   <i class="fas fa-images"></i> Test Drag & Drop
                 </button>
 
-                <button id="debug-test-basic" class="debug-button">
+                <button id="debug-test-basic" class="debug-button" type="button">
                   <i class="fas fa-vial"></i> Test Basic Functionality
                 </button>
               </div>
@@ -320,6 +298,7 @@
                 <div class="debug-result-content"></div>
               </div>
             </div>
+          </div>
           </div>
         </div>
       </div>
@@ -340,12 +319,12 @@
           <p id="modal-message">Are you sure you want to proceed?</p>
         </div>
         <div class="modal-footer">
-          <button id="modal-cancel" class="secondary-button">
-            <span>Cancel</span>
-          </button>
-          <button id="modal-confirm" class="danger-button">
-            <span>Confirm</span>
-          </button>
+              <button id="modal-cancel" class="secondary-button" type="button">
+                <span>Cancel</span>
+              </button>
+              <button id="modal-confirm" class="danger-button" type="button">
+                <span>Confirm</span>
+              </button>
         </div>
       </div>
     </div>
