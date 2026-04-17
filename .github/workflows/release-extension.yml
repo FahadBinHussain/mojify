@@ -1,0 +1,81 @@
+name: Release Extension
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Prepare release metadata
+        id: meta
+        shell: bash
+        run: |
+          VERSION="$(node -p "require('./extension/manifest.json').version")"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          SAFE_REF="${GITHUB_REF_NAME//\//-}"
+          TAG="build-${SAFE_REF}-${SHORT_SHA}"
+          RELEASE_NAME="Mojify ${VERSION} (${SAFE_REF} ${SHORT_SHA})"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build extension artifacts
+        shell: bash
+        env:
+          EXTENSION_PEM_B64: ${{ secrets.MOJIFY_EXTENSION_PEM_B64 }}
+        run: |
+          if [ -z "$EXTENSION_PEM_B64" ]; then
+            echo "Missing GitHub secret: MOJIFY_EXTENSION_PEM_B64" >&2
+            exit 1
+          fi
+
+          ARTIFACT_DIR="$RUNNER_TEMP/mojify-release"
+          PACKAGE_DIR="$RUNNER_TEMP/mojify-extension"
+          PEM_PATH="$RUNNER_TEMP/mojify.pem"
+          VERSION="${{ steps.meta.outputs.version }}"
+
+          mkdir -p "$ARTIFACT_DIR" "$PACKAGE_DIR"
+          cp -R extension/. "$PACKAGE_DIR/"
+          find "$PACKAGE_DIR" -name '*.pem' -delete
+
+          printf '%s' "$EXTENSION_PEM_B64" | base64 --decode > "$PEM_PATH"
+
+          ZIP_NAME="Mojify-${VERSION}.zip"
+          CRX_NAME="Mojify-${VERSION}.crx"
+
+          (
+            cd "$PACKAGE_DIR"
+            zip -r "$ARTIFACT_DIR/$ZIP_NAME" .
+          )
+
+          npm install --no-save crx3@1.1.3
+          npx crx3 -p "$PEM_PATH" -o "$ARTIFACT_DIR/$CRX_NAME" -- "$PACKAGE_DIR"
+
+          echo "ARTIFACT_DIR=$ARTIFACT_DIR" >> "$GITHUB_ENV"
+          echo "ZIP_NAME=$ZIP_NAME" >> "$GITHUB_ENV"
+          echo "CRX_NAME=$CRX_NAME" >> "$GITHUB_ENV"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.release_name }}
+          generate_release_notes: true
+          files: |
+            ${{ env.ARTIFACT_DIR }}/${{ env.ZIP_NAME }}
+            ${{ env.ARTIFACT_DIR }}/${{ env.CRX_NAME }}
