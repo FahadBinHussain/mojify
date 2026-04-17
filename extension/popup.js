@@ -2506,10 +2506,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  initApiKeysPageButton();
   init();
   initBackupRestore();
   initDownloadButton();
-  initApiKeysPageButton();
   // Backup and Restore functionality
   function initBackupRestore() {
     const createBackupBtn = document.getElementById('create-backup');
@@ -2526,7 +2526,31 @@ document.addEventListener('DOMContentLoaded', () => {
     const downloadButton = document.getElementById('download-button');
 
     if (downloadButton) {
-      downloadButton.addEventListener('click', handleManualRefresh);
+      downloadButton.addEventListener('click', () => {
+        setDownloadUiActive('Starting refresh...');
+        startProgressPolling();
+
+        chrome.runtime.sendMessage({ action: 'downloadEmotes' }, (response) => {
+          if (chrome.runtime.lastError) {
+            finishDownloadFlow(false, chrome.runtime.lastError.message || 'Failed to start refresh.');
+            return;
+          }
+
+          if (!response) {
+            finishDownloadFlow(false, 'No response received from background worker.');
+            return;
+          }
+
+          if (response.success === false) {
+            finishDownloadFlow(false, response.message || response.error || 'Refresh failed.');
+            return;
+          }
+
+          if (response.skipped || response.status === 'up_to_date') {
+            finishDownloadFlow(true, response.message || 'Everything is already up to date.');
+          }
+        });
+      });
     }
   }
 
