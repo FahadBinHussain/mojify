@@ -501,9 +501,10 @@ async function downloadEmotes() {
     const existing = await chrome.storage.local.get(['emoteMapping', 'channels']);
     const globalEmoteMapping = existing.emoteMapping || {};
     const channelsById = new Map();
+    // Load ALL existing channels first (not just current ones)
     (existing.channels || []).forEach((channel) => {
       const id = String(channel?.id || '').trim();
-      if (id && uniqueChannelIds.includes(id)) {
+      if (id) {
         channelsById.set(id, channel);
       }
     });
@@ -564,13 +565,8 @@ async function downloadEmotes() {
       }
     });
 
-    const channels = uniqueChannelIds.map((channelId) => (
-      channelsById.get(channelId) || {
-        id: channelId,
-        username: channelId,
-        emotes: {}
-      }
-    ));
+    // Create channels array from ALL channels (existing + new)
+    const channels = Array.from(channelsById.values());
 
     // Save channels with real names immediately before download starts
     await chrome.storage.local.set({
