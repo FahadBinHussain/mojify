@@ -558,7 +558,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <li><code>discord.com</code></li>
               <li><code>facebook.com</code></li>
               <li><code>telegram.org</code></li>
-              <li><code>web.whatsapp.com</code> (Note: GIFs may not work due to WhatsApp limitations)</li>
+              <li><code>web.whatsapp.com</code></li>
             </ul>
           </div>
         `;
@@ -691,9 +691,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Function to inject into content script for emote insertion from base64
-  function insertEmoteFromBase64(base64Data, filename, trigger) {
-    console.log("[Mojify Debug] insertEmoteFromBase64 called with:", filename, trigger);
-
+  async function insertEmoteFromBase64(base64Data, filename, trigger) {
     try {
       // Create File directly from base64 (faster - no blob conversion)
       const base64 = base64Data.split(',')[1];
@@ -707,11 +705,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       const byteArray = new Uint8Array(byteNumbers);
 
-      console.log("[Mojify] Converted base64 to bytes:", byteArray.length, "bytes");
-
       // Create File object directly from byteArray
       const file = new File([byteArray], filename, { type: mimeType });
-      console.log("[Mojify] Created file:", file.name, file.size, "bytes");
 
       // Find input field
       const inputSelectors = [
@@ -744,7 +739,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Focus the input field
       inputField.focus();
 
-      // Create drag and drop event
+      const dropTarget = inputField;
       const dataTransfer = new DataTransfer();
       dataTransfer.items.add(file);
 
@@ -754,7 +749,7 @@ document.addEventListener('DOMContentLoaded', () => {
           cancelable: true,
           dataTransfer
         });
-        inputField.dispatchEvent(event);
+        dropTarget.dispatchEvent(event);
       });
 
       console.log("[Mojify] File insertion completed for:", trigger);
@@ -2447,35 +2442,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (platform === 'whatsapp') {
-      const warningDiv = document.createElement('div');
-      warningDiv.className = 'platform-warning';
-      warningDiv.style.cssText = `
-        background-color: #fff3cd;
-        border: 1px solid #ffeaa7;
-        border-radius: 4px;
-        padding: 10px;
-        margin: 10px 0;
-        color: #856404;
-        font-size: 12px;
-        text-align: center;
-      `;
-      warningDiv.innerHTML = `
-        <strong>WhatsApp Limitation:</strong><br>
-        GIFs may not work properly due to WhatsApp's restrictions.<br>
-        This is a WhatsApp limitation, not an extension issue.
-      `;
-
-      // Insert above the emotes container
-      const emotesContainer = document.querySelector('.emotes-container');
-      if (emotesContainer) {
-        emotesContainer.parentNode.insertBefore(warningDiv, emotesContainer);
-      } else {
-        // Fallback: insert after the emote stats
-        const emoteStats = document.querySelector('.emote-stats');
-        if (emoteStats && emoteStats.parentNode) {
-          emoteStats.parentNode.insertBefore(warningDiv, emoteStats.nextSibling);
-        }
-      }
+      return;
     }
   }
 

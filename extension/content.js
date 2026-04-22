@@ -718,9 +718,6 @@ async function insertFileOnPlatform(file, targetElement, platform) {
     } else if (platform === 'telegram') {
         // Telegram needs to target upper area for uncompressed images
         return await insertFileOnTelegram(file, targetElement);
-    } else if (platform === 'whatsapp') {
-        // WhatsApp needs special handling like Discord
-        return insertFileOnWhatsApp(file, targetElement);
     } else {
         // Fallback to drag and drop
         return simulateFileDrop(file, targetElement);
@@ -914,75 +911,6 @@ async function insertFileOnDiscord(file, targetElement) {
     } catch (error) {
         debugLog("Discord insertion error:", error);
         // Final fallback to drag and drop
-        return simulateFileDrop(file, targetElement);
-    }
-}
-
-// WhatsApp-specific file insertion
-async function insertFileOnWhatsApp(file, targetElement) {
-    debugLog("Using WhatsApp-specific insertion method");
-
-    try {
-        // Focus the input field first
-        targetElement.focus();
-        await new Promise(resolve => setTimeout(resolve, 200));
-
-        // Method 1: Try paste event with files
-        const pasteEvent = new ClipboardEvent('paste', {
-            bubbles: true,
-            cancelable: true,
-            clipboardData: new DataTransfer()
-        });
-        pasteEvent.clipboardData.items.add(file);
-        const pasteResult = targetElement.dispatchEvent(pasteEvent);
-        debugLog("WhatsApp paste method result:", pasteResult);
-
-        // Method 2: Enhanced drag and drop
-        const rect = targetElement.getBoundingClientRect();
-        const targetX = rect.left + (rect.width / 2);
-        const targetY = rect.top + (rect.height / 2);
-
-        const dataTransfer = new DataTransfer();
-        dataTransfer.items.add(file);
-        dataTransfer.dropEffect = 'copy';
-        dataTransfer.effectAllowed = 'copy';
-
-        // Create realistic drag sequence
-        const dragEnterEvent = new DragEvent('dragenter', {
-            bubbles: true,
-            cancelable: true,
-            dataTransfer,
-            clientX: targetX,
-            clientY: targetY
-        });
-        targetElement.dispatchEvent(dragEnterEvent);
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        const dragOverEvent = new DragEvent('dragover', {
-            bubbles: true,
-            cancelable: true,
-            dataTransfer,
-            clientX: targetX,
-            clientY: targetY
-        });
-        dragOverEvent.preventDefault();
-        targetElement.dispatchEvent(dragOverEvent);
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        const dropEvent = new DragEvent('drop', {
-            bubbles: true,
-            cancelable: true,
-            dataTransfer,
-            clientX: targetX,
-            clientY: targetY
-        });
-        dropEvent.preventDefault();
-        const dropResult = targetElement.dispatchEvent(dropEvent);
-        debugLog("WhatsApp drop event result:", dropResult);
-
-        return true;
-    } catch (error) {
-        debugLog("WhatsApp insertion error:", error);
         return simulateFileDrop(file, targetElement);
     }
 }
