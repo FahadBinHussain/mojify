@@ -1065,7 +1065,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Update emote count
   function updateEmoteCount() {
-    const count = Object.keys(allEmotes).length;
+    const countFromChannels = channels.reduce((total, channel) => {
+      return total + Object.keys(channel?.emotes || {}).length;
+    }, 0);
+    const count = countFromChannels || emoteDataMap.size || Object.keys(allEmotes).length;
     emoteCount.textContent = count;
   }
 
@@ -1931,13 +1934,15 @@ document.addEventListener('DOMContentLoaded', () => {
       loadMoreContainer.classList.add('hidden');
 
       channels.forEach(channel => {
-        if (!channel.emotes || Object.keys(channel.emotes).length === 0) {
+        const channelEmoteEntries = Object.entries(channel.emotes || {}).filter(([key]) => emoteDataMap.has(key));
+
+        if (channelEmoteEntries.length === 0) {
           console.log(`Channel ${channel.username} has no emotes, skipping`);
           return;
         }
 
         // Count emotes for this channel
-        const emoteCount = Object.keys(channel.emotes).length;
+        const emoteCount = channelEmoteEntries.length;
         console.log(`Rendering channel ${channel.username} with ${emoteCount} emotes`);
 
         // Create channel section
@@ -1962,10 +1967,10 @@ document.addEventListener('DOMContentLoaded', () => {
         channelEmotes.className = 'channel-emotes';
 
         // Add ALL emotes for this channel - no pagination
-        const channelEmoteKeys = Object.keys(channel.emotes);
+        const channelEmoteKeys = channelEmoteEntries.map(([key]) => key);
         console.log(`Channel ${channel.username} emote keys:`, channelEmoteKeys);
 
-        Object.entries(channel.emotes).forEach(([key, emoteData]) => {
+        channelEmoteEntries.forEach(([key]) => {
           const emoteName = key.replace(/:/g, '');
 
           // Get emote data from IndexedDB
