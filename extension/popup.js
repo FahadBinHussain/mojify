@@ -288,9 +288,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const storageUsed = document.getElementById('storage-used');
   const channelsCount = document.getElementById('channels-count');
   const clearAllStorageBtn = document.getElementById('clear-all-storage');
+  const recentGrid = document.getElementById('recent-grid');
+  const recentEmptyState = document.getElementById('recent-empty-state');
+  const recentCount = document.getElementById('recent-count');
 
   // Constants
   const ITEMS_PER_PAGE = 30;
+  const RECENT_ITEMS_LIMIT = 24;
 
   // State variables
   let allEmotes = {};
@@ -309,6 +313,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let lastChannelManagementRefreshAt = 0;
   let progressPollInterval = null;
   let downloadCompletionHandled = false;
+  let recentItems = [];
 
   function normalizeChannelIdentifier(value) {
     return String(value || '').trim().toLowerCase();
@@ -379,6 +384,116 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     return merged.filter((channel) => normalizeChannelIdentifier(channel?.id || channel?.username));
+  }
+
+  function sanitizeRecentLabel(value, fallback = 'Media') {
+    return String(value || fallback).trim().slice(0, 40) || fallback;
+  }
+
+  async function loadRecentItems() {
+    const result = await new Promise((resolve) => {
+      chrome.storage.local.get(['recentItems'], resolve);
+    });
+    recentItems = Array.isArray(result.recentItems) ? result.recentItems : [];
+    renderRecentGrid();
+  }
+
+  async function saveRecentItems() {
+    await chrome.storage.local.set({ recentItems });
+  }
+
+  async function addRecentItem(item) {
+    if (!item || !item.type) return;
+
+    const dedupeKey =
+      item.type === 'emote'
+        ? `emote:${item.key}`
+        : `remote:${item.mediaUrl}:${item.whatsappUrl || ''}`;
+
+    recentItems = [
+      {
+        ...item,
+        dedupeKey,
+        usedAt: Date.now()
+      },
+      ...recentItems.filter((entry) => entry?.dedupeKey !== dedupeKey)
+    ].slice(0, RECENT_ITEMS_LIMIT);
+
+    await saveRecentItems();
+    renderRecentGrid();
+  }
+
+  function createRecentThumbnailSrc(item) {
+    if (item.type === 'emote') {
+      const emoteData = emoteDataMap.get(item.key);
+      if (emoteData?.blob) {
+        return URL.createObjectURL(emoteData.blob);
+      }
+      return item.previewUrl || '';
+    }
+
+    return item.previewUrl || item.mediaUrl || '';
+  }
+
+  function renderRecentGrid() {
+    if (!recentGrid || !recentEmptyState || !recentCount) return;
+
+    recentGrid.innerHTML = '';
+    const total = recentItems.length;
+    recentCount.textContent = `${total} item${total === 1 ? '' : 's'}`;
+
+    if (total === 0) {
+      recentEmptyState.classList.remove('hidden');
+      return;
+    }
+
+    recentEmptyState.classList.add('hidden');
+
+    recentItems.forEach((item) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'recent-item';
+
+      const badge = document.createElement('span');
+      badge.className = 'recent-item-badge';
+      badge.textContent = item.type === 'emote' ? 'Emote' : 'Media';
+
+      const media = document.createElement('img');
+      media.className = 'recent-item-media';
+      media.alt = item.label || 'Recent item';
+
+      const mediaSrc = createRecentThumbnailSrc(item);
+      if (mediaSrc) {
+        media.src = mediaSrc;
+        if (String(mediaSrc).startsWith('blob:')) {
+          media.addEventListener('load', () => URL.revokeObjectURL(mediaSrc), { once: true });
+          media.addEventListener('error', () => URL.revokeObjectURL(mediaSrc), { once: true });
+        }
+      }
+
+      const label = document.createElement('span');
+      label.className = 'recent-item-label';
+      label.textContent = item.label || 'Recent item';
+
+      button.appendChild(badge);
+      button.appendChild(media);
+      button.appendChild(label);
+
+      button.addEventListener('click', () => {
+        if (item.type === 'emote') {
+          insertEmoteIntoActiveTab(item.key);
+          return;
+        }
+
+        insertRemoteMediaIntoActiveTab(item.mediaUrl, item.label || 'media', {
+          whatsappUrl: item.whatsappUrl || '',
+          skipRecentTracking: true,
+          previewUrl: item.previewUrl || item.mediaUrl || ''
+        });
+      });
+
+      recentGrid.appendChild(button);
+    });
   }
 
   // Notification function
@@ -590,6 +705,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         const emoteUrl = result.emoteMapping[emoteTrigger];
+        await addRecentItem({
+          type: 'emote',
+          key: emoteTrigger,
+          label: sanitizeRecentLabel(emoteTrigger, 'Emote'),
+          previewUrl: emoteUrl
+        });
 
         // Show loading indicator
         showToast('Inserting emote...', 'loading');
@@ -615,25 +736,22 @@ document.addEventListener('DOMContentLoaded', () => {
             reader.readAsDataURL(cachedEmote.blob);
           });
 
-          const filename = cachedEmote.filename || emoteTrigger + '.png';
+          let payloadDataUrl = base64Data;
+          let filename = cachedEmote.filename || emoteTrigger + '.png';
+          let payloadMimeType = cachedEmote.blob.type || 'image/png';
+          let payloadBlob = cachedEmote.blob;
 
-          // Send base64 data to content script
-          chrome.scripting.executeScript({
-            target: { tabId: currentTab.id },
-            func: insertEmoteFromBase64,
-            args: [base64Data, filename, emoteTrigger]
-          }, (result) => {
+          if (currentPlatform === 'whatsapp' && isWhatsAppAnimatedImage(cachedEmote.blob, filename)) {
+            const converted = await convertAnimatedImageForWhatsApp(cachedEmote.blob, filename);
+            payloadDataUrl = converted.dataUrl;
+            filename = converted.filename;
+            payloadMimeType = converted.blob.type || payloadMimeType;
+            payloadBlob = converted.blob;
+          }
+
+          const handleInsertResult = (response) => {
             // Reset loading state
             if (emoteElement) resetEmoteLoadingState(emoteElement);
-
-            // Check for connection errors
-            if (chrome.runtime.lastError) {
-              console.error('[Mojify] Connection error:', chrome.runtime.lastError);
-              showToast('Connection error - try refreshing the page', 'error');
-              return;
-            }
-
-            const response = result && result[0] && result[0].result;
             if (response && response.success) {
               showToast('Emote inserted successfully!');
             } else {
@@ -680,6 +798,82 @@ document.addEventListener('DOMContentLoaded', () => {
               diagInfo.appendChild(buttonContainer);
               document.body.appendChild(modal);
             }
+          };
+
+          if (currentPlatform === 'whatsapp') {
+            if (String(payloadMimeType).startsWith('image/')) {
+              try {
+                await writeBlobToClipboard(payloadBlob);
+
+                chrome.runtime.sendMessage({
+                  type: 'whatsappDebuggerPaste',
+                  tabId: currentTab.id
+                }, (response) => {
+                  if (chrome.runtime.lastError) {
+                    console.error('[Mojify] WhatsApp debugger connection error:', chrome.runtime.lastError);
+                    handleInsertResult({ success: false, error: 'Paste route failed to start' });
+                    return;
+                  }
+
+                  handleInsertResult(response);
+                });
+                return;
+              } catch (clipboardError) {
+                console.warn('[Mojify] WhatsApp image clipboard path failed, falling back to debugger insert:', clipboardError);
+              }
+            }
+
+            if (String(payloadMimeType).startsWith('video/')) {
+              await writeBlobToClipboard(payloadBlob);
+
+              chrome.runtime.sendMessage({
+                type: 'whatsappDebuggerPaste',
+                tabId: currentTab.id
+              }, (response) => {
+                if (chrome.runtime.lastError) {
+                  console.error('[Mojify] WhatsApp debugger connection error:', chrome.runtime.lastError);
+                  handleInsertResult({ success: false, error: 'Paste route failed to start' });
+                  return;
+                }
+
+                handleInsertResult(response);
+              });
+              return;
+            }
+
+            chrome.runtime.sendMessage({
+              type: 'whatsappDebuggerInsert',
+              tabId: currentTab.id,
+              dataUrl: payloadDataUrl,
+              filename,
+              mimeType: payloadMimeType
+            }, (response) => {
+              if (chrome.runtime.lastError) {
+                console.error('[Mojify] WhatsApp debugger connection error:', chrome.runtime.lastError);
+                handleInsertResult({ success: false, error: 'Debugger route failed to start' });
+                return;
+              }
+
+              handleInsertResult(response);
+            });
+            return;
+          }
+
+          // Send base64 data to content script
+          chrome.scripting.executeScript({
+            target: { tabId: currentTab.id },
+            func: insertEmoteFromBase64,
+            args: [payloadDataUrl, filename, emoteTrigger]
+          }, (result) => {
+            // Check for connection errors
+            if (chrome.runtime.lastError) {
+              console.error('[Mojify] Connection error:', chrome.runtime.lastError);
+              handleInsertResult({ success: false, error: 'Connection error - try refreshing the page' });
+              return;
+            }
+
+            const response = result && result[0] && result[0].result;
+            handleInsertResult(response);
           });
         } catch (error) {
           console.error('[Mojify] Error inserting emote:', error);
@@ -847,6 +1041,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         updateEmoteCount();
         filterAndDisplayEmotes();
+        renderRecentGrid();
         updateStorageInfo();
         updateChannelManagement();
         noEmotesMessage.style.display = 'none';
@@ -855,6 +1050,7 @@ document.addEventListener('DOMContentLoaded', () => {
         noEmotesMessage.style.display = 'flex';
         loadMoreContainer.classList.add('hidden');
         emoteCount.textContent = '0';
+        renderRecentGrid();
         updateStorageInfo();
         updateChannelManagement();
       }
@@ -926,6 +1122,227 @@ document.addEventListener('DOMContentLoaded', () => {
       // Display a subset of emotes for the current page
       renderEmoteGrid();
     }
+  }
+
+  function replaceFileExtension(filename, extension) {
+    const safeExtension = String(extension || '').replace(/^\./, '') || 'bin';
+    const baseName = String(filename || 'media').replace(/\.[^.]+$/, '');
+    return `${baseName}.${safeExtension}`;
+  }
+
+  function sanitizeDownloadFilename(filename) {
+    const safeName = String(filename || 'media')
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^\.+/, '')
+      .replace(/\.+$/, '');
+
+    return safeName || 'media.bin';
+  }
+
+  function isWhatsAppAnimatedImage(blob, filename = '') {
+    const type = String(blob?.type || '').toLowerCase();
+    const lowerName = String(filename || '').toLowerCase();
+    return (
+      type === 'image/gif' ||
+      lowerName.endsWith('.gif')
+    );
+  }
+
+  function clearGifFrameRect(rgba, frameInfo, canvasWidth) {
+    const startX = Math.max(0, frameInfo.x || 0);
+    const startY = Math.max(0, frameInfo.y || 0);
+    const endX = Math.min(canvasWidth, startX + (frameInfo.width || 0));
+    const endY = Math.min(rgba.length / 4 / canvasWidth, startY + (frameInfo.height || 0));
+
+    for (let y = startY; y < endY; y += 1) {
+      const rowOffset = (y * canvasWidth) * 4;
+      for (let x = startX; x < endX; x += 1) {
+        const pixelOffset = rowOffset + (x * 4);
+        rgba[pixelOffset] = 0;
+        rgba[pixelOffset + 1] = 0;
+        rgba[pixelOffset + 2] = 0;
+        rgba[pixelOffset + 3] = 0;
+      }
+    }
+  }
+
+  async function getSupportedWhatsAppVideoEncoderConfig(width, height) {
+    const evenWidth = width % 2 === 0 ? width : width + 1;
+    const evenHeight = height % 2 === 0 ? height : height + 1;
+    const candidateCodecs = [
+      'avc1.42E01E',
+      'avc1.42001E',
+      'avc1.4D401E',
+      'avc1.64001F'
+    ];
+
+    for (const codec of candidateCodecs) {
+      try {
+        const support = await VideoEncoder.isConfigSupported({
+          codec,
+          width: evenWidth,
+          height: evenHeight,
+          bitrate: 2_000_000,
+          framerate: 30,
+          avc: { format: 'avc' }
+        });
+
+        if (support?.supported) {
+          return {
+            codec,
+            width: evenWidth,
+            height: evenHeight,
+            bitrate: 2_000_000,
+            framerate: 30,
+            avc: { format: 'avc' }
+          };
+        }
+      } catch (error) {
+        // Try the next codec string.
+      }
+    }
+
+    return null;
+  }
+
+  async function convertAnimatedImageForWhatsApp(blob, filename = 'media.gif') {
+    if (!(window.GifReader && window.Mp4Muxer && window.VideoEncoder && window.VideoFrame)) {
+      throw new Error('Required browser video APIs are not available for GIF conversion');
+    }
+
+    const lowerName = String(filename || '').toLowerCase();
+    const mimeType = String(blob?.type || '').toLowerCase();
+    if (mimeType !== 'image/gif' && !lowerName.endsWith('.gif')) {
+      throw new Error('This WhatsApp conversion path currently supports GIF files only');
+    }
+
+    const gifBuffer = await blob.arrayBuffer();
+    const gifReader = new window.GifReader(new Uint8Array(gifBuffer));
+    const videoConfig = await getSupportedWhatsAppVideoEncoderConfig(gifReader.width, gifReader.height);
+    if (!videoConfig) {
+      throw new Error('H.264 encoding is not supported in this browser');
+    }
+    const logicalWidth = gifReader.width;
+    const logicalHeight = gifReader.height;
+    const outputWidth = videoConfig.width;
+    const outputHeight = videoConfig.height;
+    const frameCount = gifReader.numFrames();
+
+    if (!frameCount) {
+      throw new Error('GIF does not contain any frames');
+    }
+
+    const rgba = new Uint8ClampedArray(logicalWidth * logicalHeight * 4);
+    const restoreStates = new Array(frameCount).fill(null);
+    let previousFrameInfo = null;
+
+    const canvas = typeof OffscreenCanvas !== 'undefined'
+      ? new OffscreenCanvas(outputWidth, outputHeight)
+      : document.createElement('canvas');
+    canvas.width = outputWidth;
+    canvas.height = outputHeight;
+
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) {
+      throw new Error('Could not create canvas context for GIF conversion');
+    }
+
+    const muxerTarget = new window.Mp4Muxer.ArrayBufferTarget();
+    const muxer = new window.Mp4Muxer.Muxer({
+      target: muxerTarget,
+      fastStart: 'in-memory',
+      firstTimestampBehavior: 'offset',
+      video: {
+        codec: 'avc',
+        width: outputWidth,
+        height: outputHeight,
+        frameRate: 30
+      }
+    });
+
+    let encoderError = null;
+    const encoder = new VideoEncoder({
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      error: (error) => {
+        encoderError = error;
+      }
+    });
+
+    encoder.configure(videoConfig);
+
+    let timestampUs = 0;
+    for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+      const frameInfo = gifReader.frameInfo(frameIndex);
+
+      if (previousFrameInfo) {
+        if (previousFrameInfo.disposal === 2) {
+          clearGifFrameRect(rgba, previousFrameInfo, logicalWidth);
+        } else if (previousFrameInfo.disposal === 3 && restoreStates[frameIndex - 1]) {
+          rgba.set(restoreStates[frameIndex - 1]);
+        }
+      }
+
+      if (frameInfo.disposal === 3) {
+        restoreStates[frameIndex] = new Uint8ClampedArray(rgba);
+      }
+
+      gifReader.decodeAndBlitFrameRGBA(frameIndex, rgba);
+
+      const imageData = new ImageData(rgba, logicalWidth, logicalHeight);
+      context.clearRect(0, 0, outputWidth, outputHeight);
+      context.putImageData(imageData, 0, 0);
+
+      const durationMs = Math.max(20, ((frameInfo.delay || 10) * 10));
+      const durationUs = durationMs * 1000;
+      const videoFrame = new VideoFrame(canvas, {
+        timestamp: timestampUs,
+        duration: durationUs
+      });
+
+      encoder.encode(videoFrame, { keyFrame: frameIndex === 0 || frameIndex % 30 === 0 });
+      videoFrame.close();
+
+      timestampUs += durationUs;
+      previousFrameInfo = frameInfo;
+    }
+
+    await encoder.flush();
+    encoder.close();
+
+    if (encoderError) {
+      throw encoderError;
+    }
+
+    muxer.finalize();
+
+    const videoBlob = new Blob([muxerTarget.buffer], { type: 'video/mp4' });
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('Failed to encode converted MP4'));
+      reader.readAsDataURL(videoBlob);
+    });
+
+    return {
+      blob: videoBlob,
+      dataUrl,
+      filename: replaceFileExtension(filename, 'mp4')
+    };
+  }
+
+  async function writeBlobToClipboard(blob) {
+    if (!(navigator.clipboard && window.ClipboardItem)) {
+      throw new Error('Clipboard file copy is not supported in this browser');
+    }
+
+    const mimeType = blob.type || 'application/octet-stream';
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        [mimeType]: blob
+      })
+    ]);
   }
 
   function initMediaTabs() {
@@ -1128,6 +1545,12 @@ document.addEventListener('DOMContentLoaded', () => {
     giphyResults.forEach((item) => {
       const previewUrl = item?.images?.fixed_height_small?.url || item?.images?.preview_gif?.url;
       const fullGifUrl = item?.images?.original?.url || previewUrl;
+      const whatsappVideoUrl =
+        item?.images?.original?.mp4 ||
+        item?.images?.downsized_large?.mp4 ||
+        item?.images?.fixed_height?.mp4 ||
+        item?.images?.preview?.mp4 ||
+        null;
       if (!previewUrl || !fullGifUrl) return;
 
       const card = document.createElement('div');
@@ -1138,7 +1561,9 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
 
       card.addEventListener('click', () => {
-        insertRemoteMediaIntoActiveTab(fullGifUrl, item.title || 'giphy');
+        insertRemoteMediaIntoActiveTab(fullGifUrl, item.title || 'giphy', {
+          whatsappUrl: whatsappVideoUrl
+        });
       });
 
       grid.appendChild(card);
@@ -1184,6 +1609,12 @@ document.addEventListener('DOMContentLoaded', () => {
         item?.media_formats?.tinygif?.url ||
         item?.media?.[0]?.gif?.url ||
         previewUrl;
+      const whatsappVideoUrl =
+        item?.media_formats?.mp4?.url ||
+        item?.media_formats?.tinymp4?.url ||
+        item?.media?.[0]?.mp4?.url ||
+        item?.media?.[0]?.tinymp4?.url ||
+        null;
 
       if (!previewUrl || !fullGifUrl) return;
 
@@ -1195,7 +1626,9 @@ document.addEventListener('DOMContentLoaded', () => {
       `;
 
       card.addEventListener('click', () => {
-        insertRemoteMediaIntoActiveTab(fullGifUrl, item.title || 'klipy');
+        insertRemoteMediaIntoActiveTab(fullGifUrl, item.title || 'klipy', {
+          whatsappUrl: whatsappVideoUrl
+        });
       });
 
       grid.appendChild(card);
@@ -1254,7 +1687,7 @@ document.addEventListener('DOMContentLoaded', () => {
     emoteGrid.appendChild(section);
   }
 
-  function insertRemoteMediaIntoActiveTab(mediaUrl, title) {
+  function insertRemoteMediaIntoActiveTab(mediaUrl, title, options = {}) {
     chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
       if (tabs.length === 0) {
         showToast('No active tab found', 'error');
@@ -1262,9 +1695,23 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const currentTab = tabs[0];
+      const isWhatsApp = currentTab.url.includes('web.whatsapp.com');
+      const resolvedMediaUrl = isWhatsApp && options.whatsappUrl
+        ? options.whatsappUrl
+        : mediaUrl;
+
+      if (!options.skipRecentTracking) {
+        await addRecentItem({
+          type: 'remote',
+          mediaUrl,
+          whatsappUrl: options.whatsappUrl || '',
+          previewUrl: options.previewUrl || mediaUrl,
+          label: sanitizeRecentLabel(title, 'Media')
+        });
+      }
 
       try {
-        const response = await fetch(mediaUrl);
+        const response = await fetch(resolvedMediaUrl);
         if (!response.ok) {
           throw new Error('Failed to download media');
         }
@@ -1272,17 +1719,96 @@ document.addEventListener('DOMContentLoaded', () => {
         const blob = await response.blob();
         const safeTitle = (title || 'media').replace(/[^a-z0-9-_]/gi, '_').slice(0, 40);
         const extension = (blob.type.split('/')[1] || 'bin').replace(/[^a-z0-9]/gi, '');
-        const base64Data = await new Promise((resolve, reject) => {
+        let base64Data = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => resolve(reader.result);
           reader.onerror = () => reject(new Error('Failed to convert media'));
           reader.readAsDataURL(blob);
         });
+        let outputFilename = `${safeTitle}.${extension}`;
+        let outputMimeType = blob.type || 'application/octet-stream';
+        let outputBlob = blob;
+
+        if (isWhatsApp) {
+          if (isWhatsAppAnimatedImage(blob, outputFilename)) {
+            const converted = await convertAnimatedImageForWhatsApp(blob, outputFilename);
+            base64Data = converted.dataUrl;
+            outputFilename = converted.filename;
+            outputMimeType = converted.blob.type || outputMimeType;
+            outputBlob = converted.blob;
+          }
+
+          if (String(outputMimeType).startsWith('image/')) {
+            try {
+              await writeBlobToClipboard(outputBlob);
+
+              chrome.runtime.sendMessage({
+                type: 'whatsappDebuggerPaste',
+                tabId: currentTab.id
+              }, (response) => {
+                if (chrome.runtime.lastError) {
+                  showToast('Paste route failed to start', 'error');
+                  return;
+                }
+
+                if (response?.success) {
+                  showToast('Media pasted successfully', 'success');
+                } else {
+                  showToast(response?.error || 'Could not paste media', 'error');
+                }
+              });
+              return;
+            } catch (clipboardError) {
+              console.warn('[Mojify] WhatsApp image clipboard path failed, falling back to debugger insert:', clipboardError);
+            }
+          }
+
+          if (String(outputMimeType).startsWith('video/')) {
+            await writeBlobToClipboard(outputBlob);
+
+            chrome.runtime.sendMessage({
+              type: 'whatsappDebuggerPaste',
+              tabId: currentTab.id
+            }, (response) => {
+              if (chrome.runtime.lastError) {
+                showToast('Paste route failed to start', 'error');
+                return;
+              }
+
+              if (response?.success) {
+                showToast('Media pasted successfully', 'success');
+              } else {
+                showToast(response?.error || 'Could not paste media', 'error');
+              }
+            });
+            return;
+          }
+
+          chrome.runtime.sendMessage({
+            type: 'whatsappDebuggerInsert',
+            tabId: currentTab.id,
+            dataUrl: base64Data,
+            filename: outputFilename,
+            mimeType: outputMimeType
+          }, (response) => {
+            if (chrome.runtime.lastError) {
+              showToast('Debugger route failed to start', 'error');
+              return;
+            }
+
+            if (response?.success) {
+              showToast('Media inserted successfully', 'success');
+            } else {
+              showToast(response?.error || 'Could not insert media', 'error');
+            }
+          });
+          return;
+        }
 
         chrome.scripting.executeScript({
           target: { tabId: currentTab.id },
           func: insertEmoteFromBase64,
-          args: [base64Data, `${safeTitle}.${extension}`, `:${safeTitle}:`]
+          args: [base64Data, outputFilename, `:${safeTitle}:`]
         }, (result) => {
           if (chrome.runtime.lastError) {
             showToast('Connection error - refresh the page and retry', 'error');
@@ -2450,6 +2976,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function init() {
     initTabs();
     initMediaTabs();
+    loadRecentItems();
     loadEmotes();
     loadChannelIds();
     addButtonEffects();
