@@ -8,6 +8,8 @@
     "storage",
     "activeTab",
     "scripting",
+    "debugger",
+    "downloads",
     "contextMenus",
     "tabs",
     "clipboardWrite",

@@ -26,7 +26,11 @@
 
     <div class="tab-container">
       <div class="tab-header">
-        <button class="tab-btn active" data-tab="emotes" type="button">
+        <button class="tab-btn active" data-tab="recent" type="button">
+          <i class="fas fa-clock-rotate-left"></i>
+          <span>Recent</span>
+        </button>
+        <button class="tab-btn" data-tab="emotes" type="button">
           <i class="fas fa-grin"></i>
           <span>Emotes</span>
         </button>
@@ -38,8 +42,36 @@
       </div>
 
       <div class="tab-content">
+        <!-- Recent Tab -->
+        <div class="tab-pane active" id="recent-tab">
+          <div class="search-container recent-search-shell">
+            <div class="pane-meta">
+              <span class="pane-kicker">Recently Used</span>
+              <span class="pane-detail">Your last used emotes and reaction media</span>
+            </div>
+          </div>
+
+          <div class="emote-scroll recent-scroll">
+            <div class="recent-summary-card">
+              <div>
+                <span class="recent-summary-label">Quick Replay</span>
+                <h3>Jump back into the media you used last.</h3>
+              </div>
+              <span class="recent-summary-count" id="recent-count">0 items</span>
+            </div>
+
+            <div class="no-emotes-message recent-empty-state hidden" id="recent-empty-state">
+              <i class="fas fa-clock empty-icon"></i>
+              <p>No recently used items yet</p>
+              <p class="empty-subtitle">Use an emote, GIF, or reaction media once and it will show up here for fast reuse.</p>
+            </div>
+
+            <div class="recent-grid" id="recent-grid"></div>
+          </div>
+        </div>
+
         <!-- Emotes Tab -->
-        <div class="tab-pane active" id="emotes-tab">
+        <div class="tab-pane" id="emotes-tab">
           <div class="search-container">
             <div class="pane-meta">
               <span class="pane-kicker">Workspace</span>
@@ -330,6 +362,8 @@
     </div>
   </div>
 
+  <script src="vendor/omggif.js"></script>
+  <script src="vendor/mp4-muxer.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
