@@ -9,3 +9,5 @@ web/.env
 mojify.pem
 extension/mojify.pem
 dist/
+.tmp_vendor/
+*.tgz

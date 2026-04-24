@@ -1789,6 +1789,543 @@ function sendRuntimeMessage(message) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function sanitizeTempFilename(filename = 'mojify-upload.bin') {
+  const cleaned = String(filename)
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/\s+/g, '_')
+    .slice(0, 80);
+  return cleaned || 'mojify-upload.bin';
+}
+
+async function waitForDownloadCompletion(downloadId, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    let timeoutId = null;
+
+    const cleanup = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      chrome.downloads.onChanged.removeListener(handleChange);
+    };
+
+    const finishWithSearch = () => {
+      chrome.downloads.search({ id: downloadId }, (items) => {
+        const item = items && items[0];
+        if (!item || !item.filename) {
+          cleanup();
+          reject(new Error('Downloaded file path unavailable'));
+          return;
+        }
+        cleanup();
+        resolve(item);
+      });
+    };
+
+    const handleChange = (delta) => {
+      if (delta.id !== downloadId || !delta.state) {
+        return;
+      }
+
+      if (delta.state.current === 'complete') {
+        finishWithSearch();
+      } else if (delta.state.current === 'interrupted') {
+        cleanup();
+        reject(new Error('Temp file download interrupted'));
+      }
+    };
+
+    chrome.downloads.onChanged.addListener(handleChange);
+    timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error('Timed out preparing temp upload file'));
+    }, timeoutMs);
+
+    chrome.downloads.search({ id: downloadId }, (items) => {
+      const item = items && items[0];
+      if (item?.state === 'complete' && item.filename) {
+        cleanup();
+        resolve(item);
+      }
+    });
+  });
+}
+
+async function createDebuggerUploadFile(dataUrl, filename) {
+  const safeFilename = sanitizeTempFilename(filename);
+  const downloadId = await chrome.downloads.download({
+    url: dataUrl,
+    filename: `MojifyTemp/${Date.now()}-${safeFilename}`,
+    saveAs: false,
+    conflictAction: 'overwrite'
+  });
+
+  const downloadItem = await waitForDownloadCompletion(downloadId);
+  return {
+    downloadId,
+    filePath: downloadItem.filename
+  };
+}
+
+async function attachDebugger(tabId) {
+  const target = { tabId };
+  try {
+    await chrome.debugger.attach(target, '1.3');
+  } catch (error) {
+    if (!String(error?.message || '').includes('Another debugger is already attached')) {
+      throw error;
+    }
+  }
+
+  return target;
+}
+
+async function detachDebugger(target) {
+  try {
+    await chrome.debugger.detach(target);
+  } catch (error) {
+    console.log('[Mojify] Debugger detach skipped:', error.message);
+  }
+}
+
+async function sendDebuggerCommand(target, method, params = {}) {
+  return chrome.debugger.sendCommand(target, method, params);
+}
+
+async function clickWhatsAppAttachButton(target) {
+  const expression = `(() => {
+    const selectors = [
+      'button[title*="Attach"]',
+      'button[aria-label*="Attach"]',
+      'div[title*="Attach"]',
+      'div[aria-label*="Attach"]',
+      'span[data-icon="plus"]'
+    ];
+
+    for (const selector of selectors) {
+      const match = document.querySelector(selector);
+      if (!match) continue;
+      const clickable = match.closest('button,[role="button"],div') || match;
+      if (clickable && typeof clickable.click === 'function') {
+        clickable.click();
+        return { clicked: true, selector };
+      }
+    }
+
+    return { clicked: false };
+  })();`;
+
+  const result = await sendDebuggerCommand(target, 'Runtime.evaluate', {
+    expression,
+    returnByValue: true
+  });
+
+  return result?.result?.value || { clicked: false };
+}
+
+async function markWhatsAppFileInput(target, mediaKind = 'image') {
+  const expression = `(() => {
+    const mediaKind = "__MOJIFY_MEDIA_KIND__";
+    const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+    const score = (input) => {
+      const accept = String(input.accept || '').toLowerCase();
+      let value = 0;
+
+      if (accept.includes('json') || accept.includes('.json')) value -= 100;
+      if (accept.includes('text/') || accept.includes('.txt')) value -= 60;
+      if (accept.includes('application/')) value -= 40;
+      if (accept.includes('sticker')) value -= 40;
+      if (accept.includes('image/*') || accept.includes('video/*')) value += 8;
+      if (accept.includes('video/mp4')) value += 10;
+      if (accept.includes('video/3gpp')) value += 6;
+      if (!input.disabled) value += 5;
+      if (input.offsetWidth > 0 || input.offsetHeight > 0) value += 3;
+      if (input.closest('[role="dialog"]')) value += 10;
+      if (input.closest('footer')) value += 6;
+      if (accept.includes('image')) value += 4;
+      if (accept.includes('video')) value += 4;
+      if (mediaKind === 'video' && accept.includes('video')) value += 20;
+      if (mediaKind === 'image' && accept.includes('image')) value += 20;
+      if (mediaKind === 'video' && accept.includes('image') && !accept.includes('video')) value -= 25;
+      if (mediaKind === 'image' && accept.includes('video') && !accept.includes('image')) value -= 5;
+      return value;
+    };
+
+    const ranked = inputs
+      .map((input) => ({ input, score: score(input) }))
+      .filter(({ score }) => score > -20)
+      .sort((a, b) => b.score - a.score);
+
+    const pick = ranked[0]?.input || inputs[0] || null;
+    if (!pick) {
+      return { found: false, count: inputs.length };
+    }
+
+    const marker = 'mojify-debugger-target-' + Math.random().toString(36).slice(2);
+    pick.setAttribute('data-mojify-debugger-target', marker);
+    return {
+      found: true,
+      marker,
+      accept: pick.accept || '',
+      multiple: !!pick.multiple,
+      score: ranked[0]?.score || 0
+    };
+  })();`.replace('__MOJIFY_MEDIA_KIND__', mediaKind);
+
+  const result = await sendDebuggerCommand(target, 'Runtime.evaluate', {
+    expression,
+    returnByValue: true
+  });
+
+  return result?.result?.value || { found: false };
+}
+
+async function getNodeIdForMarker(target, marker) {
+  const documentRoot = await sendDebuggerCommand(target, 'DOM.getDocument', {});
+  const rootNodeId = documentRoot?.root?.nodeId;
+  if (!rootNodeId) {
+    throw new Error('Could not access WhatsApp DOM root');
+  }
+
+  const selector = `[data-mojify-debugger-target="${marker}"]`;
+  const queryResult = await sendDebuggerCommand(target, 'DOM.querySelector', {
+    nodeId: rootNodeId,
+    selector
+  });
+
+  if (!queryResult?.nodeId) {
+    throw new Error('WhatsApp file input marker not found');
+  }
+
+  return queryResult.nodeId;
+}
+
+async function findWhatsAppDropPoint(target) {
+  const expression = `(() => {
+    const candidates = [
+      'footer [contenteditable="true"][role="textbox"]',
+      'footer [contenteditable="true"]',
+      '[contenteditable="true"][role="textbox"]',
+      '[contenteditable="true"]',
+      'footer',
+      '#main footer',
+      '#main'
+    ];
+
+    const isVisible = (el) => {
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return rect.width > 0 &&
+        rect.height > 0 &&
+        style.visibility !== 'hidden' &&
+        style.display !== 'none';
+    };
+
+    for (const selector of candidates) {
+      const el = document.querySelector(selector);
+      if (!isVisible(el)) continue;
+      const rect = el.getBoundingClientRect();
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + Math.min(rect.height / 2, 24));
+      return {
+        found: true,
+        selector,
+        x,
+        y,
+        width: Math.round(rect.width),
+        height: Math.round(rect.height)
+      };
+    }
+
+    return { found: false };
+  })();`;
+
+  const result = await sendDebuggerCommand(target, 'Runtime.evaluate', {
+    expression,
+    returnByValue: true
+  });
+
+  return result?.result?.value || { found: false };
+}
+
+async function focusWhatsAppComposer(target) {
+  const expression = `(() => {
+    const selectors = [
+      'footer [contenteditable="true"][role="textbox"]',
+      'footer [contenteditable="true"]',
+      '[contenteditable="true"][role="textbox"]',
+      '[contenteditable="true"]'
+    ];
+
+    const isVisible = (el) => {
+      if (!el) return false;
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return rect.width > 0 &&
+        rect.height > 0 &&
+        style.visibility !== 'hidden' &&
+        style.display !== 'none';
+    };
+
+    for (const selector of selectors) {
+      const el = document.querySelector(selector);
+      if (!isVisible(el)) continue;
+      el.focus();
+      if (typeof el.click === 'function') {
+        el.click();
+      }
+      const rect = el.getBoundingClientRect();
+      return {
+        focused: true,
+        x: Math.round(rect.left + Math.min(rect.width / 2, 40)),
+        y: Math.round(rect.top + Math.min(rect.height / 2, 20))
+      };
+    }
+
+    return { focused: false };
+  })();`;
+
+  const result = await sendDebuggerCommand(target, 'Runtime.evaluate', {
+    expression,
+    returnByValue: true
+  });
+
+  return result?.result?.value || { focused: false };
+}
+
+async function dispatchWhatsAppPasteShortcut(target, point = null) {
+  if (point?.focused && Number.isFinite(point.x) && Number.isFinite(point.y)) {
+    await sendDebuggerCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      clickCount: 1
+    });
+    await sendDebuggerCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      clickCount: 1
+    });
+    await sleep(75);
+  }
+
+  await sendDebuggerCommand(target, 'Input.dispatchKeyEvent', {
+    type: 'rawKeyDown',
+    windowsVirtualKeyCode: 17,
+    code: 'ControlLeft',
+    key: 'Control',
+    modifiers: 2
+  });
+  await sendDebuggerCommand(target, 'Input.dispatchKeyEvent', {
+    type: 'keyDown',
+    windowsVirtualKeyCode: 86,
+    code: 'KeyV',
+    key: 'v',
+    text: 'v',
+    unmodifiedText: 'v',
+    modifiers: 2
+  });
+  await sendDebuggerCommand(target, 'Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    windowsVirtualKeyCode: 86,
+    code: 'KeyV',
+    key: 'v',
+    modifiers: 2
+  });
+  await sendDebuggerCommand(target, 'Input.dispatchKeyEvent', {
+    type: 'keyUp',
+    windowsVirtualKeyCode: 17,
+    code: 'ControlLeft',
+    key: 'Control',
+    modifiers: 0
+  });
+}
+
+async function dispatchWhatsAppFileDrop(target, dropPoint, downloadInfo, filename, mimeType = '') {
+  const dragData = {
+    items: [
+      {
+        mimeType: mimeType || 'application/octet-stream',
+        data: ''
+      }
+    ],
+    files: [downloadInfo.filePath],
+    dragOperationsMask: 1
+  };
+
+  await sendDebuggerCommand(target, 'Input.dispatchDragEvent', {
+    type: 'dragEnter',
+    x: dropPoint.x,
+    y: dropPoint.y,
+    data: dragData,
+    modifiers: 0
+  });
+
+  await sendDebuggerCommand(target, 'Input.dispatchDragEvent', {
+    type: 'dragOver',
+    x: dropPoint.x,
+    y: dropPoint.y,
+    data: dragData,
+    modifiers: 0
+  });
+
+  await sleep(100);
+
+  await sendDebuggerCommand(target, 'Input.dispatchDragEvent', {
+    type: 'drop',
+    x: dropPoint.x,
+    y: dropPoint.y,
+    data: dragData,
+    modifiers: 0
+  });
+}
+
+async function waitForWhatsAppPreview(target, timeoutMs = 6000) {
+  const expression = `(() => {
+    const selectors = [
+      '[data-animate-modal-popup="true"]',
+      'div[role="dialog"]',
+      '[data-icon="media-send"]',
+      '[data-icon="send"]',
+      'button[aria-label*="Send"]',
+      'button[title*="Send"]',
+      'video',
+      'canvas',
+      'img[src^="blob:"]'
+    ];
+
+    const hasVisibleMatch = selectors.some((selector) => {
+      const match = document.querySelector(selector);
+      if (!match) return false;
+      const rect = match.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+
+    if (hasVisibleMatch) return true;
+
+    const composerImages = Array.from(document.querySelectorAll('img')).some((img) => {
+      const src = String(img.getAttribute('src') || '');
+      const rect = img.getBoundingClientRect();
+      return rect.width > 40 &&
+        rect.height > 40 &&
+        (src.startsWith('blob:') || src.startsWith('data:image/'));
+    });
+
+    return composerImages;
+  })();`;
+
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const result = await sendDebuggerCommand(target, 'Runtime.evaluate', {
+      expression,
+      returnByValue: true
+    });
+
+    if (result?.result?.value === true) {
+      return true;
+    }
+
+    await sleep(150);
+  }
+
+  return false;
+}
+
+async function insertMediaIntoWhatsAppWithDebugger(tabId, dataUrl, filename, mimeType = '') {
+  let target = null;
+  let downloadInfo = null;
+
+  try {
+    downloadInfo = await createDebuggerUploadFile(dataUrl, filename);
+    target = await attachDebugger(tabId);
+
+    await sendDebuggerCommand(target, 'DOM.enable');
+    await sendDebuggerCommand(target, 'Runtime.enable');
+    const mediaKind = String(mimeType).startsWith('video/') ? 'video' : 'image';
+
+    if (mediaKind === 'image') {
+      await clickWhatsAppAttachButton(target);
+      await sleep(450);
+
+      const inputInfo = await markWhatsAppFileInput(target, mediaKind);
+      if (!inputInfo.found) {
+        return { success: false, error: 'WhatsApp file input not found' };
+      }
+
+      const nodeId = await getNodeIdForMarker(target, inputInfo.marker);
+      await sendDebuggerCommand(target, 'DOM.setFileInputFiles', {
+        nodeId,
+        files: [downloadInfo.filePath]
+      });
+    } else {
+      const dropPoint = await findWhatsAppDropPoint(target);
+      if (!dropPoint.found) {
+        return { success: false, error: 'WhatsApp drop target not found' };
+      }
+
+      await dispatchWhatsAppFileDrop(target, dropPoint, downloadInfo, filename, mimeType);
+    }
+
+    const previewOpened = await waitForWhatsAppPreview(target);
+    if (!previewOpened) {
+      return { success: false, error: 'WhatsApp did not open media preview' };
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('[Mojify] WhatsApp debugger insert failed:', error);
+    return { success: false, error: error.message || 'WhatsApp debugger insert failed' };
+  } finally {
+    if (target) {
+      await detachDebugger(target);
+    }
+    if (downloadInfo?.downloadId) {
+      try {
+        await chrome.downloads.erase({ id: downloadInfo.downloadId });
+      } catch (error) {
+        console.log('[Mojify] Temp download erase skipped:', error.message);
+      }
+    }
+  }
+}
+
+async function pasteMediaIntoWhatsAppWithDebugger(tabId) {
+  let target = null;
+
+  try {
+    target = await attachDebugger(tabId);
+    await sendDebuggerCommand(target, 'Runtime.enable');
+
+    const composerPoint = await focusWhatsAppComposer(target);
+    if (!composerPoint.focused) {
+      return { success: false, error: 'WhatsApp message box not found' };
+    }
+
+    await dispatchWhatsAppPasteShortcut(target, composerPoint);
+
+    const previewOpened = await waitForWhatsAppPreview(target);
+    if (!previewOpened) {
+      return { success: false, error: 'WhatsApp did not open media preview after paste' };
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('[Mojify] WhatsApp debugger paste failed:', error);
+    return { success: false, error: error.message || 'WhatsApp debugger paste failed' };
+  } finally {
+    if (target) {
+      await detachDebugger(target);
+    }
+  }
+}
+
 async function handleChannelIdsChanged(oldChannelIds = [], newChannelIds = []) {
   console.log('[Auto-Download] Channel IDs changed:', { old: oldChannelIds, new: newChannelIds });
 
@@ -2155,6 +2692,20 @@ function handleRuntimeMessage(request, sender, sendResponse) {
 
   if (request.type === 'insertEmote') {
     insertEmoteIntoMessenger(sender.tab.id, request.emoteUrl, request.emoteTrigger)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.type === 'whatsappDebuggerInsert') {
+    insertMediaIntoWhatsAppWithDebugger(request.tabId, request.dataUrl, request.filename, request.mimeType)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.type === 'whatsappDebuggerPaste') {
+    pasteMediaIntoWhatsAppWithDebugger(request.tabId)
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
