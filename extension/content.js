@@ -92,6 +92,24 @@ function debugLog(...args) {
   console.log("[Mojify Debug]", ...args);
 }
 
+function getCachedEmotePreviewSrc(cachedEmote) {
+  if (!cachedEmote) return '';
+
+  if (cachedEmote.blob instanceof Blob) {
+    return URL.createObjectURL(cachedEmote.blob);
+  }
+
+  if (typeof cachedEmote.dataUrl === 'string' && cachedEmote.dataUrl.startsWith('data:')) {
+    return cachedEmote.dataUrl;
+  }
+
+  if (typeof cachedEmote.url === 'string' && cachedEmote.url) {
+    return cachedEmote.url;
+  }
+
+  return '';
+}
+
 // Load emote mapping from storage - retry mechanism
 function loadEmoteMapping() {
   try {
@@ -459,7 +477,7 @@ async function showDiscordEmoteSuggestions(query) {
     // Render all emotes at once
     emotesData.forEach(({ key: emoteKey, data: cachedEmote }, index) => {
         // Only render if we have valid emote data
-        if (!cachedEmote || !cachedEmote.dataUrl) return;
+        if (!cachedEmote) return;
 
         const emoteItem = document.createElement('div');
         emoteItem.style.cssText = `
@@ -482,21 +500,9 @@ async function showDiscordEmoteSuggestions(query) {
             object-fit: contain;
         `;
 
-        if (cachedEmote.dataUrl) {
-            // Convert dataUrl back to blob for display with URL.createObjectURL
-            const base64 = cachedEmote.dataUrl.split(',')[1];
-            const mimeMatch = cachedEmote.dataUrl.match(/data:([^;]+)/);
-            const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
-
-            const byteCharacters = atob(base64);
-            const byteNumbers = new Array(byteCharacters.length);
-            for (let i = 0; i < byteCharacters.length; i++) {
-                byteNumbers[i] = byteCharacters.charCodeAt(i);
-            }
-            const byteArray = new Uint8Array(byteNumbers);
-            const blob = new Blob([byteArray], { type: mimeType });
-
-            emoteImg.src = URL.createObjectURL(blob);
+        const previewSrc = getCachedEmotePreviewSrc(cachedEmote);
+        if (previewSrc) {
+            emoteImg.src = previewSrc;
         }
 
         emoteItem.appendChild(emoteImg);
@@ -921,6 +927,18 @@ let selectedEmoteIndex = -1;
 let emoteElements = [];
 let isNavigatingKeyboard = false;
 let minibarFocused = false;
+let keyboardNavigationResetTimeout = null;
+
+function setKeyboardNavigationActive(duration = 260) {
+    isNavigatingKeyboard = true;
+    if (keyboardNavigationResetTimeout) {
+        clearTimeout(keyboardNavigationResetTimeout);
+    }
+    keyboardNavigationResetTimeout = setTimeout(() => {
+        isNavigatingKeyboard = false;
+        keyboardNavigationResetTimeout = null;
+    }, duration);
+}
 
 function createEmoteSuggestionBar() {
     if (document.getElementById('mojify-suggestion-bar')) return;
@@ -1067,21 +1085,9 @@ function showEmoteSuggestions(query, inputElement) {
         // Load emote preview if available
         if (typeof emoteDB !== 'undefined') {
             emoteDB.getEmote(emoteKey).then(cachedEmote => {
-                if (cachedEmote && cachedEmote.dataUrl) {
-                    // Convert dataUrl back to blob for display with URL.createObjectURL
-                    const base64 = cachedEmote.dataUrl.split(',')[1];
-                    const mimeMatch = cachedEmote.dataUrl.match(/data:([^;]+)/);
-                    const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
-
-                    const byteCharacters = atob(base64);
-                    const byteNumbers = new Array(byteCharacters.length);
-                    for (let i = 0; i < byteCharacters.length; i++) {
-                        byteNumbers[i] = byteCharacters.charCodeAt(i);
-                    }
-                    const byteArray = new Uint8Array(byteNumbers);
-                    const blob = new Blob([byteArray], { type: mimeType });
-
-                    emoteImg.src = URL.createObjectURL(blob);
+                const previewSrc = getCachedEmotePreviewSrc(cachedEmote);
+                if (previewSrc) {
+                    emoteImg.src = previewSrc;
                 }
             }).catch(() => {
                 // Do nothing - only show emotes with dataUrl
@@ -1176,7 +1182,21 @@ function getSavedPosition() {
     const hostname = window.location.hostname;
     const storageKey = `mojify-suggestion-pos-${hostname}`;
     const saved = localStorage.getItem(storageKey);
-    return saved ? JSON.parse(saved) : null;
+    if (!saved) return null;
+
+    try {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed?.x === 'number' && typeof parsed?.y === 'number') {
+            return parsed;
+        }
+        if (typeof parsed?.left === 'number' && typeof parsed?.top === 'number') {
+            return { x: parsed.left, y: parsed.top };
+        }
+    } catch (error) {
+        debugLog('Failed to parse saved suggestion position:', error);
+    }
+
+    return null;
 }
 
 // Save position for current site
@@ -1192,29 +1212,53 @@ function positionSuggestionBarFromStorage(inputElement) {
     if (!suggestionBar) return;
 
     const savedPos = getSavedPosition();
+    const barRect = suggestionBar.getBoundingClientRect();
+
+    if (inputElement) {
+        const rect = inputElement.getBoundingClientRect();
+        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+        const desiredWidth = Math.min(300, Math.max(rect.width, 220));
+        const desiredHeight = Math.max(barRect.height || 96, 96);
+        const gap = 8;
+
+        let anchorLeft = rect.left + scrollLeft;
+        let anchorTop = rect.top + scrollTop - desiredHeight - gap;
+
+        const wouldGoOffTop = anchorTop < scrollTop + 12;
+        if (wouldGoOffTop) {
+            anchorTop = rect.bottom + scrollTop + gap;
+        }
+
+        const maxLeft = scrollLeft + window.innerWidth - desiredWidth - 12;
+        anchorLeft = Math.min(Math.max(anchorLeft, scrollLeft + 12), maxLeft);
+
+        if (savedPos) {
+            const distanceFromAnchor = Math.hypot(savedPos.x - anchorLeft, savedPos.y - anchorTop);
+            if (distanceFromAnchor <= 180) {
+                suggestionBar.style.left = `${savedPos.x}px`;
+                suggestionBar.style.top = `${savedPos.y}px`;
+                suggestionBar.style.width = `${desiredWidth}px`;
+                return;
+            }
+        }
+
+        suggestionBar.style.left = `${anchorLeft}px`;
+        suggestionBar.style.top = `${anchorTop}px`;
+        suggestionBar.style.width = `${desiredWidth}px`;
+        return;
+    }
 
     if (savedPos) {
-        // Use saved position
         suggestionBar.style.left = `${savedPos.x}px`;
         suggestionBar.style.top = `${savedPos.y}px`;
         suggestionBar.style.width = '300px';
-    } else {
-        // Default position above input
-        if (inputElement) {
-            const rect = inputElement.getBoundingClientRect();
-            const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-            const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
-
-            suggestionBar.style.left = `${rect.left + scrollLeft}px`;
-            suggestionBar.style.top = `${rect.top + scrollTop - 220}px`; // Above input
-            suggestionBar.style.width = `${Math.min(300, rect.width)}px`;
-        } else {
-            // Fallback to center screen
-            suggestionBar.style.left = '50px';
-            suggestionBar.style.top = '50px';
-            suggestionBar.style.width = '300px';
-        }
+        return;
     }
+
+    suggestionBar.style.left = '50px';
+    suggestionBar.style.top = '50px';
+    suggestionBar.style.width = '300px';
 }
 
 // Make element draggable
@@ -1629,9 +1673,8 @@ document.addEventListener('keydown', (event) => {
             event.preventDefault();
             event.stopPropagation();
             event.stopImmediatePropagation();
-            isNavigatingKeyboard = true;
+            setKeyboardNavigationActive();
             selectFirstEmote();
-            setTimeout(() => { isNavigatingKeyboard = false; }, 200);
             break;
         case 'ArrowLeft':
             // Only navigate within minibar if it's focused
@@ -1639,9 +1682,8 @@ document.addEventListener('keydown', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation();
-                isNavigatingKeyboard = true;
+                setKeyboardNavigationActive();
                 selectPrevEmote();
-                setTimeout(() => { isNavigatingKeyboard = false; }, 200);
             }
             break;
         case 'ArrowRight':
@@ -1650,9 +1692,8 @@ document.addEventListener('keydown', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation();
-                isNavigatingKeyboard = true;
+                setKeyboardNavigationActive();
                 selectNextEmote();
-                setTimeout(() => { isNavigatingKeyboard = false; }, 200);
             }
             break;
         case 'ArrowDown':
@@ -1661,9 +1702,8 @@ document.addEventListener('keydown', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation();
-                isNavigatingKeyboard = true;
+                setKeyboardNavigationActive();
                 unfocusMinibar();
-                setTimeout(() => { isNavigatingKeyboard = false; }, 200);
             }
             break;
         case 'Enter':
@@ -1671,7 +1711,7 @@ document.addEventListener('keydown', (event) => {
                 event.preventDefault();
                 event.stopPropagation();
                 event.stopImmediatePropagation();
-                isNavigatingKeyboard = true;
+                setKeyboardNavigationActive();
 
                 // Use Discord-specific insertion if we're in Discord mode
                 if (getCurrentPlatform() === 'discord' && discordState === 'INTERCEPTING') {
@@ -1679,22 +1719,27 @@ document.addEventListener('keydown', (event) => {
                 } else {
                     insertSelectedEmote();
                 }
-
-                setTimeout(() => { isNavigatingKeyboard = false; }, 200);
             }
             break;
         case 'Escape':
             event.preventDefault();
             event.stopPropagation();
             event.stopImmediatePropagation();
-            isNavigatingKeyboard = true;
+            setKeyboardNavigationActive();
             hideSuggestions();
-            setTimeout(() => { isNavigatingKeyboard = false; }, 200);
             break;
     }
 }, true);
 
 async function handleInputEvent(event) {
+  if (
+    event.type === 'keyup' &&
+    ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter', 'Escape'].includes(event.key)
+  ) {
+    debugLog("Skipping keyup processing for navigation key:", event.key);
+    return;
+  }
+
   // Skip processing if we're navigating with keyboard
   if (isNavigatingKeyboard) {
     debugLog("Skipping input processing - keyboard navigation active");
