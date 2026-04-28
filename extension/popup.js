@@ -268,6 +268,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const loadMoreContainer = document.getElementById('load-more');
   const loadMoreBtn = document.getElementById('load-more-btn');
   const searchInput = document.getElementById('search-emotes');
+  const sortSelect = document.getElementById('emote-sort');
+  const sortToolbar = document.querySelector('.sort-toolbar');
+  const channelFilterBar = document.getElementById('channel-filter-bar');
   const mediaTabButtons = document.querySelectorAll('.media-tab-btn');
   const tabButtons = document.querySelectorAll('.tab-btn');
   const tabPanes = document.querySelectorAll('.tab-pane');
@@ -294,7 +297,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Constants
   const ITEMS_PER_PAGE = 30;
-  const RECENT_ITEMS_LIMIT = 24;
+  const RECENT_ITEMS_LIMIT = 60;
 
   // State variables
   let allEmotes = {};
@@ -303,6 +306,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentPage = 1;
   let searchTerm = '';
   let activeMediaTab = 'twitch';
+  let activeSortMode = 'source';
+  let activeChannelFilter = 'all';
   let giphyResults = [];
   let klipyResults = [];
   let pixabayResults = [];
@@ -314,6 +319,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let progressPollInterval = null;
   let downloadCompletionHandled = false;
   let recentItems = [];
+  let favoriteEmotes = new Set();
 
   function normalizeChannelIdentifier(value) {
     return String(value || '').trim().toLowerCase();
@@ -396,6 +402,129 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     recentItems = Array.isArray(result.recentItems) ? result.recentItems : [];
     renderRecentGrid();
+  }
+
+  async function loadFavoriteEmotes() {
+    const result = await new Promise((resolve) => {
+      chrome.storage.local.get(['favoriteEmotes'], resolve);
+    });
+    favoriteEmotes = new Set(Array.isArray(result.favoriteEmotes) ? result.favoriteEmotes : []);
+    renderEmoteGrid();
+  }
+
+  async function loadSavedSortMode() {
+    const result = await new Promise((resolve) => {
+      chrome.storage.local.get(['emoteSortMode'], resolve);
+    });
+
+    const savedMode = result.emoteSortMode;
+    if (typeof savedMode === 'string' && savedMode) {
+      activeSortMode = savedMode;
+      if (sortSelect) {
+        sortSelect.value = savedMode;
+      }
+    }
+  }
+
+  async function saveSortMode(mode) {
+    await chrome.storage.local.set({ emoteSortMode: mode });
+  }
+
+  async function saveFavoriteEmotes() {
+    await chrome.storage.local.set({ favoriteEmotes: Array.from(favoriteEmotes) });
+  }
+
+  async function toggleFavoriteEmote(emoteKey) {
+    if (!emoteKey) return;
+    if (favoriteEmotes.has(emoteKey)) {
+      favoriteEmotes.delete(emoteKey);
+    } else {
+      favoriteEmotes.add(emoteKey);
+    }
+    await saveFavoriteEmotes();
+    filterAndDisplayEmotes(false);
+  }
+
+  function getRecentTimestampForEmote(emoteKey) {
+    const match = recentItems.find((item) => item.type === 'emote' && item.key === emoteKey);
+    return match?.usedAt || 0;
+  }
+
+  function compareEmoteKeysByMode(a, b, mode = activeSortMode) {
+    const cleanA = a.replace(/:/g, '').toLowerCase();
+    const cleanB = b.replace(/:/g, '').toLowerCase();
+
+    if (mode === 'alphabetical') {
+      return cleanA.localeCompare(cleanB);
+    }
+
+    if (mode === 'recent') {
+      const recentDiff = getRecentTimestampForEmote(b) - getRecentTimestampForEmote(a);
+      return recentDiff !== 0 ? recentDiff : cleanA.localeCompare(cleanB);
+    }
+
+    if (mode === 'favorites') {
+      const favoriteDiff = Number(favoriteEmotes.has(b)) - Number(favoriteEmotes.has(a));
+      if (favoriteDiff !== 0) return favoriteDiff;
+      return cleanA.localeCompare(cleanB);
+    }
+
+    return 0;
+  }
+
+  function sortEmoteKeys(keys, mode = activeSortMode) {
+    if (mode === 'source') return [...keys];
+    return [...keys].sort((a, b) => compareEmoteKeysByMode(a, b, mode));
+  }
+
+  function updateSortToolbarVisibility() {
+    if (!sortToolbar) return;
+    sortToolbar.style.display = activeMediaTab === 'twitch' ? 'flex' : 'none';
+    if (channelFilterBar) {
+      channelFilterBar.style.display = activeMediaTab === 'twitch' ? 'flex' : 'none';
+    }
+  }
+
+  function getVisibleTwitchChannels() {
+    return channels.filter((channel) => Object.keys(channel?.emotes || {}).some((key) => emoteDataMap.has(key)));
+  }
+
+  function renderChannelFilterBar() {
+    if (!channelFilterBar) return;
+
+    channelFilterBar.innerHTML = '';
+    const visibleChannels = getVisibleTwitchChannels();
+    if (visibleChannels.length === 0) {
+      channelFilterBar.style.display = 'none';
+      return;
+    }
+
+    channelFilterBar.style.display = activeMediaTab === 'twitch' ? 'flex' : 'none';
+
+    const createChip = (label, value) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `channel-filter-chip ${activeChannelFilter === value ? 'active' : ''}`;
+      button.textContent = label;
+      button.addEventListener('click', () => {
+        activeChannelFilter = value;
+        renderChannelFilterBar();
+        filterAndDisplayEmotes(false);
+      });
+      return button;
+    };
+
+    channelFilterBar.appendChild(createChip('All', 'all'));
+    visibleChannels.forEach((channel) => {
+      channelFilterBar.appendChild(createChip(channel.username, channel.id || channel.username));
+    });
+  }
+
+  function getActiveSortMode() {
+    if (sortSelect?.value) {
+      activeSortMode = sortSelect.value;
+    }
+    return activeSortMode || 'source';
   }
 
   async function saveRecentItems() {
@@ -696,15 +825,13 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      // Get emote URL from storage
-      chrome.storage.local.get(['emoteMapping'], async (result) => {
-        if (!result.emoteMapping || !result.emoteMapping[emoteTrigger]) {
-          showToast('Emote not found', 'error');
-          if (emoteElement) resetEmoteLoadingState(emoteElement);
-          return;
-        }
+      // Resolve directly from our loaded UI/cache sources first
+      (async () => {
+        const emoteUrl =
+          allEmotes[emoteTrigger] ||
+          emoteDataMap.get(emoteTrigger)?.url ||
+          '';
 
-        const emoteUrl = result.emoteMapping[emoteTrigger];
         await addRecentItem({
           type: 'emote',
           key: emoteTrigger,
@@ -880,7 +1007,7 @@ document.addEventListener('DOMContentLoaded', () => {
           showToast(`Error: ${error.message}`, 'error');
           if (emoteElement) resetEmoteLoadingState(emoteElement);
         }
-      });
+      })();
     });
   }
 
@@ -1040,6 +1167,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         updateEmoteCount();
+        const visibleChannelIds = getVisibleTwitchChannels().map((channel) => channel.id || channel.username);
+        if (activeChannelFilter !== 'all' && !visibleChannelIds.includes(activeChannelFilter)) {
+          activeChannelFilter = 'all';
+        }
+        renderChannelFilterBar();
         filterAndDisplayEmotes();
         renderRecentGrid();
         updateStorageInfo();
@@ -1050,6 +1182,8 @@ document.addEventListener('DOMContentLoaded', () => {
         noEmotesMessage.style.display = 'flex';
         loadMoreContainer.classList.add('hidden');
         emoteCount.textContent = '0';
+        activeChannelFilter = 'all';
+        renderChannelFilterBar();
         renderRecentGrid();
         updateStorageInfo();
         updateChannelManagement();
@@ -1074,6 +1208,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Filter emotes based on search term
   function filterAndDisplayEmotes(resetPage = true) {
+    const sortMode = getActiveSortMode();
+
     if (activeMediaTab === 'giphy') {
       if (resetPage) {
         currentPage = 1;
@@ -1112,15 +1248,13 @@ document.addEventListener('DOMContentLoaded', () => {
       renderEmoteGrid();
     } else {
       // If searching, filter all emotes
-      displayedEmotes = emoteKeys
-        .filter(key => {
+      displayedEmotes = sortEmoteKeys(
+        emoteKeys.filter(key => {
           const emoteName = key.replace(/:/g, '').toLowerCase();
           return emoteName.includes(searchTerm.toLowerCase());
-        })
-        .sort((a, b) => {
-          // Sort alphabetically
-          return a.localeCompare(b);
-        });
+        }),
+        sortMode
+      );
 
       // Display a subset of emotes for the current page
       renderEmoteGrid();
@@ -1142,6 +1276,43 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/\.+$/, '');
 
     return safeName || 'media.bin';
+  }
+
+  function createEmoteItemElement(key, emoteDbData) {
+    if (!emoteDbData?.blob) return null;
+
+    const emoteName = key.replace(/:/g, '');
+    const emoteItem = document.createElement('div');
+    emoteItem.className = 'emote-item';
+    emoteItem.setAttribute('data-emote-key', key);
+
+    const imageUrl = URL.createObjectURL(emoteDbData.blob);
+
+    emoteItem.innerHTML = `
+      <button class="favorite-toggle ${favoriteEmotes.has(key) ? 'active' : ''}" type="button" aria-label="Toggle favorite">
+        <i class="fas fa-star"></i>
+      </button>
+      <div class="emote-img-container">
+        <img src="${imageUrl}" alt="${emoteName}" class="emote-img">
+      </div>
+      <div class="emote-details">
+        <div class="emote-name">${emoteName}</div>
+        <div class="emote-trigger">${key}</div>
+      </div>
+    `;
+
+    const favoriteButton = emoteItem.querySelector('.favorite-toggle');
+    favoriteButton?.addEventListener('click', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await toggleFavoriteEmote(key);
+    });
+
+    emoteItem.addEventListener('click', () => {
+      insertEmoteIntoActiveTab(key, emoteItem);
+    });
+
+    return emoteItem;
   }
 
   function isWhatsAppAnimatedImage(blob, filename = '') {
@@ -1349,6 +1520,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function initMediaTabs() {
+    updateSortToolbarVisibility();
     mediaTabButtons.forEach((button) => {
       button.addEventListener('click', () => {
         const selectedTab = button.dataset.mediaTab;
@@ -1357,6 +1529,7 @@ document.addEventListener('DOMContentLoaded', () => {
         activeMediaTab = selectedTab;
         mediaTabButtons.forEach(btn => btn.classList.remove('active'));
         button.classList.add('active');
+        updateSortToolbarVisibility();
         filterAndDisplayEmotes(true);
       });
     });
@@ -1834,6 +2007,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Render the emote grid
   function renderEmoteGrid() {
+    const sortMode = getActiveSortMode();
     emoteGrid.innerHTML = '';
 
     console.log('Rendering emote grid. Search term:', searchTerm);
@@ -1882,35 +2056,9 @@ document.addEventListener('DOMContentLoaded', () => {
       searchEmotes.className = 'channel-emotes';
 
       emotesToShow.forEach(key => {
-        const emoteName = key.replace(/:/g, '');
-
-        // Get emote data from IndexedDB
         const emoteDbData = emoteDataMap.get(key);
-
-        // Only render if we have IndexedDB data with blob
-        if (emoteDbData?.blob) {
-          const emoteItem = document.createElement('div');
-          emoteItem.className = 'emote-item';
-          emoteItem.setAttribute('data-emote-key', key);
-
-          // Create image URL from blob
-          const imageUrl = URL.createObjectURL(emoteDbData.blob);
-
-          emoteItem.innerHTML = `
-            <div class="emote-img-container">
-              <img src="${imageUrl}" alt="${emoteName}" class="emote-img">
-            </div>
-            <div class="emote-details">
-              <div class="emote-name">${emoteName}</div>
-              <div class="emote-trigger">${key}</div>
-            </div>
-          `;
-
-          // Add click event to insert emote
-          emoteItem.addEventListener('click', () => {
-            insertEmoteIntoActiveTab(key, emoteItem);
-          });
-
+        const emoteItem = createEmoteItemElement(key, emoteDbData);
+        if (emoteItem) {
           searchEmotes.appendChild(emoteItem);
         }
       });
@@ -1927,116 +2075,51 @@ document.addEventListener('DOMContentLoaded', () => {
         loadMoreContainer.classList.add('hidden');
       }
     } else {
-      // Group emotes by channel - show all emotes for each channel
-      console.log(`Showing emotes by channel. Total channels: ${channels.length}`);
+      const visibleChannels = getVisibleTwitchChannels();
+      renderChannelFilterBar();
 
-      // Always hide load more button in channel view
-      loadMoreContainer.classList.add('hidden');
+      const channelsToRender = activeChannelFilter === 'all'
+        ? visibleChannels
+        : visibleChannels.filter((channel) => (channel.id || channel.username) === activeChannelFilter);
 
-      channels.forEach(channel => {
-        const channelEmoteEntries = Object.entries(channel.emotes || {}).filter(([key]) => emoteDataMap.has(key));
+      const flattenedEntries = [];
+      channelsToRender.forEach((channel) => {
+        const channelEntries = Object.entries(channel.emotes || {})
+          .filter(([key]) => emoteDataMap.has(key))
+          .map(([key]) => ({ key, channel }));
 
-        if (channelEmoteEntries.length === 0) {
-          console.log(`Channel ${channel.username} has no emotes, skipping`);
-          return;
+        if (sortMode !== 'source') {
+          channelEntries.sort((a, b) => compareEmoteKeysByMode(a.key, b.key, sortMode));
         }
 
-        // Count emotes for this channel
-        const emoteCount = channelEmoteEntries.length;
-        console.log(`Rendering channel ${channel.username} with ${emoteCount} emotes`);
-
-        // Create channel section
-        const channelSection = document.createElement('div');
-        channelSection.className = 'channel-section';
-        channelSection.setAttribute('data-channel-id', channel.id);
-
-        // Create channel header with username
-        const channelHeader = document.createElement('div');
-        channelHeader.className = 'channel-header';
-
-        channelHeader.innerHTML = `
-          <div class="channel-header-content">
-            <span class="channel-name">${channel.username}</span>
-            <span class="channel-emote-count">${emoteCount} emotes</span>
-          </div>
-          <div class="channel-toggle-icon"></div>
-        `;
-
-        // Create channel emotes container
-        const channelEmotes = document.createElement('div');
-        channelEmotes.className = 'channel-emotes';
-
-        // Add ALL emotes for this channel - no pagination
-        const channelEmoteKeys = channelEmoteEntries.map(([key]) => key);
-        console.log(`Channel ${channel.username} emote keys:`, channelEmoteKeys);
-
-        channelEmoteEntries.forEach(([key]) => {
-          const emoteName = key.replace(/:/g, '');
-
-          // Get emote data from IndexedDB
-          const emoteDbData = emoteDataMap.get(key);
-
-          // Only render if we have IndexedDB data with blob
-          if (emoteDbData?.blob) {
-            const emoteItem = document.createElement('div');
-            emoteItem.className = 'emote-item';
-            emoteItem.setAttribute('data-emote-key', key);
-
-            // Create image URL from blob
-            const imageUrl = URL.createObjectURL(emoteDbData.blob);
-
-            emoteItem.innerHTML = `
-              <div class="emote-img-container">
-                <img src="${imageUrl}" alt="${emoteName}" class="emote-img">
-              </div>
-              <div class="emote-details">
-                <div class="emote-name">${emoteName}</div>
-              <div class="emote-trigger">${key}</div>
-            `;
-
-            // Add click event to insert emote
-            emoteItem.addEventListener('click', () => {
-              insertEmoteIntoActiveTab(key, emoteItem);
-            });
-
-            channelEmotes.appendChild(emoteItem);
-          }
-        });
-
-        // Add toggle functionality to channel header
-        channelHeader.addEventListener('click', (e) => {
-          // Don't toggle if clicking on an emote
-          if (e.target.closest('.emote-item')) {
-            return;
-          }
-
-          channelSection.classList.toggle('collapsed');
-
-          // Save collapsed state to storage
-          chrome.storage.local.get(['collapsedChannels'], (result) => {
-            const collapsedChannels = result.collapsedChannels || {};
-            collapsedChannels[channel.id] = channelSection.classList.contains('collapsed');
-            chrome.storage.local.set({ collapsedChannels });
-          });
-        });
-
-        // Add channel header and emotes to section
-        channelSection.appendChild(channelHeader);
-        channelSection.appendChild(channelEmotes);
-
-        // Check if this channel should be collapsed
-        chrome.storage.local.get(['collapsedChannels'], (result) => {
-          const collapsedChannels = result.collapsedChannels || {};
-          if (collapsedChannels[channel.id]) {
-            channelSection.classList.add('collapsed');
-          }
-        });
-
-        // Add section to grid
-        emoteGrid.appendChild(channelSection);
+        flattenedEntries.push(...channelEntries);
       });
 
-      // Hide load more button since we're showing all emotes grouped by channel
+      const section = document.createElement('div');
+      section.className = 'channel-section';
+
+      const sectionHeader = document.createElement('div');
+      sectionHeader.className = 'channel-header sorted-emote-header';
+      sectionHeader.innerHTML = `
+        <div class="channel-header-content">
+          <span class="channel-name">${activeChannelFilter === 'all' ? 'All Channels' : (channelsToRender[0]?.username || 'Channel')}</span>
+          <span class="channel-emote-count">${flattenedEntries.length} emotes</span>
+        </div>
+      `;
+
+      const channelEmotes = document.createElement('div');
+      channelEmotes.className = 'channel-emotes';
+
+      flattenedEntries.forEach(({ key }) => {
+        const emoteItem = createEmoteItemElement(key, emoteDataMap.get(key));
+        if (emoteItem) {
+          channelEmotes.appendChild(emoteItem);
+        }
+      });
+
+      section.appendChild(sectionHeader);
+      section.appendChild(channelEmotes);
+      emoteGrid.appendChild(section);
       loadMoreContainer.classList.add('hidden');
     }
   }
@@ -2059,6 +2142,12 @@ document.addEventListener('DOMContentLoaded', () => {
     giphySearchTimeout = setTimeout(() => {
       filterAndDisplayEmotes();
     }, 250);
+  });
+
+  sortSelect?.addEventListener('change', (event) => {
+    activeSortMode = event.target.value || 'source';
+    saveSortMode(activeSortMode);
+    filterAndDisplayEmotes();
   });
 
   // Load saved channel IDs
@@ -2982,6 +3071,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initTabs();
     initMediaTabs();
     loadRecentItems();
+    loadFavoriteEmotes();
+    loadSavedSortMode();
     loadEmotes();
     loadChannelIds();
     addButtonEffects();
