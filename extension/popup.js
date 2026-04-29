@@ -284,6 +284,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const sortSelect = document.getElementById('emote-sort');
   const sortToolbar = document.querySelector('.sort-toolbar');
   const channelFilterBar = document.getElementById('channel-filter-bar');
+  const discordImportPanel = document.getElementById('discord-import-panel');
+  const discordImportButton = document.getElementById('discord-import-button');
+  const discordImportProgress = document.getElementById('discord-import-progress');
+  const discordImportProgressText = document.getElementById('discord-import-progress-text');
+  const discordImportProgressCount = document.getElementById('discord-import-progress-count');
+  const discordImportProgressFill = document.getElementById('discord-import-progress-fill');
   const mediaTabButtons = document.querySelectorAll('.media-tab-btn');
   const tabButtons = document.querySelectorAll('.tab-btn');
   const tabPanes = document.querySelectorAll('.tab-pane');
@@ -330,7 +336,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let channelManagementRenderToken = 0;
   let lastChannelManagementRefreshAt = 0;
   let progressPollInterval = null;
+  let discordImportPollInterval = null;
   let downloadCompletionHandled = false;
+  let discordImportCompletionHandled = false;
   let recentItems = [];
   let favoriteEmotes = new Set();
   let emoteLibraryLoaded = false;
@@ -468,6 +476,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function normalizeChannelIdentifier(value) {
     return String(value || '').trim().toLowerCase();
+  }
+
+  function getChannelSourceType(channel) {
+    return channel?.sourceType || 'twitch';
+  }
+
+  function isLocalLibraryTab(tabName = activeMediaTab) {
+    return tabName === 'twitch' || tabName === 'discord';
+  }
+
+  function getActiveLibrarySourceType(tabName = activeMediaTab) {
+    if (tabName === 'discord') return 'discord';
+    return 'twitch';
   }
 
   function dedupeChannelIds(channelIds) {
@@ -628,27 +649,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateSortToolbarVisibility() {
     if (!sortToolbar) return;
-    sortToolbar.style.display = activeMediaTab === 'twitch' ? 'flex' : 'none';
+    sortToolbar.style.display = isLocalLibraryTab() ? 'flex' : 'none';
     if (channelFilterBar) {
-      channelFilterBar.style.display = activeMediaTab === 'twitch' ? 'flex' : 'none';
+      channelFilterBar.style.display = isLocalLibraryTab() ? 'flex' : 'none';
+    }
+    if (discordImportPanel) {
+      discordImportPanel.classList.toggle('hidden', activeMediaTab !== 'discord');
     }
   }
 
-  function getVisibleTwitchChannels() {
-    return channels.filter((channel) => Object.keys(channel?.emotes || {}).some((key) => emoteDataMap.has(key)));
+  function getVisibleChannelsForSource(sourceType = getActiveLibrarySourceType()) {
+    return channels.filter((channel) => {
+      return getChannelSourceType(channel) === sourceType &&
+        Object.keys(channel?.emotes || {}).some((key) => emoteDataMap.has(key));
+    });
   }
 
   function renderChannelFilterBar() {
     if (!channelFilterBar) return;
 
     channelFilterBar.innerHTML = '';
-    const visibleChannels = getVisibleTwitchChannels();
+    const visibleChannels = getVisibleChannelsForSource();
     if (visibleChannels.length === 0) {
       channelFilterBar.style.display = 'none';
       return;
     }
 
-    channelFilterBar.style.display = activeMediaTab === 'twitch' ? 'flex' : 'none';
+    channelFilterBar.style.display = isLocalLibraryTab() ? 'flex' : 'none';
 
     const createChip = (label, value) => {
       const button = document.createElement('button');
@@ -1265,7 +1292,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (storageData.emoteMapping && Object.keys(storageData.emoteMapping).length > 0) {
         allEmotes = storageData.emoteMapping;
-        channels = dedupeChannelsById(storageData.channels || []);
+        channels = dedupeChannelsById(storageData.channels || []).map((channel) => ({
+          ...channel,
+          sourceType: getChannelSourceType(channel)
+        }));
         if ((storageData.channels || []).length !== channels.length) {
           chrome.storage.local.set({ channels });
         }
@@ -1321,14 +1351,15 @@ document.addEventListener('DOMContentLoaded', () => {
             channels = [{
               id: 'all',
               username: 'All Emotes',
-              emotes: processedEmotes
+              emotes: processedEmotes,
+              sourceType: 'twitch'
             }];
             console.log('Created fallback channel with all emotes');
           }
         }
 
         updateEmoteCount();
-        const visibleChannelIds = getVisibleTwitchChannels().map((channel) => channel.id || channel.username);
+        const visibleChannelIds = getVisibleChannelsForSource(getActiveLibrarySourceType()).map((channel) => channel.id || channel.username);
         if (activeChannelFilter !== 'all' && !visibleChannelIds.includes(activeChannelFilter)) {
           activeChannelFilter = 'all';
         }
@@ -1404,15 +1435,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (!emoteLibraryLoaded) {
       emoteGridDirty = true;
-      if (activeMediaTab === 'twitch' && isTabActive('emotes')) {
+      if (isLocalLibraryTab() && isTabActive('emotes')) {
         renderEmoteLoadingState();
         ensureEmoteLibraryLoaded({ renderGrid: true }).catch(() => {});
       }
       return;
     }
 
-    const emoteKeys = Object.keys(allEmotes);
-    if (emoteKeys.length === 0) return;
+    const emoteKeys = isLocalLibraryTab()
+      ? Array.from(new Set(
+          getVisibleChannelsForSource(getActiveLibrarySourceType())
+            .flatMap((channel) => Object.keys(channel?.emotes || {}))
+            .filter((key) => emoteDataMap.has(key))
+        ))
+      : Object.keys(allEmotes);
+    if (emoteKeys.length === 0) {
+      if (isLocalLibraryTab()) {
+        emoteGrid.innerHTML = `
+          <div class="no-emotes-message" style="grid-column: 1 / -1;">
+            <p>${activeMediaTab === 'discord' ? 'No Discord emojis imported yet' : 'No emotes loaded'}</p>
+          </div>
+        `;
+        loadMoreContainer.classList.add('hidden');
+      }
+      return;
+    }
 
     // Filter based on search term
     if (searchTerm === '') {
@@ -1738,7 +1785,17 @@ document.addEventListener('DOMContentLoaded', () => {
         button.classList.add('active');
         updateSortToolbarVisibility();
 
-        if (selectedTab === 'twitch' && isTabActive('emotes') && !emoteLibraryLoaded) {
+        if (searchInput) {
+          if (selectedTab === 'discord') {
+            searchInput.placeholder = 'Search imported Discord emojis';
+          } else if (selectedTab === 'twitch') {
+            searchInput.placeholder = 'Search emotes, GIFs, or reaction media';
+          } else {
+            searchInput.placeholder = 'Search emotes, GIFs, or reaction media';
+          }
+        }
+
+        if (isLocalLibraryTab(selectedTab) && isTabActive('emotes') && !emoteLibraryLoaded) {
           renderEmoteLoadingState();
           ensureEmoteLibraryLoaded({ renderGrid: true }).catch(() => {});
           return;
@@ -2291,7 +2348,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadMoreContainer.classList.add('hidden');
       }
     } else {
-      const visibleChannels = getVisibleTwitchChannels();
+      const visibleChannels = getVisibleChannelsForSource();
       renderChannelFilterBar();
 
       const channelsToRender = activeChannelFilter === 'all'
@@ -2320,7 +2377,9 @@ document.addEventListener('DOMContentLoaded', () => {
       sectionHeader.className = 'channel-header sorted-emote-header';
       sectionHeader.innerHTML = `
         <div class="channel-header-content">
-          <span class="channel-name">${activeChannelFilter === 'all' ? 'All Channels' : (channelsToRender[0]?.username || 'Channel')}</span>
+          <span class="channel-name">${activeChannelFilter === 'all'
+            ? (activeMediaTab === 'discord' ? 'All Servers' : 'All Channels')
+            : (channelsToRender[0]?.username || 'Channel')}</span>
           <span class="channel-emote-count">${flattenedEntries.length} emotes</span>
         </div>
       `;
@@ -2952,14 +3011,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const targetId = normalizeChannelIdentifier(channelId);
       const targetChannel = channels.find(c => normalizeChannelIdentifier(c.id) === targetId);
       if (!targetChannel) return;
+      const removedEmoteKeys = Object.keys(targetChannel.emotes || {});
 
       // Remove emotes from global mappings
-      if (targetChannel.emotes) {
-        Object.keys(targetChannel.emotes).forEach(emoteKey => {
-          delete emoteMapping[emoteKey];
-          delete emoteImageData[emoteKey];
-        });
-      }
+      removedEmoteKeys.forEach(emoteKey => {
+        delete emoteMapping[emoteKey];
+        delete emoteImageData[emoteKey];
+      });
 
       // Remove all matching channel entries (in case of previous duplicates)
       const cleanedChannels = channels.filter(c => normalizeChannelIdentifier(c.id) !== targetId);
@@ -2975,7 +3033,14 @@ document.addEventListener('DOMContentLoaded', () => {
         channelIds: cleanedChannelIds,
         emoteMapping,
         emoteImageData
-      }, () => {
+      }, async () => {
+        try {
+          if (removedEmoteKeys.length > 0) {
+            await chrome.runtime.sendMessage({ action: 'deleteStoredEmotes', keys: removedEmoteKeys });
+          }
+        } catch (error) {
+          console.warn('[Mojify] Failed to delete stored emote blobs:', error);
+        }
         showToast(`Channel "${targetChannel.username}" deleted successfully`);
         channelIdsInput.value = cleanedChannelIds.join('\n');
         updateChannelManagement();
@@ -3154,6 +3219,161 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 1200);
   }
 
+  function setDiscordImportUiActive(statusText = 'Importing emojis...') {
+    discordImportCompletionHandled = false;
+    if (discordImportButton) {
+      discordImportButton.disabled = true;
+      discordImportButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Importing...</span>';
+    }
+    if (discordImportProgress) {
+      discordImportProgress.classList.remove('hidden');
+    }
+    if (discordImportProgressText) {
+      discordImportProgressText.textContent = statusText;
+    }
+  }
+
+  function resetDiscordImportUi() {
+    if (discordImportButton) {
+      discordImportButton.disabled = false;
+      discordImportButton.innerHTML = '<i class="fab fa-discord"></i><span>Import Open Server</span>';
+    }
+    if (discordImportProgress) {
+      discordImportProgress.classList.add('hidden');
+    }
+    if (discordImportProgressFill) {
+      discordImportProgressFill.style.width = '0%';
+    }
+    if (discordImportProgressText) {
+      discordImportProgressText.textContent = 'Importing emojis...';
+    }
+    if (discordImportProgressCount) {
+      discordImportProgressCount.textContent = '0/0';
+    }
+  }
+
+  function applyDiscordImportProgressState(progressData = {}) {
+    const current = Number(progressData.current || 0);
+    const total = Number(progressData.total || 0);
+    const percentage = total > 0 ? Math.min((current / total) * 100, 100) : 0;
+    const guildName = progressData.guildName || 'Discord server';
+    const currentEmoji = progressData.currentEmoji || '';
+    const statusText = currentEmoji
+      ? `Importing ${currentEmoji} from ${guildName}`
+      : progressData.statusText || `Importing emojis from ${guildName}`;
+
+    setDiscordImportUiActive(statusText);
+    if (discordImportProgressFill) {
+      discordImportProgressFill.style.width = `${percentage}%`;
+    }
+    if (discordImportProgressCount) {
+      discordImportProgressCount.textContent = `${current}/${total}`;
+    }
+    if (discordImportProgressText) {
+      discordImportProgressText.textContent = statusText;
+    }
+  }
+
+  function stopDiscordImportPolling() {
+    if (discordImportPollInterval) {
+      clearInterval(discordImportPollInterval);
+      discordImportPollInterval = null;
+    }
+  }
+
+  async function finishDiscordImportFlow({
+    completed = false,
+    error = '',
+    toastMessage = '',
+    channelId = 'all'
+  } = {}) {
+    if (discordImportCompletionHandled) {
+      return;
+    }
+
+    discordImportCompletionHandled = true;
+    stopDiscordImportPolling();
+    resetDiscordImportUi();
+
+    if (completed) {
+      await ensureEmoteLibraryLoaded({ renderGrid: activeMediaTab === 'discord', refreshPanels: true });
+      await loadEmotes({ renderGrid: activeMediaTab === 'discord', refreshPanels: true });
+      activeChannelFilter = channelId || 'all';
+      renderChannelFilterBar();
+      if (activeMediaTab === 'discord') {
+        filterAndDisplayEmotes(true);
+      }
+      if (toastMessage) {
+        showToast(toastMessage, 'success');
+      }
+    } else if (error) {
+      showToast(error, 'error');
+    }
+
+    chrome.storage.local.remove(['discordImportProgress']);
+  }
+
+  function checkDiscordImportStatus() {
+    chrome.storage.local.get(['discordImportInProgress', 'discordImportProgress'], (result) => {
+      const importInProgress = result.discordImportInProgress;
+      const importProgressData = result.discordImportProgress;
+
+      if (importInProgress && importProgressData) {
+        applyDiscordImportProgressState(importProgressData);
+        startDiscordImportPolling();
+        return;
+      }
+
+      if (importProgressData?.completed) {
+        finishDiscordImportFlow({
+          completed: true,
+          channelId: importProgressData.channelId || 'all',
+          toastMessage: importProgressData.toastMessage || `Imported ${importProgressData.importedCount || 0} emoji${importProgressData.importedCount === 1 ? '' : 's'} from ${importProgressData.guildName || 'Discord server'}`
+        });
+        return;
+      }
+
+      if (importProgressData?.error) {
+        finishDiscordImportFlow({ error: importProgressData.error });
+        return;
+      }
+
+      stopDiscordImportPolling();
+      resetDiscordImportUi();
+    });
+  }
+
+  function startDiscordImportPolling() {
+    if (discordImportPollInterval) {
+      return;
+    }
+
+    discordImportPollInterval = setInterval(() => {
+      chrome.storage.local.get(['discordImportInProgress', 'discordImportProgress'], (result) => {
+        if (result.discordImportInProgress && result.discordImportProgress) {
+          applyDiscordImportProgressState(result.discordImportProgress);
+          return;
+        }
+
+        if (result.discordImportProgress?.completed) {
+          finishDiscordImportFlow({
+            completed: true,
+            channelId: result.discordImportProgress.channelId || 'all',
+            toastMessage: result.discordImportProgress.toastMessage || `Imported ${result.discordImportProgress.importedCount || 0} emoji${result.discordImportProgress.importedCount === 1 ? '' : 's'} from ${result.discordImportProgress.guildName || 'Discord server'}`
+          });
+          return;
+        }
+
+        if (result.discordImportProgress?.error) {
+          finishDiscordImportFlow({ error: result.discordImportProgress.error });
+          return;
+        }
+
+        stopDiscordImportPolling();
+      });
+    }, 1000);
+  }
+
   chrome.runtime.onMessage.addListener((message) => {
     try {
       if (message.type === 'automaticDownloadStarted') {
@@ -3174,6 +3394,24 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         applyDownloadProgressState(message);
+      }
+
+      if (message.type === 'discordImportProgress') {
+        if (message.completed) {
+          finishDiscordImportFlow({
+            completed: true,
+            channelId: message.channelId || 'all',
+            toastMessage: message.toastMessage || `Imported ${message.importedCount || 0} emoji${message.importedCount === 1 ? '' : 's'} from ${message.guildName || 'Discord server'}`
+          });
+          return;
+        }
+
+        if (message.error) {
+          finishDiscordImportFlow({ error: message.error });
+          return;
+        }
+
+        applyDiscordImportProgressState(message);
       }
 
       if (message.type === 'showToast') {
@@ -3208,7 +3446,9 @@ document.addEventListener('DOMContentLoaded', () => {
     addButtonEffects();
     initDebugSection();
     checkDownloadStatus();
+    checkDiscordImportStatus();
     initSaveButton();
+    initDiscordImportButton();
     scheduleEmoteLibraryWarmup();
 
     // Check current platform and show warnings
@@ -3273,6 +3513,54 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       });
     }
+  }
+
+  function initDiscordImportButton() {
+    if (!discordImportButton) return;
+
+    discordImportButton.addEventListener('click', async () => {
+      try {
+        discordImportCompletionHandled = false;
+        setDiscordImportUiActive('Starting Discord import...');
+        if (discordImportProgressFill) {
+          discordImportProgressFill.style.width = '0%';
+        }
+        if (discordImportProgressCount) {
+          discordImportProgressCount.textContent = '0/0';
+        }
+        startDiscordImportPolling();
+
+        const tabs = await new Promise((resolve) => {
+          chrome.tabs.query({ active: true, currentWindow: true }, resolve);
+        });
+        const activeTab = tabs[0];
+
+        if (!activeTab?.id || !/discord(app)?\.com/.test(activeTab.url || '')) {
+          throw new Error('Open a Discord server tab first');
+        }
+
+        const response = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage({
+            action: 'importDiscordServerEmojis',
+            tabId: activeTab.id
+          }, (result) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve(result);
+          });
+        });
+
+        if (!response?.success) {
+          finishDiscordImportFlow({ error: response?.error || 'Discord import failed' });
+          return;
+        }
+      } catch (error) {
+        console.error('[Mojify] Discord import failed:', error);
+        finishDiscordImportFlow({ error: error.message || 'Discord import failed' });
+      }
+    });
   }
 
   function initApiKeysPageButton() {

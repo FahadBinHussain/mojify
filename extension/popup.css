@@ -539,6 +539,54 @@ img {
   box-shadow: 0 2px 8px var(--accent-glow);
 }
 
+.discord-import-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid rgba(114, 227, 255, 0.14);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at top right, rgba(88, 101, 242, 0.14), transparent 45%),
+    linear-gradient(180deg, rgba(12, 22, 38, 0.96), rgba(8, 16, 28, 0.98));
+}
+
+.discord-import-kicker {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #9fb2ff;
+}
+
+.discord-import-copy p {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.discord-import-panel .secondary-button {
+  min-height: 38px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.discord-import-progress {
+  grid-column: 1 / -1;
+  padding-top: 2px;
+}
+
+.discord-import-progress-note {
+  margin-top: 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-tertiary);
+}
+
 .sort-label {
   display: inline-flex;
   align-items: center;
