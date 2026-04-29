@@ -853,12 +853,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initialize tab indicator position
   function initTabs() {
-    const activeTab = document.querySelector('.tab-btn.active');
-    const tabWidth = 100 / tabButtons.length;
     const activeIndex = Array.from(tabButtons).findIndex(tab => tab.classList.contains('active'));
 
-    tabIndicator.style.width = `${tabWidth}%`;
-    tabIndicator.style.transform = `translateX(${activeIndex * 100}%)`;
+    function updateIndicator(index) {
+      const btn = tabButtons[index];
+      if (!btn) return;
+      const header = document.querySelector('.tab-header');
+      const headerRect = header.getBoundingClientRect();
+      const btnRect = btn.getBoundingClientRect();
+      const offset = btnRect.left - headerRect.left;
+      tabIndicator.style.width = `${btnRect.width}px`;
+      tabIndicator.style.transform = `translateX(${offset}px)`;
+    }
+
+    updateIndicator(activeIndex >= 0 ? activeIndex : 0);
 
     tabButtons.forEach((button, index) => {
       button.addEventListener('click', () => {
@@ -869,7 +877,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const tabName = button.dataset.tab;
         document.getElementById(`${tabName}-tab`).classList.add('active');
 
-        tabIndicator.style.transform = `translateX(${index * 100}%)`;
+        updateIndicator(index);
 
         if (tabName === 'emotes') {
           if (!emoteLibraryLoaded) {
