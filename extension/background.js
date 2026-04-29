@@ -388,6 +388,15 @@ let downloadState = {
   startTime: null
 };
 
+let discordImportState = {
+  isImporting: false,
+  current: 0,
+  total: 0,
+  guildId: '',
+  guildName: '',
+  startedAt: null
+};
+
 // Reset download state on service worker startup
 async function resetDownloadState() {
   console.log('[Service Worker] Resetting download state on startup');
@@ -413,10 +422,36 @@ async function resetDownloadState() {
   }
 }
 
+async function resetDiscordImportState() {
+  discordImportState = {
+    isImporting: false,
+    current: 0,
+    total: 0,
+    guildId: '',
+    guildName: '',
+    startedAt: null
+  };
+
+  try {
+    await chrome.storage.local.set({
+      discordImportInProgress: false,
+      discordImportProgress: {
+        current: 0,
+        total: 0,
+        completed: false,
+        reset: true
+      }
+    });
+  } catch (error) {
+    console.error('[Service Worker] Error resetting Discord import state:', error);
+  }
+}
+
 // Initialize service worker
 (async function initServiceWorker() {
   try {
     await resetDownloadState();
+    await resetDiscordImportState();
     console.log('[Service Worker] Initialization complete');
   } catch (error) {
     console.error('[Service Worker] Initialization error:', error);
@@ -542,7 +577,8 @@ async function downloadEmotes() {
       channelsById.set(channelId, {
         id: channelId,
         username: result.username,
-        emotes: result.emotes
+        emotes: result.emotes,
+        sourceType: 'twitch'
       });
 
       if (resolvedEmoteCount > 0) {
@@ -1789,6 +1825,556 @@ function sendRuntimeMessage(message) {
   }
 }
 
+async function updateDiscordImportProgress(progress = {}) {
+  const payload = {
+    current: Number(progress.current || 0),
+    total: Number(progress.total || 0),
+    guildId: progress.guildId || discordImportState.guildId || '',
+    guildName: progress.guildName || discordImportState.guildName || '',
+    currentEmoji: progress.currentEmoji || '',
+    statusText: progress.statusText || '',
+    importedCount: Number(progress.importedCount || 0),
+    skippedCount: Number(progress.skippedCount || 0),
+    completed: Boolean(progress.completed),
+    error: progress.error || '',
+    channelId: progress.channelId || '',
+    toastMessage: progress.toastMessage || ''
+  };
+
+  await chrome.storage.local.set({
+    discordImportInProgress: Boolean(progress.inProgress),
+    discordImportProgress: payload
+  });
+
+  sendRuntimeMessage({
+    type: 'discordImportProgress',
+    ...payload
+  });
+}
+
+function sanitizeDiscordEmojiName(name, fallback = 'emoji') {
+  const sanitized = String(name || fallback)
+    .trim()
+    .replace(/[^\w]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40);
+
+  return sanitized || fallback;
+}
+
+function buildDiscordEmojiCdnUrl(emojiId, animated = false) {
+  const extension = animated ? 'gif' : 'png';
+  return `https://cdn.discordapp.com/emojis/${emojiId}.${extension}?size=128&quality=lossless`;
+}
+
+function buildUniqueDiscordEmojiKey(name, guildName, reservedKeys) {
+  const baseName = sanitizeDiscordEmojiName(name);
+  const guildSuffix = sanitizeDiscordEmojiName(guildName, 'discord').toLowerCase();
+  const baseKey = `:${baseName}:`;
+
+  if (!reservedKeys.has(baseKey)) {
+    reservedKeys.add(baseKey);
+    return baseKey;
+  }
+
+  const guildKey = `:${baseName}_${guildSuffix}:`;
+  if (!reservedKeys.has(guildKey)) {
+    reservedKeys.add(guildKey);
+    return guildKey;
+  }
+
+  let counter = 2;
+  while (true) {
+    const candidate = `:${baseName}_${guildSuffix}_${counter}:`;
+    if (!reservedKeys.has(candidate)) {
+      reservedKeys.add(candidate);
+      return candidate;
+    }
+    counter += 1;
+  }
+}
+
+async function extractDiscordGuildFromTab(tabId) {
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: async () => {
+      const pathMatch = window.location.pathname.match(/^\/channels\/([^/]+)/);
+      if (!pathMatch || pathMatch[1] === '@me') {
+        return { error: 'Open a Discord server, not direct messages' };
+      }
+
+      const guildId = pathMatch[1];
+
+      const getWebpackRequire = () => {
+        try {
+          let webpackRequire = null;
+          window.webpackChunkdiscord_app.push([
+            [Symbol('mojify-discord-import')],
+            {},
+            (req) => {
+              webpackRequire = req;
+            }
+          ]);
+          return webpackRequire;
+        } catch (error) {
+          return null;
+        }
+      };
+
+      const findWebpackModule = (predicate) => {
+        const webpackRequire = getWebpackRequire();
+        if (!webpackRequire?.c) return null;
+
+        const seen = new Set();
+        const candidatesFrom = (value) => {
+          const candidates = [];
+          if (!value) return candidates;
+          candidates.push(value);
+          if (typeof value === 'object') {
+            ['default', 'Z', 'ZP'].forEach((key) => {
+              if (value[key]) candidates.push(value[key]);
+            });
+            Object.values(value).forEach((entry) => {
+              if (entry && (typeof entry === 'object' || typeof entry === 'function')) {
+                candidates.push(entry);
+              }
+            });
+          }
+          return candidates;
+        };
+
+        for (const moduleRecord of Object.values(webpackRequire.c)) {
+          const exportsValue = moduleRecord?.exports;
+          for (const candidate of candidatesFrom(exportsValue)) {
+            if (!candidate || seen.has(candidate)) continue;
+            seen.add(candidate);
+            try {
+              if (predicate(candidate)) {
+                return candidate;
+              }
+            } catch (error) {
+              // Ignore probe failures and continue scanning.
+            }
+          }
+        }
+
+        return null;
+      };
+
+      const getMethodNames = (value) => {
+        if (!value || (typeof value !== 'object' && typeof value !== 'function')) {
+          return [];
+        }
+
+        const names = new Set();
+        let current = value;
+        let depth = 0;
+
+        while (current && depth < 3) {
+          if (current === Object.prototype || current === Function.prototype) {
+            break;
+          }
+
+          try {
+            Object.getOwnPropertyNames(current).forEach((name) => names.add(name));
+          } catch (error) {
+            // Ignore prototype probing failures.
+          }
+
+          current = Object.getPrototypeOf(current);
+          depth += 1;
+        }
+
+        return Array.from(names);
+      };
+
+      const sanitizeDiscordToken = (token) => String(token || '').replace(/^"|"$/g, '').trim();
+
+      const readDiscordToken = () => {
+        try {
+          const moduleCache = [];
+          window.webpackChunkdiscord_app.push([
+            [Math.random()],
+            {},
+            (runtime) => {
+              if (runtime?.c) {
+                moduleCache.push(...Object.values(runtime.c));
+              }
+            }
+          ]);
+
+          const knownTokenModule = moduleCache.find((moduleRecord) => (
+            !moduleRecord?.exports?.messagesLoader &&
+            typeof moduleRecord?.exports?.default?.getToken === 'function'
+          ));
+
+          const tokenFromKnownMethod = sanitizeDiscordToken(
+            knownTokenModule?.exports?.default?.getToken?.()
+          );
+
+          if (tokenFromKnownMethod) {
+            return tokenFromKnownMethod;
+          }
+        } catch (error) {
+          // Fall through to other strategies.
+        }
+
+        try {
+          const raw = window.localStorage.getItem('token');
+          const token = sanitizeDiscordToken(raw);
+          if (token) {
+            return token;
+          }
+        } catch (error) {
+          // Fall through to broader runtime store lookup.
+        }
+
+        const authStore = findWebpackModule((candidate) => {
+          const methodNames = getMethodNames(candidate);
+          return (
+            typeof candidate?.getToken === 'function' ||
+            typeof candidate?.getNonImpersonatedToken === 'function' ||
+            methodNames.includes('getToken') ||
+            methodNames.includes('getNonImpersonatedToken')
+          );
+        });
+
+        try {
+          const runtimeToken = sanitizeDiscordToken(
+            authStore?.getToken?.() || authStore?.getNonImpersonatedToken?.()
+          );
+          if (runtimeToken) {
+            return runtimeToken;
+          }
+        } catch (error) {
+          // Ignore runtime token lookup failures and fall through.
+        }
+
+        return '';
+      };
+
+      const performGuildFetch = async (token = '') => {
+        const headers = token ? { authorization: token } : {};
+        return fetch(`https://discord.com/api/v10/guilds/${guildId}`, {
+          credentials: 'include',
+          headers
+        });
+      };
+
+      const readGuildFromWebpackState = () => {
+        const guildStore = findWebpackModule((candidate) => (
+          typeof candidate?.getGuild === 'function'
+        ));
+
+        const guild = guildStore?.getGuild?.(guildId);
+        if (guild?.emojis && Array.isArray(guild.emojis)) {
+          return {
+            guildId: String(guild.id || guildId),
+            guildName: guild.name,
+            emojis: guild.emojis.map((emoji) => ({
+              id: emoji.id,
+              name: emoji.name,
+              animated: Boolean(emoji.animated)
+            }))
+          };
+        }
+
+        const emojiStore = findWebpackModule((candidate) => {
+          const keys = Object.keys(candidate || {});
+          return keys.some((key) => /emoji/i.test(key)) &&
+            keys.some((key) => typeof candidate[key] === 'function');
+        });
+
+        const possibleMethods = [
+          'getGuildEmojiMap',
+          'getGuildEmojis',
+          'getEmojiMap',
+          'getCustomEmojiById'
+        ];
+
+        if (emojiStore) {
+          for (const methodName of possibleMethods) {
+            const method = emojiStore[methodName];
+            if (typeof method !== 'function') continue;
+
+            try {
+              const result = method.call(emojiStore, guildId);
+              if (result && typeof result === 'object') {
+                const values = Array.isArray(result) ? result : Object.values(result);
+                const emojis = values
+                  .filter((emoji) => emoji?.id && emoji?.name)
+                  .map((emoji) => ({
+                    id: emoji.id,
+                    name: emoji.name,
+                    animated: Boolean(emoji.animated)
+                  }));
+
+                if (emojis.length > 0) {
+                  return {
+                    guildId,
+                    guildName: guild?.name || document.title.replace(/\s*\|\s*Discord\s*$/i, '').trim() || 'Discord Server',
+                    emojis
+                  };
+                }
+              }
+            } catch (error) {
+              // Try the next candidate method.
+            }
+          }
+        }
+
+        return null;
+      };
+
+      try {
+        let response = await performGuildFetch();
+
+        if (response.status === 401) {
+          const token = readDiscordToken();
+          if (token) {
+            response = await performGuildFetch(token);
+          } else {
+            const fallbackGuild = readGuildFromWebpackState();
+            if (fallbackGuild) {
+              return fallbackGuild;
+            }
+            return { error: 'Discord session token not found and guild data was unavailable from the current Discord page.' };
+          }
+        }
+
+        if (!response.ok) {
+          const fallbackGuild = readGuildFromWebpackState();
+          if (fallbackGuild) {
+            return fallbackGuild;
+          }
+          return { error: `Discord API responded with ${response.status}` };
+        }
+
+        const guild = await response.json();
+        return {
+          guildId,
+          guildName: guild.name,
+          emojis: Array.isArray(guild.emojis)
+            ? guild.emojis.map((emoji) => ({
+                id: emoji.id,
+                name: emoji.name,
+                animated: Boolean(emoji.animated)
+              }))
+            : []
+        };
+      } catch (error) {
+        return { error: error?.message || 'Failed to read Discord server data' };
+      }
+    }
+  });
+
+  if (!result?.result) {
+    throw new Error('Could not access the Discord server tab');
+  }
+
+  if (result.result.error) {
+    throw new Error(result.result.error);
+  }
+
+  return result.result;
+}
+
+async function importDiscordServerEmojis(tabId) {
+  if (discordImportState.isImporting) {
+    throw new Error('A Discord import is already in progress');
+  }
+
+  discordImportState.isImporting = true;
+  discordImportState.current = 0;
+  discordImportState.total = 0;
+  discordImportState.guildId = '';
+  discordImportState.guildName = '';
+  discordImportState.startedAt = Date.now();
+
+  if (!tabId) {
+    discordImportState.isImporting = false;
+    throw new Error('No active Discord tab found');
+  }
+
+  let guildId = '';
+  let guildName = '';
+  let importedCount = 0;
+  let skippedCount = 0;
+
+  try {
+    await updateDiscordImportProgress({
+      inProgress: true,
+      current: 0,
+      total: 0,
+      statusText: 'Reading current Discord server...'
+    });
+
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab?.url || !/discord(app)?\.com\/channels\//.test(tab.url)) {
+      throw new Error('Open a Discord server in Discord web first');
+    }
+
+    const guildData = await extractDiscordGuildFromTab(tabId);
+    guildId = String(guildData.guildId || '').trim();
+    guildName = guildData.guildName || 'Discord Server';
+    const guildEmojis = Array.isArray(guildData.emojis) ? guildData.emojis.filter((emoji) => emoji?.id) : [];
+
+    discordImportState.guildId = guildId;
+    discordImportState.guildName = guildName;
+    discordImportState.total = guildEmojis.length;
+
+    if (!guildId) {
+      throw new Error('Could not determine the current Discord server');
+    }
+
+    if (guildEmojis.length === 0) {
+      throw new Error('This Discord server has no custom emojis to import');
+    }
+
+    await updateDiscordImportProgress({
+      inProgress: true,
+      current: 0,
+      total: guildEmojis.length,
+      guildId,
+      guildName,
+      statusText: `Found ${guildEmojis.length} emoji${guildEmojis.length === 1 ? '' : 's'} in ${guildName}`
+    });
+
+    if (!emoteDB.db) {
+      await emoteDB.init();
+    }
+
+    const existing = await chrome.storage.local.get(['emoteMapping', 'channels']);
+    const globalEmoteMapping = { ...(existing.emoteMapping || {}) };
+    const channelsById = new Map();
+
+    (existing.channels || []).forEach((channel) => {
+      const id = String(channel?.id || '').trim();
+      if (id) {
+        channelsById.set(id, {
+          ...channel,
+          sourceType: channel?.sourceType || 'twitch'
+        });
+      }
+    });
+
+    const existingGuildChannel = channelsById.get(guildId);
+    const previousGuildKeys = new Set(Object.keys(existingGuildChannel?.emotes || {}));
+    const reservedKeys = new Set(Object.keys(globalEmoteMapping));
+    previousGuildKeys.forEach((key) => reservedKeys.delete(key));
+
+    const importedEmotes = {};
+
+    for (const emoji of guildEmojis) {
+      const key = buildUniqueDiscordEmojiKey(emoji.name, guildName, reservedKeys);
+      const url = buildDiscordEmojiCdnUrl(emoji.id, emoji.animated);
+
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const blob = await response.blob();
+        if (!(blob instanceof Blob) || blob.size === 0) {
+          throw new Error('Empty emoji asset');
+        }
+
+        await emoteDB.storeEmote(key, url, blob, {
+          channel: guildName,
+          channelId: guildId,
+          sourceType: 'discord',
+          sourceLabel: 'Discord',
+          guildName,
+          discordEmojiId: emoji.id,
+          animated: emoji.animated,
+          filename: `${sanitizeDiscordEmojiName(emoji.name)}.${emoji.animated ? 'gif' : 'png'}`
+        });
+
+        importedEmotes[key] = url;
+        globalEmoteMapping[key] = url;
+        importedCount += 1;
+      } catch (error) {
+        console.warn('[Discord Import] Skipping emoji:', emoji?.name, error?.message || error);
+        skippedCount += 1;
+      }
+
+      discordImportState.current = importedCount + skippedCount;
+      await updateDiscordImportProgress({
+        inProgress: true,
+        current: discordImportState.current,
+        total: guildEmojis.length,
+        guildId,
+        guildName,
+        currentEmoji: emoji.name,
+        statusText: `Importing emojis from ${guildName}`,
+        importedCount,
+        skippedCount
+      });
+    }
+
+    if (importedCount === 0) {
+      throw new Error('Could not import any emojis from this server');
+    }
+
+    for (const oldKey of previousGuildKeys) {
+      if (Object.prototype.hasOwnProperty.call(importedEmotes, oldKey)) continue;
+      delete globalEmoteMapping[oldKey];
+      await emoteDB.deleteEmote(oldKey);
+    }
+
+    channelsById.set(guildId, {
+      id: guildId,
+      username: guildName,
+      emotes: importedEmotes,
+      sourceType: 'discord'
+    });
+
+    await chrome.storage.local.set({
+      emoteMapping: globalEmoteMapping,
+      channels: Array.from(channelsById.values())
+    });
+
+    discordImportState.isImporting = false;
+
+    const toastMessage = `Imported ${importedCount} emoji${importedCount === 1 ? '' : 's'} from ${guildName}`;
+    await updateDiscordImportProgress({
+      inProgress: false,
+      completed: true,
+      current: guildEmojis.length,
+      total: guildEmojis.length,
+      guildId,
+      guildName,
+      importedCount,
+      skippedCount,
+      channelId: guildId,
+      toastMessage
+    });
+
+    return {
+      success: true,
+      guildName,
+      channelId: guildId,
+      importedCount,
+      skippedCount
+    };
+  } catch (error) {
+    discordImportState.isImporting = false;
+    await updateDiscordImportProgress({
+      inProgress: false,
+      current: discordImportState.current,
+      total: discordImportState.total,
+      guildId,
+      guildName,
+      importedCount,
+      skippedCount,
+      error: error.message
+    });
+    throw error;
+  }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -2686,6 +3272,20 @@ function handleRuntimeMessage(request, sender, sendResponse) {
   if (request.type === 'downloadEmotes' || request.action === 'downloadEmotes') {
     downloadEmotes()
       .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'importDiscordServerEmojis') {
+    importDiscordServerEmojis(request.tabId)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'deleteStoredEmotes') {
+    Promise.all((request.keys || []).map((key) => emoteDB.deleteEmote(key)))
+      .then(() => sendResponse({ success: true }))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
