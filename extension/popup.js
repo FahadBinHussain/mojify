@@ -154,6 +154,19 @@ const emoteDB = {
     });
   },
 
+  async getAllEmoteMetadata() {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emoteMetadata'], 'readonly');
+      const metadataStore = transaction.objectStore('emoteMetadata');
+      const request = metadataStore.getAll();
+
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+  },
+
   async storeEmote(key, url, blob, metadata = {}) {
     if (!this.db) await this.init();
 
@@ -320,6 +333,138 @@ document.addEventListener('DOMContentLoaded', () => {
   let downloadCompletionHandled = false;
   let recentItems = [];
   let favoriteEmotes = new Set();
+  let emoteLibraryLoaded = false;
+  let emoteLibraryLoadingPromise = null;
+  let emoteGridDirty = true;
+  let settingsPanelsDirty = true;
+  const emoteObjectUrlCache = new Map();
+  const emoteBlobHydrationPromises = new Map();
+
+  function isTabActive(tabName) {
+    return document.getElementById(`${tabName}-tab`)?.classList.contains('active') || false;
+  }
+
+  function renderEmoteLoadingState(message = 'Loading emotes...') {
+    if (!emoteGrid) return;
+    emoteGrid.innerHTML = `
+      <div class="no-emotes-message" style="grid-column: 1 / -1;">
+        <p>${message}</p>
+      </div>
+    `;
+    noEmotesMessage.style.display = 'none';
+    loadMoreContainer.classList.add('hidden');
+  }
+
+  function getEmotePreviewUrl(emoteKey, emoteData = null) {
+    if (emoteObjectUrlCache.has(emoteKey)) {
+      return emoteObjectUrlCache.get(emoteKey);
+    }
+
+    const sourceData = emoteData || emoteDataMap.get(emoteKey);
+    return sourceData?.url || allEmotes[emoteKey] || '';
+  }
+
+  async function ensureLocalEmotePreviewUrl(emoteKey) {
+    if (!emoteKey) return null;
+
+    if (emoteObjectUrlCache.has(emoteKey)) {
+      return emoteObjectUrlCache.get(emoteKey);
+    }
+
+    if (emoteBlobHydrationPromises.has(emoteKey)) {
+      return emoteBlobHydrationPromises.get(emoteKey);
+    }
+
+    const pending = (async () => {
+      const emoteData = await emoteDB.getEmote(emoteKey);
+      if (!emoteData?.blob) {
+        return null;
+      }
+
+      const objectUrl = URL.createObjectURL(emoteData.blob);
+      emoteObjectUrlCache.set(emoteKey, objectUrl);
+
+      const existingMetadata = emoteDataMap.get(emoteKey) || {};
+      emoteDataMap.set(emoteKey, {
+        ...existingMetadata,
+        ...emoteData,
+        blob: emoteData.blob
+      });
+
+      return objectUrl;
+    })().finally(() => {
+      emoteBlobHydrationPromises.delete(emoteKey);
+    });
+
+    emoteBlobHydrationPromises.set(emoteKey, pending);
+    return pending;
+  }
+
+  function hydrateEmoteImageElement(emoteKey, imageElement) {
+    if (!emoteKey || !imageElement || emoteObjectUrlCache.has(emoteKey)) {
+      return;
+    }
+
+    ensureLocalEmotePreviewUrl(emoteKey)
+      .then((objectUrl) => {
+        if (!objectUrl || !imageElement.isConnected) return;
+        imageElement.src = objectUrl;
+      })
+      .catch((error) => {
+        console.warn('[Mojify] Failed to hydrate local emote preview:', emoteKey, error);
+      });
+  }
+
+  function refreshSettingsPanels(force = false) {
+    if (!force && !isTabActive('settings')) {
+      settingsPanelsDirty = true;
+      return;
+    }
+
+    settingsPanelsDirty = false;
+    updateChannelManagement();
+    updateStorageInfo();
+  }
+
+  async function ensureEmoteLibraryLoaded({ renderGrid = false, refreshPanels = false } = {}) {
+    if (!emoteLibraryLoadingPromise && !emoteLibraryLoaded) {
+      emoteLibraryLoadingPromise = loadEmotes({ renderGrid, refreshPanels })
+        .catch((error) => {
+          console.error('[Mojify] Failed to load emote library:', error);
+          throw error;
+        })
+        .finally(() => {
+          emoteLibraryLoadingPromise = null;
+        });
+    }
+
+    if (emoteLibraryLoadingPromise) {
+      await emoteLibraryLoadingPromise;
+    }
+
+    if (renderGrid && emoteLibraryLoaded) {
+      renderEmoteGrid(true);
+    }
+
+    if (refreshPanels && emoteLibraryLoaded) {
+      refreshSettingsPanels(true);
+    }
+  }
+
+  function scheduleEmoteLibraryWarmup() {
+    const warmup = () => {
+      ensureEmoteLibraryLoaded({ renderGrid: false, refreshPanels: false }).catch((error) => {
+        console.warn('[Mojify] Emote metadata warmup failed:', error);
+      });
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(warmup, { timeout: 800 });
+      return;
+    }
+
+    setTimeout(warmup, 200);
+  }
 
   function normalizeChannelIdentifier(value) {
     return String(value || '').trim().toLowerCase();
@@ -409,7 +554,11 @@ document.addEventListener('DOMContentLoaded', () => {
       chrome.storage.local.get(['favoriteEmotes'], resolve);
     });
     favoriteEmotes = new Set(Array.isArray(result.favoriteEmotes) ? result.favoriteEmotes : []);
-    renderEmoteGrid();
+    if (emoteLibraryLoaded) {
+      renderEmoteGrid();
+    } else {
+      emoteGridDirty = true;
+    }
   }
 
   async function loadSavedSortMode() {
@@ -554,11 +703,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function createRecentThumbnailSrc(item) {
     if (item.type === 'emote') {
-      const emoteData = emoteDataMap.get(item.key);
-      if (emoteData?.blob) {
-        return URL.createObjectURL(emoteData.blob);
-      }
-      return item.previewUrl || '';
+      return getEmotePreviewUrl(item.key, emoteDataMap.get(item.key)) || item.previewUrl || '';
     }
 
     return item.previewUrl || item.mediaUrl || '';
@@ -583,28 +728,27 @@ document.addEventListener('DOMContentLoaded', () => {
       button.type = 'button';
       button.className = 'recent-item';
 
-      const badge = document.createElement('span');
-      badge.className = 'recent-item-badge';
-      badge.textContent = item.type === 'emote' ? 'Emote' : 'Media';
-
       const media = document.createElement('img');
       media.className = 'recent-item-media';
       media.alt = item.label || 'Recent item';
+      media.loading = 'lazy';
+      media.decoding = 'async';
 
       const mediaSrc = createRecentThumbnailSrc(item);
       if (mediaSrc) {
         media.src = mediaSrc;
-        if (String(mediaSrc).startsWith('blob:')) {
-          media.addEventListener('load', () => URL.revokeObjectURL(mediaSrc), { once: true });
-          media.addEventListener('error', () => URL.revokeObjectURL(mediaSrc), { once: true });
-        }
       }
 
       const label = document.createElement('span');
       label.className = 'recent-item-label';
       label.textContent = item.label || 'Recent item';
 
-      button.appendChild(badge);
+      if (item.type !== 'emote') {
+        const badge = document.createElement('span');
+        badge.className = 'recent-item-badge';
+        badge.textContent = 'Media';
+        button.appendChild(badge);
+      }
       button.appendChild(media);
       button.appendChild(label);
 
@@ -722,9 +866,22 @@ document.addEventListener('DOMContentLoaded', () => {
         tabPanes.forEach(pane => pane.classList.remove('active'));
 
         button.classList.add('active');
-        document.getElementById(`${button.dataset.tab}-tab`).classList.add('active');
+        const tabName = button.dataset.tab;
+        document.getElementById(`${tabName}-tab`).classList.add('active');
 
         tabIndicator.style.transform = `translateX(${index * 100}%)`;
+
+        if (tabName === 'emotes') {
+          if (!emoteLibraryLoaded) {
+            renderEmoteLoadingState();
+          }
+          ensureEmoteLibraryLoaded({ renderGrid: true }).catch(() => {});
+          return;
+        }
+
+        if (tabName === 'settings') {
+          ensureEmoteLibraryLoaded({ refreshPanels: true }).catch(() => {});
+        }
       });
     });
   }
@@ -1083,7 +1240,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Load emotes from storage
-  async function loadEmotes() {
+  async function loadEmotes({ renderGrid = true, refreshPanels = true } = {}) {
     try {
       // Initialize IndexedDB if needed
       if (!emoteDB.db) {
@@ -1095,7 +1252,8 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.storage.local.get(['emoteMapping', 'channels'], resolve);
       });
 
-      console.log('Loaded storage data:', storageData);
+      emoteObjectUrlCache.forEach((url) => URL.revokeObjectURL(url));
+      emoteObjectUrlCache.clear();
 
       if (storageData.emoteMapping && Object.keys(storageData.emoteMapping).length > 0) {
         allEmotes = storageData.emoteMapping;
@@ -1104,18 +1262,15 @@ document.addEventListener('DOMContentLoaded', () => {
           chrome.storage.local.set({ channels });
         }
 
-        console.log('All emotes count:', Object.keys(allEmotes).length);
-        console.log('Channels count:', channels.length);
-
-        // Get all emotes from IndexedDB
-        const indexedDBEmotes = await emoteDB.getAllEmotes();
-        console.log('IndexedDB emotes count:', indexedDBEmotes.length);
+        // Load metadata only on popup startup; fetch blobs lazily for visible cards.
+        const indexedDBEmotes = await emoteDB.getAllEmoteMetadata();
 
         // Update global emoteDataMap for quick lookup
         emoteDataMap.clear();
-        indexedDBEmotes.forEach(emote => {
+        indexedDBEmotes.forEach((emote) => {
           emoteDataMap.set(emote.key, emote);
         });
+        emoteLibraryLoaded = true;
 
         // Process channels using only IndexedDB data
         if (channels.length > 0) {
@@ -1128,8 +1283,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (emoteData) {
                   processedEmotes[key] = {
                     url: emoteData.url,
-                    hasImageData: true,
-                    dataUrl: emoteData.dataUrl
+                    hasImageData: true
                   };
                 }
               });
@@ -1148,11 +1302,10 @@ document.addEventListener('DOMContentLoaded', () => {
             // Create a single channel with emotes from IndexedDB only
             const processedEmotes = {};
             indexedDBEmotes.forEach(emoteData => {
-              if (emoteData.key && emoteData.dataUrl) {
+              if (emoteData.key) {
                 processedEmotes[emoteData.key] = {
                   url: emoteData.url,
-                  hasImageData: true,
-                  dataUrl: emoteData.dataUrl
+                  hasImageData: true
                 };
               }
             });
@@ -1172,12 +1325,18 @@ document.addEventListener('DOMContentLoaded', () => {
           activeChannelFilter = 'all';
         }
         renderChannelFilterBar();
-        filterAndDisplayEmotes();
+        emoteGridDirty = true;
+        if (renderGrid) {
+          filterAndDisplayEmotes();
+        }
         renderRecentGrid();
-        updateStorageInfo();
-        updateChannelManagement();
+        refreshSettingsPanels(refreshPanels);
         noEmotesMessage.style.display = 'none';
       } else {
+        allEmotes = {};
+        channels = [];
+        emoteDataMap.clear();
+        emoteLibraryLoaded = true;
         emoteGrid.innerHTML = '';
         noEmotesMessage.style.display = 'flex';
         loadMoreContainer.classList.add('hidden');
@@ -1185,8 +1344,7 @@ document.addEventListener('DOMContentLoaded', () => {
         activeChannelFilter = 'all';
         renderChannelFilterBar();
         renderRecentGrid();
-        updateStorageInfo();
-        updateChannelManagement();
+        refreshSettingsPanels(refreshPanels);
       }
     } catch (error) {
       console.error('Error loading emotes:', error);
@@ -1236,6 +1394,15 @@ document.addEventListener('DOMContentLoaded', () => {
       currentPage = 1;
     }
 
+    if (!emoteLibraryLoaded) {
+      emoteGridDirty = true;
+      if (activeMediaTab === 'twitch' && isTabActive('emotes')) {
+        renderEmoteLoadingState();
+        ensureEmoteLibraryLoaded({ renderGrid: true }).catch(() => {});
+      }
+      return;
+    }
+
     const emoteKeys = Object.keys(allEmotes);
     if (emoteKeys.length === 0) return;
 
@@ -1278,30 +1445,59 @@ document.addEventListener('DOMContentLoaded', () => {
     return safeName || 'media.bin';
   }
 
-  function createEmoteItemElement(key, emoteDbData) {
-    if (!emoteDbData?.blob) return null;
+  function fitEmoteTriggerText(triggerElement, {
+    maxFontSize = 12,
+    minFontSize = 7
+  } = {}) {
+    if (!triggerElement) return;
 
+    const textElement = triggerElement.querySelector('.emote-trigger-text');
+    if (!textElement) return;
+
+    textElement.style.fontSize = `${maxFontSize}px`;
+    textElement.style.transform = 'scaleX(1)';
+
+    const availableWidth = triggerElement.clientWidth;
+    if (!availableWidth) return;
+
+    let fontSize = maxFontSize;
+    while (textElement.scrollWidth > availableWidth && fontSize > minFontSize) {
+      fontSize -= 0.5;
+      textElement.style.fontSize = `${fontSize}px`;
+    }
+
+    if (textElement.scrollWidth > availableWidth) {
+      const scale = Math.max(availableWidth / textElement.scrollWidth, 0.78);
+      textElement.style.transform = `scaleX(${scale})`;
+    }
+  }
+
+  function createEmoteItemElement(key, emoteDbData = null) {
     const emoteName = key.replace(/:/g, '');
     const emoteItem = document.createElement('div');
     emoteItem.className = 'emote-item';
     emoteItem.setAttribute('data-emote-key', key);
+    const imageUrl = getEmotePreviewUrl(key, emoteDbData);
 
-    const imageUrl = URL.createObjectURL(emoteDbData.blob);
+    if (!imageUrl) return null;
 
     emoteItem.innerHTML = `
       <button class="favorite-toggle ${favoriteEmotes.has(key) ? 'active' : ''}" type="button" aria-label="Toggle favorite">
         <i class="fas fa-star"></i>
       </button>
       <div class="emote-img-container">
-        <img src="${imageUrl}" alt="${emoteName}" class="emote-img">
+        <img src="${imageUrl}" alt="${emoteName}" class="emote-img" loading="lazy" decoding="async">
       </div>
       <div class="emote-details">
-        <div class="emote-name">${emoteName}</div>
-        <div class="emote-trigger">${key}</div>
+        <div class="emote-trigger" title="${key}">
+          <span class="emote-trigger-text">${key}</span>
+        </div>
       </div>
     `;
 
     const favoriteButton = emoteItem.querySelector('.favorite-toggle');
+    const imageElement = emoteItem.querySelector('.emote-img');
+    const triggerElement = emoteItem.querySelector('.emote-trigger');
     favoriteButton?.addEventListener('click', async (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -1311,6 +1507,9 @@ document.addEventListener('DOMContentLoaded', () => {
     emoteItem.addEventListener('click', () => {
       insertEmoteIntoActiveTab(key, emoteItem);
     });
+
+    hydrateEmoteImageElement(key, imageElement);
+    requestAnimationFrame(() => fitEmoteTriggerText(triggerElement));
 
     return emoteItem;
   }
@@ -1530,6 +1729,13 @@ document.addEventListener('DOMContentLoaded', () => {
         mediaTabButtons.forEach(btn => btn.classList.remove('active'));
         button.classList.add('active');
         updateSortToolbarVisibility();
+
+        if (selectedTab === 'twitch' && isTabActive('emotes') && !emoteLibraryLoaded) {
+          renderEmoteLoadingState();
+          ensureEmoteLibraryLoaded({ renderGrid: true }).catch(() => {});
+          return;
+        }
+
         filterAndDisplayEmotes(true);
       });
     });
@@ -2006,11 +2212,15 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Render the emote grid
-  function renderEmoteGrid() {
+  function renderEmoteGrid(force = false) {
+    if (!force && !isTabActive('emotes')) {
+      emoteGridDirty = true;
+      return;
+    }
+
+    emoteGridDirty = false;
     const sortMode = getActiveSortMode();
     emoteGrid.innerHTML = '';
-
-    console.log('Rendering emote grid. Search term:', searchTerm);
 
     // If no search term, ensure load more button is hidden
     if (searchTerm === '') {
@@ -2034,8 +2244,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // If we're searching, show search results in channel format
     if (searchTerm !== '') {
       const emotesToShow = displayedEmotes.slice(startIndex, endIndex);
-
-      console.log(`Showing search results: ${emotesToShow.length} emotes (${startIndex}-${endIndex} of ${displayedEmotes.length})`);
 
       // Create a search results section similar to channel format
       const searchSection = document.createElement('div');
@@ -2098,6 +2306,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const section = document.createElement('div');
       section.className = 'channel-section';
 
+      const emotesToShow = flattenedEntries.slice(startIndex, endIndex);
+
       const sectionHeader = document.createElement('div');
       sectionHeader.className = 'channel-header sorted-emote-header';
       sectionHeader.innerHTML = `
@@ -2110,7 +2320,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const channelEmotes = document.createElement('div');
       channelEmotes.className = 'channel-emotes';
 
-      flattenedEntries.forEach(({ key }) => {
+      emotesToShow.forEach(({ key }) => {
         const emoteItem = createEmoteItemElement(key, emoteDataMap.get(key));
         if (emoteItem) {
           channelEmotes.appendChild(emoteItem);
@@ -2120,7 +2330,13 @@ document.addEventListener('DOMContentLoaded', () => {
       section.appendChild(sectionHeader);
       section.appendChild(channelEmotes);
       emoteGrid.appendChild(section);
-      loadMoreContainer.classList.add('hidden');
+
+      if (endIndex < flattenedEntries.length) {
+        loadMoreContainer.classList.remove('hidden');
+        loadMoreBtn.textContent = `Load More (${flattenedEntries.length - endIndex} remaining)`;
+      } else {
+        loadMoreContainer.classList.add('hidden');
+      }
     }
   }
 
@@ -2156,10 +2372,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (result.channelIds) {
         channelIdsInput.value = result.channelIds.join('\n');
       }
-
-      // Update related UI components
-      updateChannelManagement();
-      updateStorageInfo();
     });
   }
 
@@ -2627,53 +2839,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Storage and channel management functions
   function updateStorageInfo() {
-    // Get references to the storage elements
     const localStorageUsed = document.getElementById('local-storage-used');
     const indexedDBStorageUsed = document.getElementById('indexeddb-storage-used');
 
-    // Get Chrome storage data
-    chrome.storage.local.get(['emoteMapping', 'channels', 'emoteImageData'], async (result) => {
+    chrome.storage.local.get(['emoteMapping', 'channels'], (result) => {
       const emoteCount = result.emoteMapping ? Object.keys(result.emoteMapping).length : 0;
       const channelCount = result.channels ? result.channels.length : 0;
 
       totalEmotesCount.textContent = emoteCount;
       channelsCount.textContent = channelCount;
 
-      // Calculate Chrome storage usage (localStorage)
-      let localStorageSize = 0;
-
-      // Calculate size of emoteMapping and channels
       const storageString = JSON.stringify(result);
-      localStorageSize = new Blob([storageString]).size;
+      localStorageUsed.textContent = formatSize(new Blob([storageString]).size);
 
-      // Format and display local storage size
-      localStorageUsed.textContent = formatSize(localStorageSize);
+      const indexedDBSize = Array.from(emoteDataMap.values()).reduce((total, emote) => {
+        return total + Number(emote?.size || emote?.blob?.size || 0);
+      }, 0);
 
-      // Calculate IndexedDB storage size
-      let indexedDBSize = 0;
-
-      try {
-        // Initialize IndexedDB if needed
-        if (!emoteDB.db) {
-          await emoteDB.init();
-        }
-
-        // Get all emotes from IndexedDB
-        const indexedDBEmotes = await emoteDB.getAllEmotes();
-
-        // Calculate size of all emote blobs
-        indexedDBEmotes.forEach(emote => {
-          if (emote.blob) {
-            indexedDBSize += emote.blob.size;
-          }
-        });
-
-        // Format and display IndexedDB storage size
-        indexedDBStorageUsed.textContent = formatSize(indexedDBSize);
-      } catch (error) {
-        console.error('Error calculating IndexedDB size:', error);
-        indexedDBStorageUsed.textContent = 'Error';
-      }
+      indexedDBStorageUsed.textContent = formatSize(indexedDBSize);
     });
   }
 
@@ -2692,111 +2875,51 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateChannelManagement() {
     const renderToken = ++channelManagementRenderToken;
-    // First get the channels
-    chrome.storage.local.get(['channels'], async (result) => {
-      const rawChannels = result.channels || [];
-      const channels = dedupeChannelsById(rawChannels);
-      if (rawChannels.length !== channels.length) {
-        chrome.storage.local.set({ channels });
-      }
-      if (renderToken !== channelManagementRenderToken) return;
+    const managedChannels = dedupeChannelsById(channels || []);
+    if (renderToken !== channelManagementRenderToken) return;
 
-      if (channels.length > 0) {
-        channelManagement.style.display = 'block';
-        channelList.innerHTML = '';
+    if (managedChannels.length > 0) {
+      channelManagement.style.display = 'block';
+      channelList.innerHTML = '';
 
-        try {
-          // Initialize IndexedDB if needed
-          if (!emoteDB.db) {
-            await emoteDB.init();
-          }
+      const emoteCountByChannel = {};
+      Array.from(emoteDataMap.values()).forEach((emote) => {
+        const channelKey = normalizeChannelIdentifier(emote?.channelId || emote?.channel);
+        if (!channelKey) return;
+        emoteCountByChannel[channelKey] = (emoteCountByChannel[channelKey] || 0) + 1;
+      });
 
-          // Get all emotes from IndexedDB
-          const indexedDBEmotes = await emoteDB.getAllEmotes();
+      managedChannels.forEach((channel) => {
+        const channelKey = normalizeChannelIdentifier(channel.id || channel.username);
+        const emoteCount = emoteCountByChannel[channelKey] ??
+          (channel.emotes ? Object.keys(channel.emotes).length : 0);
 
-          // Get the emoteMapping to check which emotes belong to which channel
-          const { emoteMapping } = await new Promise((resolve) => {
-            chrome.storage.local.get(['emoteMapping'], (result) => resolve(result));
-          });
-          if (renderToken !== channelManagementRenderToken) return;
+        const channelItem = document.createElement('div');
+        channelItem.className = 'channel-item';
+        channelItem.innerHTML = `
+          <div class="channel-info">
+            <div class="channel-name">${channel.username}</div>
+            <div class="channel-stats">${emoteCount} emotes</div>
+          </div>
+          <div class="channel-actions">
+            <button class="delete-channel-btn" data-channel-id="${channel.id}">
+              <i class="fas fa-trash"></i> Delete
+            </button>
+          </div>
+        `;
 
-          // Count emotes per channel using live IndexedDB metadata (updates during download)
-          const emoteCountByChannel = {};
-          indexedDBEmotes.forEach((emote) => {
-            const channelKey = normalizeChannelIdentifier(emote.channelId || emote.channel);
-            if (!channelKey) return;
-            emoteCountByChannel[channelKey] = (emoteCountByChannel[channelKey] || 0) + 1;
-          });
+        channelList.appendChild(channelItem);
+      });
 
-          // Ensure each channel has a key in the map
-          channels.forEach(channel => {
-            const channelKey = normalizeChannelIdentifier(channel.id || channel.username);
-            if (!channelKey) return;
-            if (!Object.prototype.hasOwnProperty.call(emoteCountByChannel, channelKey)) {
-              emoteCountByChannel[channelKey] = 0;
-            }
-          });
-
-          // Create channel list items
-          channels.forEach(channel => {
-            // Use the count from IndexedDB or fallback to channel.emotes
-            const channelKey = normalizeChannelIdentifier(channel.id || channel.username);
-            const emoteCount = emoteCountByChannel[channelKey] ??
-                             (channel.emotes ? Object.keys(channel.emotes).length : 0);
-
-            const channelItem = document.createElement('div');
-            channelItem.className = 'channel-item';
-            channelItem.innerHTML = `
-              <div class="channel-info">
-                <div class="channel-name">${channel.username}</div>
-                <div class="channel-stats">${emoteCount} emotes</div>
-              </div>
-              <div class="channel-actions">
-                <button class="delete-channel-btn" data-channel-id="${channel.id}">
-                  <i class="fas fa-trash"></i> Delete
-                </button>
-              </div>
-            `;
-
-            channelList.appendChild(channelItem);
-          });
-        } catch (error) {
-          console.error('Error updating channel management:', error);
-          if (renderToken !== channelManagementRenderToken) return;
-
-          // Fallback to simple display if IndexedDB fails
-          channels.forEach(channel => {
-            const emoteCount = channel.emotes ? Object.keys(channel.emotes).length : 0;
-
-            const channelItem = document.createElement('div');
-            channelItem.className = 'channel-item';
-            channelItem.innerHTML = `
-              <div class="channel-info">
-                <div class="channel-name">${channel.username}</div>
-                <div class="channel-stats">${emoteCount} emotes</div>
-              </div>
-              <div class="channel-actions">
-                <button class="delete-channel-btn" data-channel-id="${channel.id}">
-                  <i class="fas fa-trash"></i> Delete
-                </button>
-              </div>
-            `;
-
-            channelList.appendChild(channelItem);
-          });
-        }
-
-        // Add delete channel handlers
-        channelList.querySelectorAll('.delete-channel-btn').forEach(btn => {
-          btn.addEventListener('click', (e) => {
-            const channelId = e.target.closest('.delete-channel-btn').dataset.channelId;
-            deleteChannel(channelId);
-          });
+      channelList.querySelectorAll('.delete-channel-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          const channelId = e.target.closest('.delete-channel-btn').dataset.channelId;
+          deleteChannel(channelId);
         });
-      } else {
-        channelManagement.style.display = 'none';
-      }
-    });
+      });
+    } else {
+      channelManagement.style.display = 'none';
+    }
   }
 
   async function deleteChannel(channelId) {
@@ -3073,12 +3196,12 @@ document.addEventListener('DOMContentLoaded', () => {
     loadRecentItems();
     loadFavoriteEmotes();
     loadSavedSortMode();
-    loadEmotes();
     loadChannelIds();
     addButtonEffects();
     initDebugSection();
     checkDownloadStatus();
     initSaveButton();
+    scheduleEmoteLibraryWarmup();
 
     // Check current platform and show warnings
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

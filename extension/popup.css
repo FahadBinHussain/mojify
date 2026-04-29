@@ -924,22 +924,18 @@ button:disabled {
   padding-top: 10px;
 }
 
-.emote-name {
+.emote-trigger {
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
   font-weight: 700;
   color: var(--text-strong);
 }
 
-.emote-trigger {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  margin-top: 2px;
-  font-size: 11px;
-  color: var(--text-muted);
+.emote-trigger-text {
+  display: inline-block;
+  transform-origin: left center;
+  will-change: transform;
 }
 
 .emote-item.loading {
