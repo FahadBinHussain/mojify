@@ -83,6 +83,7 @@
             </div>
             <div class="media-tabs">
               <button class="media-tab-btn active" data-media-tab="twitch" type="button">Twitch</button>
+              <button class="media-tab-btn" data-media-tab="discord" type="button">Discord</button>
               <button class="media-tab-btn" data-media-tab="giphy" type="button">Giphy</button>
               <button class="media-tab-btn" data-media-tab="klipy" type="button">Klipy</button>
               <button class="media-tab-btn" data-media-tab="pixabay" type="button">Pixabay</button>
@@ -100,6 +101,26 @@
               </select>
             </div>
             <div class="channel-filter-bar" id="channel-filter-bar"></div>
+            <div class="discord-import-panel hidden" id="discord-import-panel">
+              <div class="discord-import-copy">
+                <span class="discord-import-kicker">Discord Import</span>
+                <p>Open a Discord server in another tab, then import all custom emojis from that server.</p>
+              </div>
+              <button id="discord-import-button" class="secondary-button" type="button">
+                <i class="fab fa-discord"></i>
+                <span>Import Open Server</span>
+              </button>
+              <div class="discord-import-progress hidden" id="discord-import-progress">
+                <div class="progress-info">
+                  <span id="discord-import-progress-text">Importing emojis...</span>
+                  <span id="discord-import-progress-count">0/0</span>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill" id="discord-import-progress-fill"></div>
+                </div>
+                <p class="discord-import-progress-note">Safe to close the popup. Progress will resume here when you reopen it.</p>
+              </div>
+            </div>
           </div>
 
           <div class="emote-stats">
