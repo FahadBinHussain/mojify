@@ -2409,7 +2409,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Load more emotes when button is clicked
   loadMoreBtn.addEventListener('click', () => {
-    if (activeMediaTab !== 'twitch') {
+    if (!isLocalLibraryTab()) {
       return;
     }
     currentPage++;
