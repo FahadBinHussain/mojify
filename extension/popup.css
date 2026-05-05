@@ -378,6 +378,20 @@ img {
   min-height: 160px;
 }
 
+.recent-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 2px 0 4px;
+}
+
+.recent-load-more .secondary-button {
+  min-height: 36px;
+  padding: 0 16px;
+  border-color: rgba(56, 189, 248, 0.22);
+  background: rgba(56, 189, 248, 0.1);
+  color: var(--accent);
+}
+
 /* ── Pane Meta ──────────────────────────────── */
 .pane-meta {
   display: flex;
