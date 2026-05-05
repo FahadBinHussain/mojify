@@ -692,7 +692,35 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function getScopeEmoteCount(channel) {
+    if (typeof channel?.scopeCount === 'number') {
+      return channel.scopeCount;
+    }
     return Object.keys(channel?.emotes || {}).length;
+  }
+
+  function getDiscordScopeValue(channel, assetType) {
+    const channelValue = getScopeValue(channel);
+    if (assetType === 'emoji') return channelValue;
+    return `${channelValue}::discord-${assetType}s`;
+  }
+
+  function parseDiscordScopeValue(value) {
+    const match = String(value || '').match(/^(.*)::discord-(emojis|stickers)$/);
+    if (!match) return null;
+    return {
+      channelValue: match[1],
+      assetType: match[2] === 'stickers' ? 'sticker' : 'emoji'
+    };
+  }
+
+  function getDiscordAssetTypeForKey(key) {
+    return emoteDataMap.get(key)?.discordAssetType === 'sticker' ? 'sticker' : 'emoji';
+  }
+
+  function getDiscordAssetCount(channel, assetType) {
+    return Object.keys(channel?.emotes || {}).filter((key) => {
+      return emoteDataMap.has(key) && getDiscordAssetTypeForKey(key) === assetType;
+    }).length;
   }
 
   function getScopeParentName(channel) {
@@ -707,6 +735,10 @@ document.addEventListener('DOMContentLoaded', () => {
     return getChannelSourceType(channel) === 'twitch' && !is7TVSetChannel(channel);
   }
 
+  function shouldRenderDiscordMediaTree(channel) {
+    return getChannelSourceType(channel) === 'discord';
+  }
+
   function createActiveScopeSet(channel) {
     if (!channel || !shouldRenderChannelSetTree(channel)) return null;
     const parentName = getScopeParentName(channel);
@@ -717,6 +749,33 @@ document.addEventListener('DOMContentLoaded', () => {
       emoteSetName: channel.emoteSetName || `${parentName}'s Emotes`,
       parentUsername: parentName
     };
+  }
+
+  function createDiscordMediaScopeChildren(channel) {
+    if (!channel || !shouldRenderDiscordMediaTree(channel)) return [];
+
+    return [
+      {
+        label: 'Emotes',
+        assetType: 'emoji',
+        scopeValue: getDiscordScopeValue(channel, 'emoji')
+      },
+      {
+        label: 'Stickers',
+        assetType: 'sticker',
+        scopeValue: getDiscordScopeValue(channel, 'sticker')
+      }
+    ]
+      .map((scope) => ({
+        ...channel,
+        isDiscordMediaScope: true,
+        scopeValue: scope.scopeValue,
+        scopeAssetType: scope.assetType,
+        emoteSetName: scope.label,
+        scopeCount: getDiscordAssetCount(channel, scope.assetType),
+        parentUsername: getScopeParentName(channel)
+      }))
+      .filter((scope) => scope.scopeCount > 0);
   }
 
   function buildVisibleChannelGroups(visibleChannels) {
@@ -731,7 +790,7 @@ document.addEventListener('DOMContentLoaded', () => {
           group = {
             parent: channel,
             activeSet: createActiveScopeSet(channel),
-            children: []
+            children: createDiscordMediaScopeChildren(channel)
           };
           visibleChannelGroups.push(group);
           groupByParent.set(parentKey, group);
@@ -739,6 +798,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         group.parent = channel;
         group.activeSet = createActiveScopeSet(channel);
+        if (shouldRenderDiscordMediaTree(channel)) {
+          group.children = createDiscordMediaScopeChildren(channel);
+        }
         groupByParent.set(parentKey, group);
         return;
       }
@@ -762,7 +824,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function getScopeLabel(visibleChannels, visibleChannelGroups) {
-    if (activeChannelFilter === 'all') return 'All Channels';
+    if (activeChannelFilter === 'all') {
+      return activeMediaTab === 'discord' ? 'All Servers' : 'All Channels';
+    }
 
     for (const group of visibleChannelGroups) {
       const parentName = group.parent
@@ -785,6 +849,64 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const selected = visibleChannels.find((channel) => getScopeValue(channel) === activeChannelFilter);
     return selected ? getChannelDisplayName(selected) : 'All Channels';
+  }
+
+  function getValidScopeValuesForChannels(visibleChannels) {
+    const values = new Set(['all']);
+    buildVisibleChannelGroups(visibleChannels).forEach((group) => {
+      if (group.activeSet) {
+        values.add(getScopeValue(group.activeSet));
+      }
+      group.children.forEach((child) => {
+        values.add(getScopeValue(child));
+      });
+      if (group.parent && !group.activeSet && group.children.length === 0) {
+        values.add(getScopeValue(group.parent));
+      }
+    });
+    return values;
+  }
+
+  function getScopedChannelEntries(visibleChannels, sortMode = 'source') {
+    const discordScope = parseDiscordScopeValue(activeChannelFilter);
+    const scopedChannels = activeChannelFilter === 'all'
+      ? visibleChannels
+      : visibleChannels.filter((channel) => {
+          const channelValue = getScopeValue(channel);
+          return channelValue === activeChannelFilter ||
+            (discordScope && channelValue === discordScope.channelValue);
+        });
+
+    const flattenedEntries = [];
+    scopedChannels.forEach((channel) => {
+      const assetTypeFilter = discordScope && getScopeValue(channel) === discordScope.channelValue
+        ? discordScope.assetType
+        : (
+            getChannelSourceType(channel) === 'discord' &&
+            activeChannelFilter === getScopeValue(channel)
+              ? 'emoji'
+              : ''
+          );
+
+      const channelEntries = Object.entries(channel.emotes || {})
+        .filter(([key]) => {
+          if (!emoteDataMap.has(key)) return false;
+          if (!assetTypeFilter) return true;
+          return getDiscordAssetTypeForKey(key) === assetTypeFilter;
+        })
+        .map(([key]) => ({ key, channel }));
+
+      if (sortMode !== 'source') {
+        channelEntries.sort((a, b) => compareEmoteKeysByMode(a.key, b.key, sortMode));
+      }
+
+      flattenedEntries.push(...channelEntries);
+    });
+
+    return {
+      scopedChannels,
+      flattenedEntries
+    };
   }
 
   function selectScopeFilter(value) {
@@ -819,11 +941,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const emoteTotal = [group.activeSet, ...group.children]
       .filter(Boolean)
       .reduce((total, channel) => total + getScopeEmoteCount(channel), 0);
+    const isDiscordGroup = getChannelSourceType(group.parent || group.children[0]) === 'discord';
+    const scopeUnit = isDiscordGroup ? 'type' : 'set';
+    const itemUnit = isDiscordGroup ? 'items' : 'emotes';
     const header = document.createElement('div');
     header.className = 'scope-parent-header';
     header.innerHTML = `
       <span class="scope-parent-title">${escapeHtml(parentName)}</span>
-      <span class="scope-parent-meta">${setCount} ${setCount === 1 ? 'set' : 'sets'} | ${emoteTotal} emotes</span>
+      <span class="scope-parent-meta">${setCount} ${setCount === 1 ? scopeUnit : `${scopeUnit}s`} | ${emoteTotal} ${itemUnit}</span>
     `;
     return header;
   }
@@ -879,6 +1004,11 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    const validScopeValues = getValidScopeValuesForChannels(visibleChannels);
+    if (!validScopeValues.has(activeChannelFilter)) {
+      activeChannelFilter = 'all';
+    }
+
     if (scopeCurrentLabel) {
       scopeCurrentLabel.textContent = getScopeLabel(visibleChannels, visibleChannelGroups);
     }
@@ -895,10 +1025,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const scopeTree = document.createElement('div');
     scopeTree.className = 'scope-tree';
     scopeTree.setAttribute('role', 'tree');
+    const itemUnit = activeMediaTab === 'discord' ? 'items' : 'emotes';
     scopeTree.appendChild(createScopeRow({
-      label: 'All Channels',
+      label: activeMediaTab === 'discord' ? 'All Servers' : 'All Channels',
       value: 'all',
-      meta: `${visibleChannels.reduce((total, channel) => total + getScopeEmoteCount(channel), 0)} emotes`,
+      meta: `${visibleChannels.reduce((total, channel) => total + getScopeEmoteCount(channel), 0)} ${itemUnit}`,
       type: 'all'
     }));
 
@@ -930,11 +1061,16 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       group.children.forEach((child) => {
+        const isDiscordChild = Boolean(child.isDiscordMediaScope);
+        const childUnit = isDiscordChild ? 'items' : 'emotes';
         wrapper.appendChild(createScopeRow({
           label: getScopeSetName(child),
           value: getScopeValue(child),
-          meta: `${getScopeEmoteCount(child)} emotes | Saved`,
-          type: 'child'
+          meta: isDiscordChild
+            ? `${getScopeEmoteCount(child)} ${childUnit}`
+            : `${getScopeEmoteCount(child)} ${childUnit} | Saved`,
+          type: 'child',
+          extraClass: isDiscordChild ? 'scope-row-active-set' : ''
         }));
       });
 
@@ -1603,8 +1739,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         updateEmoteCount();
-        const visibleChannelIds = getVisibleChannelsForSource(getActiveLibrarySourceType()).map((channel) => channel.id || channel.username);
-        if (activeChannelFilter !== 'all' && !visibleChannelIds.includes(activeChannelFilter)) {
+        const validScopeValues = getValidScopeValuesForChannels(getVisibleChannelsForSource(getActiveLibrarySourceType()));
+        if (!validScopeValues.has(activeChannelFilter)) {
           activeChannelFilter = 'all';
         }
         renderChannelFilterBar();
@@ -1688,16 +1824,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const emoteKeys = isLocalLibraryTab()
       ? Array.from(new Set(
-          getVisibleChannelsForSource(getActiveLibrarySourceType())
-            .flatMap((channel) => Object.keys(channel?.emotes || {}))
-            .filter((key) => emoteDataMap.has(key))
+          getScopedChannelEntries(getVisibleChannelsForSource(getActiveLibrarySourceType()), sortMode)
+            .flattenedEntries
+            .map(({ key }) => key)
         ))
       : Object.keys(allEmotes);
     if (emoteKeys.length === 0) {
       if (isLocalLibraryTab()) {
         emoteGrid.innerHTML = `
           <div class="no-emotes-message" style="grid-column: 1 / -1;">
-            <p>${activeMediaTab === 'discord' ? 'No Discord emojis imported yet' : 'No emotes loaded'}</p>
+            <p>${activeMediaTab === 'discord' ? 'No Discord emojis or stickers imported yet' : 'No emotes loaded'}</p>
           </div>
         `;
         loadMoreContainer.classList.add('hidden');
@@ -2032,7 +2168,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (searchInput) {
           if (selectedTab === 'discord') {
-            searchInput.placeholder = 'Search imported Discord emojis';
+            searchInput.placeholder = 'Search imported Discord media';
           } else if (selectedTab === 'twitch') {
             searchInput.placeholder = 'Search emotes, GIFs, or reaction media';
           } else {
@@ -2596,24 +2732,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const visibleChannels = getVisibleChannelsForSource();
       const visibleChannelGroups = buildVisibleChannelGroups(visibleChannels);
       renderChannelFilterBar();
-
-      const channelsToRender = activeChannelFilter === 'all'
-        ? visibleChannels
-        : visibleChannels.filter((channel) => (channel.id || channel.username) === activeChannelFilter);
       const activeScopeLabel = getScopeLabel(visibleChannels, visibleChannelGroups);
-
-      const flattenedEntries = [];
-      channelsToRender.forEach((channel) => {
-        const channelEntries = Object.entries(channel.emotes || {})
-          .filter(([key]) => emoteDataMap.has(key))
-          .map(([key]) => ({ key, channel }));
-
-        if (sortMode !== 'source') {
-          channelEntries.sort((a, b) => compareEmoteKeysByMode(a.key, b.key, sortMode));
-        }
-
-        flattenedEntries.push(...channelEntries);
-      });
+      const { flattenedEntries } = getScopedChannelEntries(visibleChannels, sortMode);
 
       const section = document.createElement('div');
       section.className = 'channel-section';
@@ -2627,7 +2747,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <span class="channel-name">${activeChannelFilter === 'all'
             ? (activeMediaTab === 'discord' ? 'All Servers' : 'All Channels')
             : activeScopeLabel}</span>
-          <span class="channel-emote-count">${flattenedEntries.length} emotes</span>
+          <span class="channel-emote-count">${flattenedEntries.length} ${activeMediaTab === 'discord' ? 'items' : 'emotes'}</span>
         </div>
       `;
 
@@ -3703,7 +3823,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 1200);
   }
 
-  function setDiscordImportUiActive(statusText = 'Importing emojis...') {
+  function setDiscordImportUiActive(statusText = 'Importing Discord media...') {
     discordImportCompletionHandled = false;
     if (discordImportButton) {
       discordImportButton.disabled = true;
@@ -3729,7 +3849,7 @@ document.addEventListener('DOMContentLoaded', () => {
       discordImportProgressFill.style.width = '0%';
     }
     if (discordImportProgressText) {
-      discordImportProgressText.textContent = 'Importing emojis...';
+      discordImportProgressText.textContent = 'Importing Discord media...';
     }
     if (discordImportProgressCount) {
       discordImportProgressCount.textContent = '0/0';
@@ -3741,10 +3861,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const total = Number(progressData.total || 0);
     const percentage = total > 0 ? Math.min((current / total) * 100, 100) : 0;
     const guildName = progressData.guildName || 'Discord server';
-    const currentEmoji = progressData.currentEmoji || '';
-    const statusText = currentEmoji
-      ? `Importing ${currentEmoji} from ${guildName}`
-      : progressData.statusText || `Importing emojis from ${guildName}`;
+    const currentItem = progressData.currentItem || progressData.currentEmoji || '';
+    const statusText = currentItem
+      ? `Importing ${currentItem} from ${guildName}`
+      : progressData.statusText || `Importing Discord media from ${guildName}`;
 
     setDiscordImportUiActive(statusText);
     if (discordImportProgressFill) {
@@ -3756,6 +3876,30 @@ document.addEventListener('DOMContentLoaded', () => {
     if (discordImportProgressText) {
       discordImportProgressText.textContent = statusText;
     }
+  }
+
+  function createDiscordImportToast(progressData = {}) {
+    if (progressData.toastMessage) {
+      return progressData.toastMessage;
+    }
+
+    const guildName = progressData.guildName || 'Discord server';
+    const emojiCount = Number(progressData.importedEmojiCount || 0);
+    const stickerCount = Number(progressData.importedStickerCount || 0);
+    const parts = [];
+
+    if (emojiCount > 0) {
+      parts.push(`${emojiCount} emoji${emojiCount === 1 ? '' : 's'}`);
+    }
+    if (stickerCount > 0) {
+      parts.push(`${stickerCount} sticker${stickerCount === 1 ? '' : 's'}`);
+    }
+    if (parts.length === 0) {
+      const total = Number(progressData.importedCount || 0);
+      parts.push(`${total} Discord item${total === 1 ? '' : 's'}`);
+    }
+
+    return `Imported ${parts.join(' and ')} from ${guildName}`;
   }
 
   function stopDiscordImportPolling() {
@@ -3812,7 +3956,7 @@ document.addEventListener('DOMContentLoaded', () => {
         finishDiscordImportFlow({
           completed: true,
           channelId: importProgressData.channelId || 'all',
-          toastMessage: importProgressData.toastMessage || `Imported ${importProgressData.importedCount || 0} emoji${importProgressData.importedCount === 1 ? '' : 's'} from ${importProgressData.guildName || 'Discord server'}`
+          toastMessage: createDiscordImportToast(importProgressData)
         });
         return;
       }
@@ -3843,7 +3987,7 @@ document.addEventListener('DOMContentLoaded', () => {
           finishDiscordImportFlow({
             completed: true,
             channelId: result.discordImportProgress.channelId || 'all',
-            toastMessage: result.discordImportProgress.toastMessage || `Imported ${result.discordImportProgress.importedCount || 0} emoji${result.discordImportProgress.importedCount === 1 ? '' : 's'} from ${result.discordImportProgress.guildName || 'Discord server'}`
+            toastMessage: createDiscordImportToast(result.discordImportProgress)
           });
           return;
         }
@@ -3877,7 +4021,7 @@ document.addEventListener('DOMContentLoaded', () => {
           finishDiscordImportFlow({
             completed: true,
             channelId: message.channelId || 'all',
-            toastMessage: message.toastMessage || `Imported ${message.importedCount || 0} emoji${message.importedCount === 1 ? '' : 's'} from ${message.guildName || 'Discord server'}`
+            toastMessage: createDiscordImportToast(message)
           });
           return;
         }

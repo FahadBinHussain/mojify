@@ -29,6 +29,7 @@
     "https://*.messenger.com/*",
     "https://*.discord.com/*",
     "https://*.discordapp.com/*",
+    "https://*.discordapp.net/*",
     "https://*.facebook.com/*",
     "https://*.telegram.org/*",
     "https://*.whatsapp.com/*"

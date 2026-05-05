@@ -2260,9 +2260,12 @@ async function updateDiscordImportProgress(progress = {}) {
     total: Number(progress.total || 0),
     guildId: progress.guildId || discordImportState.guildId || '',
     guildName: progress.guildName || discordImportState.guildName || '',
-    currentEmoji: progress.currentEmoji || '',
+    currentEmoji: progress.currentItem || progress.currentEmoji || '',
+    currentItem: progress.currentItem || progress.currentEmoji || '',
     statusText: progress.statusText || '',
     importedCount: Number(progress.importedCount || 0),
+    importedEmojiCount: Number(progress.importedEmojiCount || 0),
+    importedStickerCount: Number(progress.importedStickerCount || 0),
     skippedCount: Number(progress.skippedCount || 0),
     completed: Boolean(progress.completed),
     error: progress.error || '',
@@ -2294,6 +2297,27 @@ function sanitizeDiscordEmojiName(name, fallback = 'emoji') {
 function buildDiscordEmojiCdnUrl(emojiId, animated = false) {
   const extension = animated ? 'gif' : 'png';
   return `https://cdn.discordapp.com/emojis/${emojiId}.${extension}?size=128&quality=lossless`;
+}
+
+function getDiscordStickerFileInfo(sticker = {}) {
+  const formatType = Number(sticker.formatType || sticker.format_type || 1);
+  if (formatType === 3) {
+    return null;
+  }
+
+  if (formatType === 4) {
+    return {
+      url: `https://media.discordapp.net/stickers/${sticker.id}.gif`,
+      extension: 'gif',
+      mimeType: 'image/gif'
+    };
+  }
+
+  return {
+    url: `https://cdn.discordapp.com/stickers/${sticker.id}.png`,
+    extension: 'png',
+    mimeType: 'image/png'
+  };
 }
 
 function buildUniqueDiscordEmojiKey(name, guildName, reservedKeys) {
@@ -2419,6 +2443,31 @@ async function extractDiscordGuildFromTab(tabId) {
       };
 
       const sanitizeDiscordToken = (token) => String(token || '').replace(/^"|"$/g, '').trim();
+      const normalizeDiscordEmoji = (emoji) => ({
+        id: String(emoji?.id || ''),
+        name: emoji?.name || 'emoji',
+        animated: Boolean(emoji?.animated)
+      });
+      const normalizeDiscordSticker = (sticker) => ({
+        id: String(sticker?.id || ''),
+        name: sticker?.name || 'sticker',
+        formatType: Number(sticker?.format_type || sticker?.formatType || 1),
+        description: sticker?.description || '',
+        tags: sticker?.tags || '',
+        available: sticker?.available !== false,
+        guildId: String(sticker?.guild_id || sticker?.guildId || guildId)
+      });
+      const collectionValues = (value) => {
+        if (Array.isArray(value)) return value;
+        if (value instanceof Map) return Array.from(value.values());
+        return Object.values(value || {});
+      };
+      const normalizeEmojiList = (emojis) => collectionValues(emojis)
+        .filter((emoji) => emoji?.id && emoji?.name)
+        .map(normalizeDiscordEmoji);
+      const normalizeStickerList = (stickers) => collectionValues(stickers)
+        .filter((sticker) => sticker?.id && sticker?.name)
+        .map(normalizeDiscordSticker);
 
       const readDiscordToken = () => {
         try {
@@ -2491,23 +2540,23 @@ async function extractDiscordGuildFromTab(tabId) {
         });
       };
 
+      const performGuildStickersFetch = async (token = '') => {
+        const headers = token ? { authorization: token } : {};
+        return fetch(`https://discord.com/api/v10/guilds/${guildId}/stickers`, {
+          credentials: 'include',
+          headers
+        });
+      };
+
       const readGuildFromWebpackState = () => {
         const guildStore = findWebpackModule((candidate) => (
           typeof candidate?.getGuild === 'function'
         ));
 
         const guild = guildStore?.getGuild?.(guildId);
-        if (guild?.emojis && Array.isArray(guild.emojis)) {
-          return {
-            guildId: String(guild.id || guildId),
-            guildName: guild.name,
-            emojis: guild.emojis.map((emoji) => ({
-              id: emoji.id,
-              name: emoji.name,
-              animated: Boolean(emoji.animated)
-            }))
-          };
-        }
+        const guildName = guild?.name || document.title.replace(/\s*\|\s*Discord\s*$/i, '').trim() || 'Discord Server';
+        let emojis = normalizeEmojiList(guild?.emojis);
+        let stickers = normalizeStickerList(guild?.stickers);
 
         const emojiStore = findWebpackModule((candidate) => {
           const keys = Object.keys(candidate || {});
@@ -2515,37 +2564,23 @@ async function extractDiscordGuildFromTab(tabId) {
             keys.some((key) => typeof candidate[key] === 'function');
         });
 
-        const possibleMethods = [
+        const possibleEmojiMethods = [
           'getGuildEmojiMap',
           'getGuildEmojis',
           'getEmojiMap',
           'getCustomEmojiById'
         ];
 
-        if (emojiStore) {
-          for (const methodName of possibleMethods) {
+        if (emojiStore && emojis.length === 0) {
+          for (const methodName of possibleEmojiMethods) {
             const method = emojiStore[methodName];
             if (typeof method !== 'function') continue;
 
             try {
               const result = method.call(emojiStore, guildId);
               if (result && typeof result === 'object') {
-                const values = Array.isArray(result) ? result : Object.values(result);
-                const emojis = values
-                  .filter((emoji) => emoji?.id && emoji?.name)
-                  .map((emoji) => ({
-                    id: emoji.id,
-                    name: emoji.name,
-                    animated: Boolean(emoji.animated)
-                  }));
-
-                if (emojis.length > 0) {
-                  return {
-                    guildId,
-                    guildName: guild?.name || document.title.replace(/\s*\|\s*Discord\s*$/i, '').trim() || 'Discord Server',
-                    emojis
-                  };
-                }
+                emojis = normalizeEmojiList(result);
+                if (emojis.length > 0) break;
               }
             } catch (error) {
               // Try the next candidate method.
@@ -2553,14 +2588,55 @@ async function extractDiscordGuildFromTab(tabId) {
           }
         }
 
+        const stickerStore = findWebpackModule((candidate) => {
+          const methodNames = getMethodNames(candidate);
+          return methodNames.some((name) => /sticker/i.test(name)) &&
+            methodNames.some((name) => /guild/i.test(name));
+        });
+        const possibleStickerMethods = [
+          'getStickersForGuild',
+          'getGuildStickers',
+          'getStickersByGuildId',
+          'getStickersByGuild',
+          'getStickerPackForGuild'
+        ];
+
+        if (stickerStore && stickers.length === 0) {
+          for (const methodName of possibleStickerMethods) {
+            const method = stickerStore[methodName];
+            if (typeof method !== 'function') continue;
+
+            try {
+              const result = method.call(stickerStore, guildId);
+              if (result && typeof result === 'object') {
+                const guildStickerResult = result?.[guildId]?.stickers || result?.[guildId] || result?.stickers || result;
+                stickers = normalizeStickerList(guildStickerResult);
+                if (stickers.length > 0) break;
+              }
+            } catch (error) {
+              // Try the next candidate method.
+            }
+          }
+        }
+
+        if (emojis.length > 0 || stickers.length > 0) {
+          return {
+            guildId: String(guild?.id || guildId),
+            guildName,
+            emojis,
+            stickers
+          };
+        }
+
         return null;
       };
 
       try {
+        let token = '';
         let response = await performGuildFetch();
 
         if (response.status === 401) {
-          const token = readDiscordToken();
+          token = readDiscordToken();
           if (token) {
             response = await performGuildFetch(token);
           } else {
@@ -2581,16 +2657,24 @@ async function extractDiscordGuildFromTab(tabId) {
         }
 
         const guild = await response.json();
+        let stickers = normalizeStickerList(guild.stickers);
+        try {
+          if (!token && stickers.length === 0) {
+            token = readDiscordToken();
+          }
+          const stickerResponse = await performGuildStickersFetch(token);
+          if (stickerResponse.ok) {
+            stickers = normalizeStickerList(await stickerResponse.json());
+          }
+        } catch (error) {
+          // Keep emoji import working even if the sticker endpoint is unavailable.
+        }
+
         return {
           guildId,
           guildName: guild.name,
-          emojis: Array.isArray(guild.emojis)
-            ? guild.emojis.map((emoji) => ({
-                id: emoji.id,
-                name: emoji.name,
-                animated: Boolean(emoji.animated)
-              }))
-            : []
+          emojis: normalizeEmojiList(guild.emojis),
+          stickers
         };
       } catch (error) {
         return { error: error?.message || 'Failed to read Discord server data' };
@@ -2629,6 +2713,8 @@ async function importDiscordServerEmojis(tabId) {
   let guildId = '';
   let guildName = '';
   let importedCount = 0;
+  let importedEmojiCount = 0;
+  let importedStickerCount = 0;
   let skippedCount = 0;
 
   try {
@@ -2648,26 +2734,39 @@ async function importDiscordServerEmojis(tabId) {
     guildId = String(guildData.guildId || '').trim();
     guildName = guildData.guildName || 'Discord Server';
     const guildEmojis = Array.isArray(guildData.emojis) ? guildData.emojis.filter((emoji) => emoji?.id) : [];
+    const guildStickers = Array.isArray(guildData.stickers) ? guildData.stickers.filter((sticker) => sticker?.id) : [];
+    const guildItems = [
+      ...guildEmojis.map((emoji) => ({ type: 'emoji', ...emoji })),
+      ...guildStickers.map((sticker) => ({ type: 'sticker', ...sticker }))
+    ];
 
     discordImportState.guildId = guildId;
     discordImportState.guildName = guildName;
-    discordImportState.total = guildEmojis.length;
+    discordImportState.total = guildItems.length;
 
     if (!guildId) {
       throw new Error('Could not determine the current Discord server');
     }
 
-    if (guildEmojis.length === 0) {
-      throw new Error('This Discord server has no custom emojis to import');
+    if (guildItems.length === 0) {
+      throw new Error('This Discord server has no custom emojis or stickers to import');
+    }
+
+    const foundParts = [];
+    if (guildEmojis.length > 0) {
+      foundParts.push(`${guildEmojis.length} emoji${guildEmojis.length === 1 ? '' : 's'}`);
+    }
+    if (guildStickers.length > 0) {
+      foundParts.push(`${guildStickers.length} sticker${guildStickers.length === 1 ? '' : 's'}`);
     }
 
     await updateDiscordImportProgress({
       inProgress: true,
       current: 0,
-      total: guildEmojis.length,
+      total: guildItems.length,
       guildId,
       guildName,
-      statusText: `Found ${guildEmojis.length} emoji${guildEmojis.length === 1 ? '' : 's'} in ${guildName}`
+      statusText: `Found ${foundParts.join(' and ')} in ${guildName}`
     });
 
     if (!emoteDB.db) {
@@ -2695,37 +2794,56 @@ async function importDiscordServerEmojis(tabId) {
 
     const importedEmotes = {};
 
-    for (const emoji of guildEmojis) {
-      const key = buildUniqueDiscordEmojiKey(emoji.name, guildName, reservedKeys);
-      const url = buildDiscordEmojiCdnUrl(emoji.id, emoji.animated);
+    for (const item of guildItems) {
+      const isSticker = item.type === 'sticker';
+      const key = buildUniqueDiscordEmojiKey(item.name, guildName, reservedKeys);
+      const stickerFileInfo = isSticker ? getDiscordStickerFileInfo(item) : null;
+      const url = isSticker ? stickerFileInfo?.url : buildDiscordEmojiCdnUrl(item.id, item.animated);
+      const extension = isSticker ? stickerFileInfo?.extension : (item.animated ? 'gif' : 'png');
+      const fallbackMimeType = isSticker ? stickerFileInfo?.mimeType : (item.animated ? 'image/gif' : 'image/png');
 
       try {
+        if (!url) {
+          throw new Error('Unsupported sticker format');
+        }
+
         const response = await fetch(url);
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
 
-        const blob = await response.blob();
+        let blob = await response.blob();
         if (!(blob instanceof Blob) || blob.size === 0) {
-          throw new Error('Empty emoji asset');
+          throw new Error(`Empty ${isSticker ? 'sticker' : 'emoji'} asset`);
+        }
+        if (!blob.type && fallbackMimeType) {
+          blob = new Blob([await blob.arrayBuffer()], { type: fallbackMimeType });
         }
 
         await emoteDB.storeEmote(key, url, blob, {
           channel: guildName,
           channelId: guildId,
           sourceType: 'discord',
-          sourceLabel: 'Discord',
+          sourceLabel: isSticker ? 'Discord Sticker' : 'Discord Emoji',
           guildName,
-          discordEmojiId: emoji.id,
-          animated: emoji.animated,
-          filename: `${sanitizeDiscordEmojiName(emoji.name)}.${emoji.animated ? 'gif' : 'png'}`
+          discordAssetType: isSticker ? 'sticker' : 'emoji',
+          discordEmojiId: isSticker ? '' : item.id,
+          discordStickerId: isSticker ? item.id : '',
+          discordStickerFormatType: isSticker ? Number(item.formatType || 1) : 0,
+          animated: isSticker ? Number(item.formatType || 1) === 4 : Boolean(item.animated),
+          filename: `${sanitizeDiscordEmojiName(item.name, isSticker ? 'sticker' : 'emoji')}.${extension || 'png'}`
         });
 
         importedEmotes[key] = url;
         globalEmoteMapping[key] = url;
         importedCount += 1;
+        if (isSticker) {
+          importedStickerCount += 1;
+        } else {
+          importedEmojiCount += 1;
+        }
       } catch (error) {
-        console.warn('[Discord Import] Skipping emoji:', emoji?.name, error?.message || error);
+        console.warn(`[Discord Import] Skipping ${isSticker ? 'sticker' : 'emoji'}:`, item?.name, error?.message || error);
         skippedCount += 1;
       }
 
@@ -2733,18 +2851,20 @@ async function importDiscordServerEmojis(tabId) {
       await updateDiscordImportProgress({
         inProgress: true,
         current: discordImportState.current,
-        total: guildEmojis.length,
+        total: guildItems.length,
         guildId,
         guildName,
-        currentEmoji: emoji.name,
-        statusText: `Importing emojis from ${guildName}`,
+        currentItem: item.name,
+        statusText: `Importing Discord media from ${guildName}`,
         importedCount,
+        importedEmojiCount,
+        importedStickerCount,
         skippedCount
       });
     }
 
     if (importedCount === 0) {
-      throw new Error('Could not import any emojis from this server');
+      throw new Error('Could not import any Discord emojis or stickers from this server');
     }
 
     for (const oldKey of previousGuildKeys) {
@@ -2757,6 +2877,10 @@ async function importDiscordServerEmojis(tabId) {
       id: guildId,
       username: guildName,
       emotes: importedEmotes,
+      mediaCounts: {
+        emojis: importedEmojiCount,
+        stickers: importedStickerCount
+      },
       sourceType: 'discord'
     });
 
@@ -2767,15 +2891,27 @@ async function importDiscordServerEmojis(tabId) {
 
     discordImportState.isImporting = false;
 
-    const toastMessage = `Imported ${importedCount} emoji${importedCount === 1 ? '' : 's'} from ${guildName}`;
+    const importedParts = [];
+    if (importedEmojiCount > 0) {
+      importedParts.push(`${importedEmojiCount} emoji${importedEmojiCount === 1 ? '' : 's'}`);
+    }
+    if (importedStickerCount > 0) {
+      importedParts.push(`${importedStickerCount} sticker${importedStickerCount === 1 ? '' : 's'}`);
+    }
+    if (importedParts.length === 0) {
+      importedParts.push(`${importedCount} Discord item${importedCount === 1 ? '' : 's'}`);
+    }
+    const toastMessage = `Imported ${importedParts.join(' and ')} from ${guildName}`;
     await updateDiscordImportProgress({
       inProgress: false,
       completed: true,
-      current: guildEmojis.length,
-      total: guildEmojis.length,
+      current: guildItems.length,
+      total: guildItems.length,
       guildId,
       guildName,
       importedCount,
+      importedEmojiCount,
+      importedStickerCount,
       skippedCount,
       channelId: guildId,
       toastMessage
@@ -2786,6 +2922,8 @@ async function importDiscordServerEmojis(tabId) {
       guildName,
       channelId: guildId,
       importedCount,
+      importedEmojiCount,
+      importedStickerCount,
       skippedCount
     };
   } catch (error) {
@@ -2797,6 +2935,8 @@ async function importDiscordServerEmojis(tabId) {
       guildId,
       guildName,
       importedCount,
+      importedEmojiCount,
+      importedStickerCount,
       skippedCount,
       error: error.message
     });
