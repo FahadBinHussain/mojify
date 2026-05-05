@@ -914,11 +914,26 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
+  function clampCurrentPageToItemCount(itemCount) {
+    const safeItemCount = Number.isFinite(itemCount) ? Math.max(0, itemCount) : 0;
+    const maxPage = Math.max(1, Math.ceil(safeItemCount / ITEMS_PER_PAGE));
+
+    if (!Number.isFinite(currentPage) || currentPage < 1) {
+      currentPage = 1;
+    }
+
+    if (currentPage > maxPage) {
+      currentPage = maxPage;
+    }
+  }
+
   function selectScopeFilter(value) {
-    activeChannelFilter = value || 'all';
+    const nextFilter = value || 'all';
+    const scopeChanged = nextFilter !== activeChannelFilter;
+    activeChannelFilter = nextFilter;
     scopeDrawerOpen = false;
     renderChannelFilterBar();
-    filterAndDisplayEmotes(false);
+    filterAndDisplayEmotes(scopeChanged);
   }
 
   function initScopeDrawer() {
@@ -1012,6 +1027,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const validScopeValues = getValidScopeValuesForChannels(visibleChannels);
     if (!validScopeValues.has(activeChannelFilter)) {
       activeChannelFilter = 'all';
+      currentPage = 1;
     }
 
     if (scopeCurrentLabel) {
@@ -2702,9 +2718,6 @@ document.addEventListener('DOMContentLoaded', () => {
       loadMoreContainer.classList.add('hidden');
     }
 
-    const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
-    const endIndex = startIndex + ITEMS_PER_PAGE;
-
     // If no emotes match the search
     if (displayedEmotes.length === 0 && searchTerm !== '' && Object.keys(allEmotes).length > 0) {
       emoteGrid.innerHTML = `
@@ -2718,6 +2731,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // If we're searching, show search results in channel format
     if (searchTerm !== '') {
+      clampCurrentPageToItemCount(displayedEmotes.length);
+      const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+      const endIndex = startIndex + ITEMS_PER_PAGE;
       const emotesToShow = displayedEmotes.slice(startIndex, endIndex);
 
       // Create a search results section similar to channel format
@@ -2763,6 +2779,9 @@ document.addEventListener('DOMContentLoaded', () => {
       renderChannelFilterBar();
       const activeScopeLabel = getScopeLabel(visibleChannels, visibleChannelGroups);
       const { flattenedEntries } = getScopedChannelEntries(visibleChannels, sortMode);
+      clampCurrentPageToItemCount(flattenedEntries.length);
+      const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+      const endIndex = startIndex + ITEMS_PER_PAGE;
 
       const section = document.createElement('div');
       section.className = 'channel-section';
