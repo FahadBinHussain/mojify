@@ -72,35 +72,53 @@
 
         <!-- Emotes Tab -->
         <div class="tab-pane" id="emotes-tab">
-          <div class="search-container">
-            <div class="pane-meta">
-              <span class="pane-kicker">Workspace</span>
-              <span class="pane-detail">Twitch plus reaction media</span>
+          <div class="search-container workspace-deck">
+            <div class="workspace-deck-header">
+              <div class="pane-meta">
+                <span class="pane-kicker">Workspace</span>
+                <span class="pane-detail">Twitch plus reaction media</span>
+              </div>
             </div>
-            <div class="search-input-wrapper">
+
+            <div class="search-input-wrapper workspace-search">
               <i class="fas fa-search"></i>
               <input type="text" id="search-emotes" placeholder="Search emotes, GIFs, or reaction media">
             </div>
-            <div class="media-tabs">
+
+            <div class="media-tabs workspace-providers">
               <button class="media-tab-btn active" data-media-tab="twitch" type="button">Twitch</button>
               <button class="media-tab-btn" data-media-tab="discord" type="button">Discord</button>
               <button class="media-tab-btn" data-media-tab="giphy" type="button">Giphy</button>
               <button class="media-tab-btn" data-media-tab="klipy" type="button">Klipy</button>
               <button class="media-tab-btn" data-media-tab="pixabay" type="button">Pixabay</button>
             </div>
-            <div class="sort-toolbar">
-              <label class="sort-label" for="emote-sort">
-                <i class="fas fa-arrow-down-short-wide"></i>
-                <span>Sort</span>
-              </label>
-              <select id="emote-sort" class="sort-select">
-                <option value="source">Source Order</option>
-                <option value="alphabetical">Alphabetical</option>
-                <option value="recent">Recently Used</option>
-                <option value="favorites">Favorites</option>
-              </select>
+
+            <div class="workspace-controls" id="workspace-controls">
+              <div class="sort-toolbar workspace-control">
+                <label class="sort-label" for="emote-sort">
+                  <i class="fas fa-arrow-down-short-wide"></i>
+                  <span>Sort</span>
+                </label>
+                <select id="emote-sort" class="sort-select">
+                  <option value="source">Source Order</option>
+                  <option value="alphabetical">Alphabetical</option>
+                  <option value="recent">Recently Used</option>
+                  <option value="favorites">Favorites</option>
+                </select>
+              </div>
+
+              <button id="scope-toggle" class="scope-toggle workspace-control" type="button" aria-expanded="false" aria-controls="channel-filter-bar">
+                <span class="scope-toggle-label">
+                  <i class="fas fa-layer-group"></i>
+                  Scope
+                </span>
+                <strong id="scope-current-label">All Channels</strong>
+                <i class="fas fa-chevron-down scope-chevron"></i>
+              </button>
             </div>
+
             <div class="channel-filter-bar" id="channel-filter-bar"></div>
+
             <div class="discord-import-panel hidden" id="discord-import-panel">
               <div class="discord-import-copy">
                 <span class="discord-import-kicker">Discord Import</span>
