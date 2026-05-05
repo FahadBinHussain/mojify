@@ -17,6 +17,7 @@
   ],
   "host_permissions": [
     "https://7tv.io/*",
+    "https://api.7tv.app/*",
     "https://api.giphy.com/*",
     "https://*.giphy.com/*",
     "https://api.klipy.com/*",

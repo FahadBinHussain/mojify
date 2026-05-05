@@ -1,5 +1,39 @@
-const TWITCH_API_BASE_URL = "https://7tv.io/v3/users/twitch";
+const SEVEN_TV_API_ORIGIN = "https://api.7tv.app";
+const SEVEN_TV_V3_BASE_URL = `${SEVEN_TV_API_ORIGIN}/v3`;
+const TWITCH_API_BASE_URL = `${SEVEN_TV_V3_BASE_URL}/users/twitch`;
+const SEVEN_TV_EMOTE_SET_BASE_URL = `${SEVEN_TV_V3_BASE_URL}/emote-sets`;
+const SEVEN_TV_GQL_URL = `${SEVEN_TV_API_ORIGIN}/v4/gql`;
 const SEVEN_TV_RESOLVE_TIMEOUT_MS = 45000;
+const SEVEN_TV_USER_EMOTE_SETS_QUERY = `
+  query UserEmoteSets($id: Id!) {
+    users {
+      user(id: $id) {
+        emoteSets {
+          id
+          name
+          capacity
+          kind
+          emotes(page: 1, perPage: 12) {
+            totalCount
+            items {
+              emote {
+                images {
+                  url
+                  mime
+                  size
+                  scale
+                  width
+                  height
+                  frameCount
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
 
 function createTimeoutError(message) {
   const error = new Error(message);
@@ -387,32 +421,182 @@ const emoteDB = {
 
 
 
+function extract7TVEmotes(emoteList = []) {
+  const emotes = {};
+
+  emoteList.forEach((emote) => {
+    try {
+      if (emote.name && emote.data && emote.data.host) {
+        const emoteKey = `:${emote.name}:`;
+        const hostUrl = emote.data.host.url.replace(/^\/\//, '');
+        const files = emote.data.host.files;
+        if (files && files.length > 0) {
+          const fileName = files[files.length - 1].name;
+          emotes[emoteKey] = `https://${hostUrl}/${fileName}`;
+        }
+      }
+    } catch (emoteError) {
+      // Skip malformed emote entries without breaking the whole source.
+    }
+  });
+
+  return emotes;
+}
+
+function get7TVSetStorageChannelId(channelId, setId, activeSetId) {
+  const cleanChannelId = String(channelId || '').trim();
+  const cleanSetId = String(setId || '').trim();
+  const cleanActiveSetId = String(activeSetId || '').trim();
+
+  if (cleanChannelId && cleanSetId && cleanSetId === cleanActiveSetId && /^\d+$/.test(cleanChannelId)) {
+    return cleanChannelId;
+  }
+
+  return `7tv-set:${cleanSetId || cleanChannelId}`;
+}
+
+function normalize7TVSetSummary(set, activeSetId = '') {
+  const previewImages = [];
+  const items = set?.emotes?.items || [];
+
+  items.forEach((item) => {
+    const images = item?.emote?.images || [];
+    const image = images.find((candidate) => candidate?.mime === 'image/webp' && candidate?.scale === 2) ||
+      images.find((candidate) => candidate?.mime?.startsWith('image/')) ||
+      images[0];
+
+    if (image?.url) {
+      previewImages.push(image.url);
+    }
+  });
+
+  return {
+    id: set.id,
+    name: set.name || set.id,
+    capacity: Number(set.capacity || 0),
+    kind: set.kind || 'NORMAL',
+    totalCount: Number(set?.emotes?.totalCount || 0),
+    previewImages: previewImages.slice(0, 4),
+    isActive: Boolean(activeSetId && set.id === activeSetId)
+  };
+}
+
+async function fetch7TVUserEmoteSets(sevenTvUserId, activeSetId = '') {
+  if (!sevenTvUserId) {
+    throw new Error('Missing 7TV user ID');
+  }
+
+  const response = await fetchJsonWithTimeout(SEVEN_TV_GQL_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    },
+    body: JSON.stringify({
+      operationName: 'UserEmoteSets',
+      variables: { id: sevenTvUserId },
+      query: SEVEN_TV_USER_EMOTE_SETS_QUERY
+    })
+  }, SEVEN_TV_RESOLVE_TIMEOUT_MS);
+
+  const sets = response?.data?.users?.user?.emoteSets;
+  if (!Array.isArray(sets)) {
+    const apiError = response?.errors?.[0]?.message || '7TV did not return emote sets';
+    throw new Error(apiError);
+  }
+
+  return sets.map((set) => normalize7TVSetSummary(set, activeSetId));
+}
+
+async function get7TVChannelEmoteSets(channelId, knownSevenTvUserId = '', knownActiveSetId = '') {
+  let sevenTvUserId = String(knownSevenTvUserId || '').trim();
+  let activeSetId = String(knownActiveSetId || '').trim();
+  let username = String(channelId || '').trim();
+  let fallbackSets = [];
+
+  if (!sevenTvUserId || !activeSetId || /^\d+$/.test(String(channelId || '').trim())) {
+    const channelData = await fetchJsonWithTimeout(`${TWITCH_API_BASE_URL}/${channelId}`, {}, SEVEN_TV_RESOLVE_TIMEOUT_MS);
+    sevenTvUserId = sevenTvUserId || channelData?.user?.id || channelData?.emote_set_id || '';
+    activeSetId = activeSetId || channelData?.emote_set_id || '';
+    username = channelData?.display_name || channelData?.username || channelData?.user?.display_name || channelData?.user?.username || username;
+    fallbackSets = Array.isArray(channelData?.user?.emote_sets) ? channelData.user.emote_sets : [];
+  }
+
+  let sets = [];
+  try {
+    sets = await fetch7TVUserEmoteSets(sevenTvUserId, activeSetId);
+  } catch (error) {
+    if (fallbackSets.length === 0) throw error;
+    sets = fallbackSets.map((set) => ({
+      id: set.id,
+      name: set.name || set.id,
+      capacity: Number(set.capacity || 0),
+      kind: 'NORMAL',
+      totalCount: Number(set.emote_count || 0),
+      previewImages: [],
+      isActive: Boolean(activeSetId && set.id === activeSetId)
+    }));
+  }
+
+  return {
+    success: true,
+    channelId,
+    sevenTvUserId,
+    activeSetId,
+    username,
+    sets
+  };
+}
+
+async function get7TVEmoteSet(setId, options = {}) {
+  const cleanSetId = String(setId || '').trim();
+  if (!cleanSetId) {
+    throw new Error('Missing 7TV emote set ID');
+  }
+
+  const data = await fetchJsonWithTimeout(`${SEVEN_TV_EMOTE_SET_BASE_URL}/${cleanSetId}`, {}, SEVEN_TV_RESOLVE_TIMEOUT_MS);
+  const emoteList = data.emotes || [];
+  const emotes = extract7TVEmotes(emoteList);
+  const parentName = options.username || data?.owner?.display_name || data?.owner?.username || '7TV';
+  const setName = data.name || options.setName || cleanSetId;
+  const activeSetId = options.activeSetId || '';
+  const channelId = get7TVSetStorageChannelId(options.channelId, cleanSetId, activeSetId);
+  const isActiveSet = Boolean(activeSetId && cleanSetId === activeSetId);
+
+  return {
+    channelId,
+    platformChannelId: options.channelId || '',
+    username: isActiveSet ? parentName : `${parentName} - ${setName}`,
+    baseUsername: parentName,
+    emoteSetId: cleanSetId,
+    activeSetId,
+    emoteSetName: setName,
+    emoteSetKind: data.kind || options.kind || 'NORMAL',
+    sevenTvUserId: options.sevenTvUserId || data?.owner?.id || '',
+    isEmoteSet: !isActiveSet,
+    emotes
+  };
+}
+
 async function get7TVEmotes(channelId) {
   const url = `${TWITCH_API_BASE_URL}/${channelId}`;
   try {
     const data = await fetchJsonWithTimeout(url, {}, SEVEN_TV_RESOLVE_TIMEOUT_MS);
     const emoteList = data.emote_set?.emotes || [];
-    const username = data.user?.username || data.user?.display_name || channelId;
-
-    const emotes = {};
-    emoteList.forEach((emote, index) => {
-      try {
-        if (emote.name && emote.data && emote.data.host) {
-          const emoteKey = `:${emote.name}:`;
-          const hostUrl = emote.data.host.url.replace(/^\/\//, '');
-          const files = emote.data.host.files;
-          if (files && files.length > 0) {
-            const fileName = files[files.length - 1].name;
-            emotes[emoteKey] = `https://${hostUrl}/${fileName}`;
-          }
-        }
-      } catch (emoteError) {
-        // Skip malformed emote entries without breaking the whole channel.
-      }
-    });
+    const username = data.display_name || data.username || data.user?.display_name || data.user?.username || channelId;
+    const emotes = extract7TVEmotes(emoteList);
 
     return {
+      channelId,
+      platformChannelId: channelId,
       username,
+      baseUsername: username,
+      sevenTvUserId: data.user?.id || data.emote_set_id || '',
+      activeSetId: data.emote_set_id || '',
+      emoteSetId: data.emote_set_id || '',
+      emoteSetName: data.emote_set?.name || `${username}'s Emotes`,
+      emoteSetKind: 'NORMAL',
+      isEmoteSet: false,
       emotes
     };
   } catch (error) {
@@ -516,7 +700,7 @@ async function publishDownloadProgress(progress = {}) {
   });
 }
 
-async function downloadEmotes() {
+async function downloadEmotes(options = {}) {
   // Check if already downloading
   if (downloadState.isDownloading) {
     const storedProgress = await chrome.storage.local.get(['downloadProgress']);
@@ -563,12 +747,14 @@ async function downloadEmotes() {
     };
 
     // Check if we should skip download due to recent restore
+    const requestedSources = Array.isArray(options.sources) ? options.sources : [];
+    const isTargetedDownload = requestedSources.length > 0;
     const storageCheck = await chrome.storage.local.get(['channelIds', 'skipNextDownload', 'lastRestoreTime', 'manualRefresh']);
     const { channelIds, skipNextDownload, lastRestoreTime, manualRefresh } = storageCheck;
 
     // Skip download if restored within last 10 minutes AND it's not a manual refresh
     const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
-    if ((skipNextDownload || (lastRestoreTime && lastRestoreTime > tenMinutesAgo)) && !manualRefresh) {
+    if ((skipNextDownload || (lastRestoreTime && lastRestoreTime > tenMinutesAgo)) && !manualRefresh && !isTargetedDownload) {
       downloadState.isDownloading = false;
       logDownload('skipped-after-restore');
 
@@ -597,39 +783,53 @@ async function downloadEmotes() {
       await chrome.storage.local.remove(['manualRefresh']);
     }
 
-    if (!channelIds || channelIds.length === 0) {
-      downloadState.isDownloading = false;
-      await chrome.storage.local.set({
-        downloadInProgress: false,
-        downloadProgress: { error: "No channel IDs configured" }
-      });
-      return { success: false, error: "No channel IDs configured" };
-    }
-
-    const uniqueChannelIds = [...new Set(
-      channelIds
+    const downloadSources = isTargetedDownload
+      ? requestedSources
+        .map((source) => ({
+          type: source.type || 'twitch-channel',
+          channelId: String(source.channelId || '').trim(),
+          setId: String(source.setId || '').trim(),
+          setName: source.setName || '',
+          username: source.username || '',
+          sevenTvUserId: source.sevenTvUserId || '',
+          activeSetId: source.activeSetId || ''
+        }))
+        .filter((source) => source.type === '7tv-set' ? source.setId : source.channelId)
+      : (channelIds || [])
         .map((channelId) => String(channelId || '').trim())
         .filter(Boolean)
-    )];
-    logDownload('channels-loaded', {
-      count: uniqueChannelIds.length,
-      channels: uniqueChannelIds
-    });
+        .map((channelId) => ({ type: 'twitch-channel', channelId }));
 
-    if (uniqueChannelIds.length === 0) {
+    if (downloadSources.length === 0) {
       downloadState.isDownloading = false;
       await chrome.storage.local.set({
         downloadInProgress: false,
-        downloadProgress: { error: "No channel IDs configured" }
+        downloadProgress: { error: "No 7TV sources configured" }
       });
-      return { success: false, error: "No channel IDs configured" };
+      return { success: false, error: "No 7TV sources configured" };
     }
 
+    const seenSourceKeys = new Set();
+    const uniqueDownloadSources = downloadSources.filter((source) => {
+      const sourceKey = source.type === '7tv-set'
+        ? `set:${source.setId}`
+        : `channel:${source.channelId}`;
+      if (seenSourceKeys.has(sourceKey)) return false;
+      seenSourceKeys.add(sourceKey);
+      return true;
+    });
+
+    logDownload('channels-loaded', {
+      count: uniqueDownloadSources.length,
+      targeted: isTargetedDownload,
+      channels: uniqueDownloadSources.map((source) => source.setId || source.channelId)
+    });
+
     downloadState.current = 0;
-    downloadState.total = uniqueChannelIds.length;
+    downloadState.total = uniqueDownloadSources.length;
     await publishDownloadProgress({
       current: 0,
-      total: uniqueChannelIds.length,
+      total: uniqueDownloadSources.length,
       currentEmote: 'Checking local cache...'
     });
 
@@ -671,28 +871,33 @@ async function downloadEmotes() {
 
     const channelResults = [];
 
-    for (let index = 0; index < uniqueChannelIds.length; index += 1) {
-      const channelId = uniqueChannelIds[index];
+    for (let index = 0; index < uniqueDownloadSources.length; index += 1) {
+      const source = uniqueDownloadSources[index];
+      const channelId = source.channelId || source.setId;
+      const sourceLabel = source.setName || source.username || channelId;
       const resolveStartedAt = Date.now();
       logDownload('channel-resolve-start', {
         channelId,
+        type: source.type,
         index: index + 1,
-        total: uniqueChannelIds.length
+        total: uniqueDownloadSources.length
       });
 
       downloadState.current = index;
-      downloadState.total = uniqueChannelIds.length;
+      downloadState.total = uniqueDownloadSources.length;
       await publishDownloadProgress({
         current: index,
-        total: uniqueChannelIds.length,
-        currentEmote: `Resolving channel ${index + 1}/${uniqueChannelIds.length} (${channelId})`
+        total: uniqueDownloadSources.length,
+        currentEmote: `Resolving ${index + 1}/${uniqueDownloadSources.length} (${sourceLabel})`
       });
 
       try {
-        const result = await get7TVEmotes(channelId);
+        const result = source.type === '7tv-set'
+          ? await get7TVEmoteSet(source.setId, source)
+          : await get7TVEmotes(channelId);
         channelResults.push({
           status: 'fulfilled',
-          value: { channelId, result }
+          value: { channelId, source, result }
         });
       } catch (error) {
         channelResults.push({
@@ -707,16 +912,17 @@ async function downloadEmotes() {
       const resolvedEmoteCount = Object.keys(resolvedResult?.value?.result?.emotes || {}).length;
       logDownload(failed ? 'channel-resolve-failed' : 'channel-resolve-done', {
         channelId,
+        type: source.type,
         emotes: resolvedEmoteCount,
         durationMs: Date.now() - resolveStartedAt,
         error: resolvedResult?.value?.result?.error || resolvedResult?.reason?.message || ''
       });
       await publishDownloadProgress({
         current: index + 1,
-        total: uniqueChannelIds.length,
+        total: uniqueDownloadSources.length,
         currentEmote: failed
-          ? `Failed channel ${index + 1}/${uniqueChannelIds.length}`
-          : `Resolved ${index + 1}/${uniqueChannelIds.length} channels`
+          ? `Failed source ${index + 1}/${uniqueDownloadSources.length}`
+          : `Resolved ${index + 1}/${uniqueDownloadSources.length} sources`
       });
     }
 
@@ -726,7 +932,8 @@ async function downloadEmotes() {
         return;
       }
 
-      const { channelId, result } = channelResult.value;
+      const { channelId, source, result } = channelResult.value;
+      const storageChannelId = result.channelId || channelId;
       const resolvedEmoteCount = Object.keys(result.emotes || {}).length;
       if (result.error) {
         channelResolveErrors.push(`${channelId}: ${result.error}`);
@@ -736,11 +943,20 @@ async function downloadEmotes() {
       }
       totalResolvedEmotes += resolvedEmoteCount;
 
-      channelsById.set(channelId, {
-        id: channelId,
+      channelsById.set(storageChannelId, {
+        id: storageChannelId,
         username: result.username,
         emotes: result.emotes,
-        sourceType: 'twitch'
+        sourceType: 'twitch',
+        platformChannelId: result.platformChannelId || source.channelId || storageChannelId,
+        baseUsername: result.baseUsername || source.username || result.username,
+        sevenTvUserId: result.sevenTvUserId || source.sevenTvUserId || '',
+        activeSetId: result.activeSetId || source.activeSetId || '',
+        emoteSetId: result.emoteSetId || source.setId || '',
+        emoteSetName: result.emoteSetName || source.setName || '',
+        emoteSetKind: result.emoteSetKind || source.kind || 'NORMAL',
+        isEmoteSet: Boolean(result.isEmoteSet),
+        parentChannelId: source.channelId || result.platformChannelId || ''
       });
 
       if (resolvedEmoteCount > 0) {
@@ -753,7 +969,7 @@ async function downloadEmotes() {
 
         if (Object.keys(newEmotes).length > 0) {
           channelEmotes.push({
-            channelId,
+            channelId: storageChannelId,
             username: result.username,
             emotes: newEmotes,
             allEmotes: result.emotes
@@ -3412,7 +3628,31 @@ function handleRuntimeMessage(request, sender, sendResponse) {
   }
 
   if (request.type === 'downloadEmotes' || request.action === 'downloadEmotes') {
-    downloadEmotes()
+    downloadEmotes(request.options || {})
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'get7TVChannelEmoteSets') {
+    get7TVChannelEmoteSets(request.channelId, request.sevenTvUserId, request.activeSetId)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'download7TVEmoteSet') {
+    downloadEmotes({
+      sources: [{
+        type: '7tv-set',
+        channelId: request.channelId,
+        setId: request.setId,
+        setName: request.setName,
+        username: request.username,
+        sevenTvUserId: request.sevenTvUserId,
+        activeSetId: request.activeSetId
+      }]
+    })
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
