@@ -13,18 +13,15 @@ const emoteDB = {
 
       request.onsuccess = () => {
         this.db = request.result;
-        console.log('[IndexedDB] Database opened successfully');
         resolve();
       };
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
-        console.log('[IndexedDB] Creating fresh database...');
 
         // Create emote blobs object store (stores blob directly as value)
         if (!db.objectStoreNames.contains('emoteBlobs')) {
-          const blobsStore = db.createObjectStore('emoteBlobs');
-          console.log('[IndexedDB] Created emoteBlobs object store');
+          db.createObjectStore('emoteBlobs');
         }
 
         // Create emote metadata object store
@@ -33,7 +30,6 @@ const emoteDB = {
           metadataStore.createIndex('channel', 'channel', { unique: false });
           metadataStore.createIndex('url', 'url', { unique: false });
           metadataStore.createIndex('timestamp', 'timestamp', { unique: false });
-          console.log('[IndexedDB] Created emoteMetadata object store');
         }
       };
     });
@@ -61,9 +57,6 @@ const emoteDB = {
               resolve(null);
               return;
             }
-
-            console.log(`[IndexedDB] Retrieved emote ${key}: ${blob.size} bytes, type: ${blob.type}`);
-
             // Return combined result with blob directly accessible
             resolve({
               key: key,
@@ -71,7 +64,6 @@ const emoteDB = {
               ...metadataResult
             });
           } else {
-            console.warn(`[IndexedDB] Emote ${key} not found or incomplete`);
             resolve(null);
           }
         }
@@ -176,8 +168,6 @@ const emoteDB = {
       throw new Error(`Invalid blob for emote ${key}`);
     }
 
-    console.log(`[IndexedDB] Storing emote ${key}: ${blob.size} bytes, type: ${blob.type}`);
-
     return new Promise((resolve, reject) => {
       const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
       const blobsStore = transaction.objectStore('emoteBlobs');
@@ -199,7 +189,6 @@ const emoteDB = {
 
       const checkComplete = () => {
         if (blobStored && metadataStored) {
-          console.log(`[IndexedDB] Successfully stored emote ${key}`);
           resolve();
         }
       };
@@ -798,9 +787,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Notification function
   function showToast(message, type = 'info') {
-    console.log('showToast called:', message, type);
     const notification = document.getElementById('notification');
-    console.log('notification element:', notification);
 
     if (!notification) {
       console.error('Notification element not found');
@@ -819,12 +806,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     notification.classList.remove('hidden');
-    console.log('Notification should be visible now');
 
     setTimeout(() => {
       notification.classList.add('hidden');
       notification.className = 'notification hidden';
-      console.log('Notification hidden');
     }, 3000);
   }
 
@@ -2501,6 +2486,12 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
+        if (response.inProgress || response.message === 'Download already in progress') {
+          checkDownloadStatus();
+          startProgressPolling();
+          return;
+        }
+
         if (response.skipped || response.message === 'All emotes up to date') {
           finishDownloadFlow({
             completed: true,
@@ -3150,6 +3141,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const downloadInProgress = result.downloadInProgress;
       const downloadProgressData = result.downloadProgress;
 
+      if (downloadInProgress && downloadProgressData) {
+        applyDownloadProgressState(downloadProgressData);
+        startProgressPolling();
+        return;
+      }
+
       if (downloadProgressData?.reset) {
         stopProgressPolling();
         resetDownloadUi();
@@ -3161,12 +3158,6 @@ document.addEventListener('DOMContentLoaded', () => {
             reset: false
           }
         });
-        return;
-      }
-
-      if (downloadInProgress && downloadProgressData) {
-        applyDownloadProgressState(downloadProgressData);
-        startProgressPolling();
         return;
       }
 
@@ -3376,14 +3367,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   chrome.runtime.onMessage.addListener((message) => {
     try {
-      if (message.type === 'automaticDownloadStarted') {
-        showToast(`Starting automatic download for ${message.channelIds.length} channel(s)`);
-        setDownloadUiActive('Starting automatic download...');
-        progressFill.style.width = '0%';
-        progressCount.textContent = '0/0';
-        startProgressPolling();
-      }
-
       if (message.type === 'downloadProgress') {
         if (message.completed) {
           finishDownloadFlow({
@@ -3470,7 +3453,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initApiKeysPageButton();
   init();
   initBackupRestore();
-  initDownloadButton();
   // Backup and Restore functionality
   function initBackupRestore() {
     const createBackupBtn = document.getElementById('create-backup');
@@ -3480,39 +3462,6 @@ document.addEventListener('DOMContentLoaded', () => {
     createBackupBtn.addEventListener('click', createBackup);
     restoreBackupBtn.addEventListener('click', () => restoreFileInput.click());
     restoreFileInput.addEventListener('change', handleRestoreFile);
-  }
-
-  // Download button functionality
-  function initDownloadButton() {
-    const downloadButton = document.getElementById('download-button');
-
-    if (downloadButton) {
-      downloadButton.addEventListener('click', () => {
-        setDownloadUiActive('Starting refresh...');
-        startProgressPolling();
-
-        chrome.runtime.sendMessage({ action: 'downloadEmotes' }, (response) => {
-          if (chrome.runtime.lastError) {
-            finishDownloadFlow(false, chrome.runtime.lastError.message || 'Failed to start refresh.');
-            return;
-          }
-
-          if (!response) {
-            finishDownloadFlow(false, 'No response received from background worker.');
-            return;
-          }
-
-          if (response.success === false) {
-            finishDownloadFlow(false, response.message || response.error || 'Refresh failed.');
-            return;
-          }
-
-          if (response.skipped || response.status === 'up_to_date') {
-            finishDownloadFlow(true, response.message || 'Everything is already up to date.');
-          }
-        });
-      });
-    }
   }
 
   function initDiscordImportButton() {
@@ -3700,6 +3649,45 @@ function initSaveButton() {
   }
 }
 
+function startTwitchDownloadFromSavedChannels() {
+  downloadCompletionHandled = false;
+  setDownloadUiActive('Starting download...');
+  progressFill.style.width = '0%';
+  progressCount.textContent = '0/0';
+  startProgressPolling();
+
+  chrome.runtime.sendMessage({ action: 'downloadEmotes' }, (response) => {
+    if (chrome.runtime.lastError) {
+      finishDownloadFlow({ error: chrome.runtime.lastError.message });
+      return;
+    }
+
+    if (!response) {
+      return;
+    }
+
+    if (!response.success) {
+      finishDownloadFlow({ error: response.error || 'Unknown error' });
+      return;
+    }
+
+    if (response.inProgress || response.message === 'Download already in progress') {
+      checkDownloadStatus();
+      startProgressPolling();
+      return;
+    }
+
+    if (response.skipped || response.message === 'All emotes up to date') {
+      finishDownloadFlow({
+        completed: true,
+        toastMessage: response.message === 'All emotes up to date'
+          ? 'All emotes are up to date - no new downloads needed'
+          : response.message
+      });
+    }
+  });
+}
+
 async function saveChannelIds() {
   const saveButton = document.getElementById('save-button');
   const channelIdsInput = document.getElementById('channel-ids');
@@ -3721,6 +3709,12 @@ async function saveChannelIds() {
       .split(/[,\n]/)
       .map(id => id.trim())
       .filter(id => id.length > 0);
+    const usernameCount = rawIdentifiers.filter((id) => !/^\d+$/.test(id)).length;
+
+    if (usernameCount > 0) {
+      saveButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Resolving...</span>';
+    }
+
     const resolvedIdentifiers = await resolveTwitchIdentifiers(rawIdentifiers);
     const uniqueChannelIds = dedupeChannelIds(resolvedIdentifiers);
 
@@ -3741,14 +3735,15 @@ async function saveChannelIds() {
     await new Promise((resolve) => {
       chrome.storage.local.set({ channelIds: uniqueChannelIds }, resolve);
     });
+    channelIdsInput.value = uniqueChannelIds.join('\n');
 
     showToast(`Saved ${uniqueChannelIds.length} channel${uniqueChannelIds.length === 1 ? '' : 's'}`, 'success');
 
     if (shouldSkipDownload) {
       showToast('Skipping download - emotes recently restored', 'info');
     } else {
-      showToast('Saved channels. Auto-download starting...', 'success');
-      startProgressPolling();
+      showToast('Saved channels. Download starting...', 'success');
+      startTwitchDownloadFromSavedChannels();
     }
 
     // Update UI

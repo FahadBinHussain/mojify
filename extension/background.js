@@ -1,4 +1,75 @@
 const TWITCH_API_BASE_URL = "https://7tv.io/v3/users/twitch";
+const SEVEN_TV_RESOLVE_TIMEOUT_MS = 45000;
+
+function createTimeoutError(message) {
+  const error = new Error(message);
+  error.name = 'TimeoutError';
+  return error;
+}
+
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  let timeoutId = null;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort();
+      reject(createTimeoutError(`Timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  const requestPromise = (async () => {
+    const fetchOptions = Object.assign({}, options, { signal: controller.signal });
+    const response = await fetch(url, fetchOptions);
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
+    }
+
+    const text = await response.text();
+
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      throw new Error(`Invalid JSON response: ${error.message}`);
+    }
+  })();
+
+  try {
+    return await Promise.race([requestPromise, timeoutPromise]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function fetchBlobWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  let timeoutId = null;
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort();
+      reject(createTimeoutError(`Timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  const requestPromise = (async () => {
+    const fetchOptions = Object.assign({}, options, { signal: controller.signal });
+    const response = await fetch(url, fetchOptions);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    return response.blob();
+  })();
+
+  try {
+    return await Promise.race([requestPromise, timeoutPromise]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 // IndexedDB wrapper for emote storage - stores blobs directly as values
 const emoteDB = {
@@ -14,18 +85,15 @@ const emoteDB = {
 
       request.onsuccess = () => {
         this.db = request.result;
-        console.log('[IndexedDB] Database opened successfully');
         resolve();
       };
 
       request.onupgradeneeded = (event) => {
         const db = event.target.result;
-        console.log('[IndexedDB] Creating fresh database...');
 
         // Create emote blobs object store (stores blob directly as value)
         if (!db.objectStoreNames.contains('emoteBlobs')) {
-          const blobsStore = db.createObjectStore('emoteBlobs');
-          console.log('[IndexedDB] Created emoteBlobs object store');
+          db.createObjectStore('emoteBlobs');
         }
 
         // Create emote metadata object store
@@ -34,7 +102,6 @@ const emoteDB = {
           metadataStore.createIndex('channel', 'channel', { unique: false });
           metadataStore.createIndex('url', 'url', { unique: false });
           metadataStore.createIndex('timestamp', 'timestamp', { unique: false });
-          console.log('[IndexedDB] Created emoteMetadata object store');
         }
       };
     });
@@ -48,8 +115,6 @@ const emoteDB = {
       console.error(`[IndexedDB] Cannot store emote ${key}: invalid or empty blob`);
       throw new Error(`Invalid blob for emote ${key}`);
     }
-
-    console.log(`[IndexedDB] Storing emote ${key}: ${blob.size} bytes, type: ${blob.type}`);
 
     return new Promise((resolve, reject) => {
       const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
@@ -72,7 +137,6 @@ const emoteDB = {
 
       const checkComplete = () => {
         if (blobStored && metadataStored) {
-          console.log(`[IndexedDB] Successfully stored emote ${key}`);
           resolve();
         }
       };
@@ -123,9 +187,6 @@ const emoteDB = {
               resolve(null);
               return;
             }
-
-            console.log(`[IndexedDB] Retrieved emote ${key}: ${blob.size} bytes, type: ${blob.type}`);
-
             // Return combined result with blob directly accessible
             resolve({
               key: key,
@@ -133,7 +194,6 @@ const emoteDB = {
               ...metadataResult
             });
           } else {
-            console.warn(`[IndexedDB] Emote ${key} not found or incomplete`);
             resolve(null);
           }
         }
@@ -330,22 +390,7 @@ const emoteDB = {
 async function get7TVEmotes(channelId) {
   const url = `${TWITCH_API_BASE_URL}/${channelId}`;
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Mojify Extension/1.0'
-      }
-    });
-    clearTimeout(timeoutId);
-
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
+    const data = await fetchJsonWithTimeout(url, {}, SEVEN_TV_RESOLVE_TIMEOUT_MS);
     const emoteList = data.emote_set?.emotes || [];
     const username = data.user?.username || data.user?.display_name || channelId;
 
@@ -362,21 +407,17 @@ async function get7TVEmotes(channelId) {
           }
         }
       } catch (emoteError) {
-        console.warn(`[DEBUG] Error processing emote ${emote.name}:`, emoteError);
+        // Skip malformed emote entries without breaking the whole channel.
       }
     });
 
-    console.log(`[DEBUG] Successfully processed ${Object.keys(emotes).length} emotes for ${username}`);
     return {
       username,
       emotes
     };
   } catch (error) {
-    console.error(`[DEBUG] Error fetching emotes for ${channelId}:`, error);
-    if (error.name === 'AbortError') {
-      console.error(`[DEBUG] Request timeout for ${channelId}`);
-    }
-    return { username: channelId, emotes: {} };
+    const errorMessage = error?.message || String(error);
+    return { username: channelId, emotes: {}, error: errorMessage };
   }
 }
 
@@ -387,6 +428,14 @@ let downloadState = {
   total: 0,
   startTime: null
 };
+
+function logDownload(event, data = {}) {
+  console.log(`[Mojify Download] ${event}`, data);
+}
+
+function warnDownload(event, data = {}) {
+  console.warn(`[Mojify Download] ${event}`, data);
+}
 
 let discordImportState = {
   isImporting: false,
@@ -399,8 +448,6 @@ let discordImportState = {
 
 // Reset download state on service worker startup
 async function resetDownloadState() {
-  console.log('[Service Worker] Resetting download state on startup');
-
   downloadState.isDownloading = false;
   downloadState.current = 0;
   downloadState.total = 0;
@@ -416,7 +463,6 @@ async function resetDownloadState() {
         reset: true
       }
     });
-    console.log('[Service Worker] Download state reset successfully');
   } catch (error) {
     console.error('[Service Worker] Error resetting download state:', error);
   }
@@ -447,27 +493,65 @@ async function resetDiscordImportState() {
   }
 }
 
-// Initialize service worker
-(async function initServiceWorker() {
-  try {
-    await resetDownloadState();
-    await resetDiscordImportState();
-    console.log('[Service Worker] Initialization complete');
-  } catch (error) {
-    console.error('[Service Worker] Initialization error:', error);
-  }
-})();
+async function publishDownloadProgress(progress = {}) {
+  const safeCount = (value) => {
+    const count = Number(value);
+    return Number.isFinite(count) && count >= 0 ? count : 0;
+  };
+
+  const payload = {
+    current: safeCount(progress.current !== undefined ? progress.current : downloadState.current),
+    total: safeCount(progress.total !== undefined ? progress.total : downloadState.total),
+    currentEmote: progress.currentEmote || ''
+  };
+
+  await chrome.storage.local.set({
+    downloadInProgress: progress.inProgress !== false,
+    downloadProgress: payload
+  });
+
+  sendRuntimeMessage({
+    type: 'downloadProgress',
+    ...payload
+  });
+}
 
 async function downloadEmotes() {
   // Check if already downloading
   if (downloadState.isDownloading) {
-    console.log("[Download] Already downloading, skipping");
-    return { success: true, message: "Download already in progress", skipped: true };
+    const storedProgress = await chrome.storage.local.get(['downloadProgress']);
+    const activeProgress = storedProgress.downloadProgress || {};
+    logDownload('already-running', {
+      current: downloadState.current || activeProgress.current || 0,
+      total: downloadState.total || activeProgress.total || 0,
+      status: activeProgress.currentEmote || ''
+    });
+
+    await publishDownloadProgress({
+      current: downloadState.total > 0 ? downloadState.current : activeProgress.current,
+      total: downloadState.total > 0 ? downloadState.total : activeProgress.total,
+      currentEmote: activeProgress.currentEmote || "Download already in progress"
+    });
+
+    return {
+      success: true,
+      message: "Download already in progress",
+      skipped: true,
+      inProgress: true
+    };
   }
 
   try {
     downloadState.isDownloading = true;
     downloadState.startTime = Date.now();
+    downloadState.current = 0;
+    downloadState.total = 0;
+    logDownload('start');
+    await publishDownloadProgress({
+      current: 0,
+      total: 0,
+      currentEmote: 'Preparing download...'
+    });
 
     // Reset performance metrics
     downloadState.performanceMetrics = {
@@ -478,8 +562,6 @@ async function downloadEmotes() {
       memoryUsage: []
     };
 
-    console.log("[Download] Starting emote download");
-
     // Check if we should skip download due to recent restore
     const storageCheck = await chrome.storage.local.get(['channelIds', 'skipNextDownload', 'lastRestoreTime', 'manualRefresh']);
     const { channelIds, skipNextDownload, lastRestoreTime, manualRefresh } = storageCheck;
@@ -487,11 +569,20 @@ async function downloadEmotes() {
     // Skip download if restored within last 10 minutes AND it's not a manual refresh
     const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
     if ((skipNextDownload || (lastRestoreTime && lastRestoreTime > tenMinutesAgo)) && !manualRefresh) {
-      console.log("[Download] Skipping download - emotes recently restored from backup");
       downloadState.isDownloading = false;
+      logDownload('skipped-after-restore');
 
       // Clear the skip flag
       await chrome.storage.local.remove(['skipNextDownload']);
+      await chrome.storage.local.set({
+        downloadInProgress: false,
+        downloadProgress: {
+          current: 0,
+          total: 0,
+          completed: true,
+          currentEmote: 'Skipped download'
+        }
+      });
 
       return {
         success: true,
@@ -508,6 +599,10 @@ async function downloadEmotes() {
 
     if (!channelIds || channelIds.length === 0) {
       downloadState.isDownloading = false;
+      await chrome.storage.local.set({
+        downloadInProgress: false,
+        downloadProgress: { error: "No channel IDs configured" }
+      });
       return { success: false, error: "No channel IDs configured" };
     }
 
@@ -516,11 +611,27 @@ async function downloadEmotes() {
         .map((channelId) => String(channelId || '').trim())
         .filter(Boolean)
     )];
+    logDownload('channels-loaded', {
+      count: uniqueChannelIds.length,
+      channels: uniqueChannelIds
+    });
 
     if (uniqueChannelIds.length === 0) {
       downloadState.isDownloading = false;
+      await chrome.storage.local.set({
+        downloadInProgress: false,
+        downloadProgress: { error: "No channel IDs configured" }
+      });
       return { success: false, error: "No channel IDs configured" };
     }
+
+    downloadState.current = 0;
+    downloadState.total = uniqueChannelIds.length;
+    await publishDownloadProgress({
+      current: 0,
+      total: uniqueChannelIds.length,
+      currentEmote: 'Checking local cache...'
+    });
 
     // INCREMENTAL DOWNLOAD LOGIC:
     // 1. Get existing downloaded emotes from local storage
@@ -546,6 +657,9 @@ async function downloadEmotes() {
 
     // Get existing emote keys from IndexedDB metadata only
     const existingEmoteKeys = new Set(await emoteDB.getAllEmoteKeys());
+    logDownload('cache-ready', {
+      cachedEmotes: existingEmoteKeys.size
+    });
 
     // Pre-fetch channel names and create channels immediately
     const channelEmotes = [];
@@ -553,13 +667,58 @@ async function downloadEmotes() {
 
     let successfulChannelFetches = 0;
     let totalResolvedEmotes = 0;
+    const channelResolveErrors = [];
 
-    const channelResults = await Promise.allSettled(
-      uniqueChannelIds.map(async (channelId) => ({
+    const channelResults = [];
+
+    for (let index = 0; index < uniqueChannelIds.length; index += 1) {
+      const channelId = uniqueChannelIds[index];
+      const resolveStartedAt = Date.now();
+      logDownload('channel-resolve-start', {
         channelId,
-        result: await get7TVEmotes(channelId)
-      }))
-    );
+        index: index + 1,
+        total: uniqueChannelIds.length
+      });
+
+      downloadState.current = index;
+      downloadState.total = uniqueChannelIds.length;
+      await publishDownloadProgress({
+        current: index,
+        total: uniqueChannelIds.length,
+        currentEmote: `Resolving channel ${index + 1}/${uniqueChannelIds.length} (${channelId})`
+      });
+
+      try {
+        const result = await get7TVEmotes(channelId);
+        channelResults.push({
+          status: 'fulfilled',
+          value: { channelId, result }
+        });
+      } catch (error) {
+        channelResults.push({
+          status: 'rejected',
+          reason: error
+        });
+      }
+
+      downloadState.current = index + 1;
+      const resolvedResult = channelResults[channelResults.length - 1];
+      const failed = resolvedResult?.status !== 'fulfilled' || resolvedResult?.value?.result?.error;
+      const resolvedEmoteCount = Object.keys(resolvedResult?.value?.result?.emotes || {}).length;
+      logDownload(failed ? 'channel-resolve-failed' : 'channel-resolve-done', {
+        channelId,
+        emotes: resolvedEmoteCount,
+        durationMs: Date.now() - resolveStartedAt,
+        error: resolvedResult?.value?.result?.error || resolvedResult?.reason?.message || ''
+      });
+      await publishDownloadProgress({
+        current: index + 1,
+        total: uniqueChannelIds.length,
+        currentEmote: failed
+          ? `Failed channel ${index + 1}/${uniqueChannelIds.length}`
+          : `Resolved ${index + 1}/${uniqueChannelIds.length} channels`
+      });
+    }
 
     channelResults.forEach((channelResult) => {
       if (channelResult.status !== 'fulfilled') {
@@ -569,6 +728,9 @@ async function downloadEmotes() {
 
       const { channelId, result } = channelResult.value;
       const resolvedEmoteCount = Object.keys(result.emotes || {}).length;
+      if (result.error) {
+        channelResolveErrors.push(`${channelId}: ${result.error}`);
+      }
       if (resolvedEmoteCount > 0 || result.username !== channelId) {
         successfulChannelFetches++;
       }
@@ -614,29 +776,51 @@ async function downloadEmotes() {
     downloadState.current = 0;
 
     if (successfulChannelFetches === 0 && totalResolvedEmotes === 0) {
-      console.log("[Download] No valid channels resolved from configured identifiers");
+      const resolveError = channelResolveErrors.length > 0
+        ? `7TV lookup failed: ${channelResolveErrors.slice(0, 2).join('; ')}`
+        : "No valid 7TV channels found";
       downloadState.isDownloading = false;
-      await chrome.storage.local.set({ channels, downloadInProgress: false });
-      return { success: false, error: "No valid 7TV channels found" };
+      warnDownload('no-valid-channels', {
+        error: resolveError
+      });
+      await chrome.storage.local.set({
+        channels,
+        downloadInProgress: false,
+        downloadProgress: { error: resolveError }
+      });
+      return { success: false, error: resolveError };
     }
 
     if (totalNewEmotes === 0) {
-      console.log("[Download] No new emotes to download - all emotes already cached locally");
       downloadState.isDownloading = false;
-      await chrome.storage.local.set({ channels, downloadInProgress: false });
+      logDownload('up-to-date', {
+        resolvedEmotes: totalResolvedEmotes,
+        cachedEmotes: existingEmoteKeys.size
+      });
+      await chrome.storage.local.set({
+        channels,
+        downloadInProgress: false,
+        downloadProgress: {
+          current: 0,
+          total: 0,
+          completed: true,
+          currentEmote: 'All emotes up to date'
+        }
+      });
       return { success: true, totalEmotes: await emoteDB.getEmoteCount(), message: "All emotes up to date" };
     }
 
-    console.log(`[Download] Found ${totalNewEmotes} new emotes to download (skipping ${existingEmoteKeys.size} already cached)`);
 
     // Set download progress
-    await chrome.storage.local.set({
-      downloadInProgress: true,
-      downloadProgress: {
-        current: 0,
-        total: totalNewEmotes,
-        currentEmote: null
-      }
+    await publishDownloadProgress({
+      current: 0,
+      total: totalNewEmotes,
+      currentEmote: 'Starting downloads...'
+    });
+    logDownload('download-plan', {
+      newEmotes: totalNewEmotes,
+      resolvedEmotes: totalResolvedEmotes,
+      channels: channelEmotes.length
     });
 
     // Intelligent pre-loading and cache optimization
@@ -707,11 +891,6 @@ async function downloadEmotes() {
             downloadState.performanceMetrics.memoryUsage.shift();
           }
 
-          // Log warning if memory usage is high
-          const usagePercent = (memInfo.used / memInfo.limit) * 100;
-          if (usagePercent > 80) {
-            console.warn(`[Download] High memory usage: ${usagePercent.toFixed(1)}%`);
-          }
         }, 5000);
       }
     };
@@ -721,8 +900,6 @@ async function downloadEmotes() {
     // Prepare all emotes for download with metadata and optimization
     const allEmotesToDownload = [];
     for (const channelData of channelEmotes) {
-      console.log(`[Download] Preparing ${channelData.username}: ${Object.keys(channelData.emotes).length} new emotes`);
-
       for (const [key, url] of Object.entries(channelData.emotes)) {
         allEmotesToDownload.push({
           key,
@@ -743,7 +920,6 @@ async function downloadEmotes() {
       return bPriority - aPriority; // Higher priority first
     });
 
-    console.log(`[Download] Starting concurrent download of ${allEmotesToDownload.length} emotes in batches of ${BATCH_SIZE} (prioritized by size/speed)`);
 
     // Function to download a single emote with adaptive timeout and caching
     const downloadSingleEmote = async (emoteData, batchNumber, totalBatches) => {
@@ -774,14 +950,9 @@ async function downloadEmotes() {
           (urlPerformanceFactor * 3000) + // Add time for slow URLs
           (attemptFactor * 2000); // Add time for previously failed URLs
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), adaptiveTimeout);
-
         // Enhanced headers for better cache control and performance
         const headers = {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': 'image/webp,image/avif,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-          'Accept-Encoding': 'gzip, deflate, br'
+          'Accept': 'image/webp,image/avif,image/apng,image/svg+xml,image/*,*/*;q=0.8'
         };
 
         // Use cache-control strategically based on batch progression
@@ -794,50 +965,39 @@ async function downloadEmotes() {
         cacheEntry.attempts++;
         cacheEntry.lastAttempt = Date.now();
 
-        const response = await fetch(url, {
-          signal: controller.signal,
+        const blob = await fetchBlobWithTimeout(url, {
           headers
-        });
-        clearTimeout(timeoutId);
+        }, adaptiveTimeout);
 
-        if (response.ok) {
-          const blob = await response.blob();
-          console.log(`[Download] Downloaded ${key}: ${blob.size} bytes, type: ${blob.type}`);
+        if (blob.size > 0) {
+          await emoteDB.storeEmote(key, url, blob, {
+            channel: channel,
+            channelId: channelId
+          });
 
-          if (blob.size > 0) {
-            await emoteDB.storeEmote(key, url, blob, {
-              channel: channel,
-              channelId: channelId
-            });
+          globalEmoteMapping[key] = url;
+          const responseTime = Date.now() - startTime;
 
-            globalEmoteMapping[key] = url;
-            const responseTime = Date.now() - startTime;
+          // Update URL cache with successful response time
+          cacheEntry.avgResponseTime = cacheEntry.avgResponseTime === 0 ?
+            responseTime : (cacheEntry.avgResponseTime + responseTime) / 2;
 
-            // Update URL cache with successful response time
-            cacheEntry.avgResponseTime = cacheEntry.avgResponseTime === 0 ?
-              responseTime : (cacheEntry.avgResponseTime + responseTime) / 2;
+          // Update performance metrics
+          downloadState.performanceMetrics.totalBytes += blob.size;
+          totalSuccessfulDownloads++;
 
-            // Update performance metrics
-            downloadState.performanceMetrics.totalBytes += blob.size;
-            totalSuccessfulDownloads++;
-
-            // Update size estimates with actual data
-            if (sizeEstimates.has(key)) {
-              sizeEstimates.get(key).actualSize = blob.size;
-            }
-
-            console.log(`[Download] ✓ ${key} (${blob.size} bytes, ${responseTime}ms, attempt ${cacheEntry.attempts})`);
-            return { success: true, key, url, channel, channelId, responseTime, size: blob.size };
-          } else {
-            throw new Error("Empty blob received");
+          // Update size estimates with actual data
+          if (sizeEstimates.has(key)) {
+            sizeEstimates.get(key).actualSize = blob.size;
           }
+
+          return { success: true, key, url, channel, channelId, responseTime, size: blob.size };
         } else {
-          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+          throw new Error("Empty blob received");
         }
       } catch (error) {
         const responseTime = Date.now() - startTime;
         totalFailedDownloads++;
-console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
         return { success: false, key, url, channel, channelId, error: error.message, responseTime };
       }
     };
@@ -847,14 +1007,32 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
     let currentBatch = 0;
     const totalBatches = Math.ceil(allEmotesToDownload.length / BATCH_SIZE);
     let consecutiveHighFailureBatches = 0;
+    let lastProgressAt = Date.now();
 
     for (let i = 0; i < allEmotesToDownload.length; i += BATCH_SIZE) {
       const batch = allEmotesToDownload.slice(i, i + BATCH_SIZE);
       currentBatch++;
 
-      console.log(`[Download] Processing batch ${currentBatch}/${totalBatches} (${batch.length} emotes, batch size: ${BATCH_SIZE}, delay: ${BATCH_DELAY}ms)`);
-
+      logDownload('batch-start', {
+        batch: `${currentBatch}/${totalBatches}`,
+        items: batch.length,
+        batchSize: BATCH_SIZE,
+        delayMs: BATCH_DELAY,
+        progress: `${downloadState.current}/${downloadState.total}`,
+        first: batch[0]?.key || '',
+        last: batch[batch.length - 1]?.key || ''
+      });
       const batchStartTime = Date.now();
+      const slowBatchTimer = setTimeout(() => {
+        warnDownload('batch-still-running', {
+          batch: `${currentBatch}/${totalBatches}`,
+          runningMs: Date.now() - batchStartTime,
+          activeConnections: activeConnections.size,
+          progress: `${downloadState.current}/${downloadState.total}`,
+          first: batch[0]?.key || '',
+          last: batch[batch.length - 1]?.key || ''
+        });
+      }, 20000);
 
       // Limit concurrent connections for better stability
       const connectionLimitedBatch = [];
@@ -876,6 +1054,7 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
 
       // Download batch concurrently with connection limiting
       const batchResults = await Promise.allSettled(connectionLimitedBatch);
+      clearTimeout(slowBatchTimer);
 
       // Analyze batch performance
       let batchFailures = 0;
@@ -917,6 +1096,7 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
 
       // Record batch completion time
       const batchDuration = Date.now() - batchStartTime;
+      lastProgressAt = Date.now();
       downloadState.performanceMetrics.batchTimes.push({
         batchNumber: currentBatch,
         duration: batchDuration,
@@ -928,6 +1108,28 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
       // Keep only last 10 batch records
       if (downloadState.performanceMetrics.batchTimes.length > 10) {
         downloadState.performanceMetrics.batchTimes.shift();
+      }
+
+      logDownload('batch-done', {
+        batch: `${currentBatch}/${totalBatches}`,
+        progress: `${downloadState.current}/${downloadState.total}`,
+        success: successfulInBatch,
+        failed: batchFailures,
+        failedQueue: failedQueue.length,
+        durationMs: batchDuration,
+        bytes: batchTotalBytes,
+        batchSize: BATCH_SIZE,
+        delayMs: BATCH_DELAY
+      });
+
+      if (batchDuration > 20000 || batchFailures > 0) {
+        warnDownload('batch-attention', {
+          batch: `${currentBatch}/${totalBatches}`,
+          durationMs: batchDuration,
+          failures: batchFailures,
+          timeoutCount,
+          failedQueue: failedQueue.length
+        });
       }
 
       await chrome.storage.local.set({
@@ -953,7 +1155,6 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
       if (successfulInBatch > 0 && timeoutCount > 0 &&timeoutCount >= successfulInBatch){
         throttlingDetected = true;
         consecutiveTimeouts += timeoutCount;
-        console.warn(`[Download] Throttling detected! ${successfulInBatch} succeeded, then ${timeoutCount} timeouts`);
       } else if (timeoutCount === 0) {
         consecutiveTimeouts = 0;
         throttlingDetected = false;
@@ -972,14 +1173,18 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
       if (batchFailureRates.length > 5) batchFailureRates.shift();
       if (avgResponseTimes.length > 5) avgResponseTimes.shift();
 
-      console.log(`[Download] Batch ${currentBatch} stats: ${batchFailureRate.toFixed(2)} failure rate, ${batchResponseTimes.length > 0 ? Math.round(batchResponseTimes.reduce((a, b) => a + b, 0) / batchResponseTimes.length) : 'N/A'}ms avg response`);
 
       // Aggressive throttling response
       if (throttlingDetected || consecutiveTimeouts > 5) {
         BATCH_SIZE = MIN_BATCH_SIZE;
         BATCH_DELAY = Math.max(BATCH_DELAY * 2, 1000);
-        console.log(`[Download] AGGRESSIVE: Throttling detected, reducing to ${BATCH_SIZE} batch size and ${BATCH_DELAY}ms delay`);
         consecutiveHighFailureBatches = 0; // Reset other counter
+        warnDownload('throttle-mode', {
+          batch: `${currentBatch}/${totalBatches}`,
+          batchSize: BATCH_SIZE,
+          delayMs: BATCH_DELAY,
+          consecutiveTimeouts
+        });
       }
       // Adaptive optimization based on performance
       else if (batchFailureRate > 0.3) { // High failure rate
@@ -988,7 +1193,12 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
         if (consecutiveHighFailureBatches >= 1 && BATCH_SIZE > MIN_BATCH_SIZE) {
           BATCH_SIZE = Math.max(MIN_BATCH_SIZE, Math.floor(BATCH_SIZE * 0.6));
           BATCH_DELAY = Math.min(BATCH_DELAY * 1.8, 3000);
-          console.log(`[Download] Reducing batch size to ${BATCH_SIZE} and increasing delay to ${BATCH_DELAY}ms due to failures`);
+          warnDownload('slowing-down', {
+            batch: `${currentBatch}/${totalBatches}`,
+            failureRate: Number(batchFailureRate.toFixed(2)),
+            batchSize: BATCH_SIZE,
+            delayMs: BATCH_DELAY
+          });
         }
       } else if (batchFailureRate < 0.1 && consecutiveHighFailureBatches === 0 && !throttlingDetected) {
         // Low failure rate and no recent issues - can try to optimize
@@ -997,7 +1207,14 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
           if (avgResponseTime < 5000 && BATCH_SIZE < MAX_BATCH_SIZE) {
             BATCH_SIZE = Math.min(MAX_BATCH_SIZE, BATCH_SIZE + 1);
             BATCH_DELAY = Math.max(200, Math.floor(BATCH_DELAY * 0.95));
-            console.log(`[Download] Increasing batch size to ${BATCH_SIZE} and reducing delay to ${BATCH_DELAY}ms due to good performance`);
+            if (currentBatch % 10 === 0) {
+              logDownload('speed-up', {
+                batch: `${currentBatch}/${totalBatches}`,
+                avgResponseMs: Math.round(avgResponseTime),
+                batchSize: BATCH_SIZE,
+                delayMs: BATCH_DELAY
+              });
+            }
           }
         }
         consecutiveHighFailureBatches = 0;
@@ -1013,10 +1230,16 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
         // Much longer delays if throttling detected
         if (throttlingDetected) {
           progressiveDelay = Math.max(progressiveDelay * 3, 2000);
-          console.log(`[Download] Throttling delay: ${progressiveDelay}ms`);
         }
 
         await new Promise(resolve => setTimeout(resolve, Math.min(progressiveDelay, 5000)));
+        if (Date.now() - lastProgressAt > 30000) {
+          warnDownload('progress-watchdog', {
+            idleMs: Date.now() - lastProgressAt,
+            batch: `${currentBatch}/${totalBatches}`,
+            progress: `${downloadState.current}/${downloadState.total}`
+          });
+        }
 
         // Memory optimization: Clear completed downloads from memory periodically
         if (currentBatch % 5 === 0) {
@@ -1048,15 +1271,15 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
         avgResponseTimes.reduce((a, b) => a + b, 0) / avgResponseTimes.length;
     }
 
-    console.log(`[Download] Concurrent download completed. ${failedQueue.length} failures to retry.`);
-    console.log(`[Download] Performance: ${downloadState.performanceMetrics.successRate.toFixed(1)}% success rate, ${Math.round(downloadState.performanceMetrics.avgResponseTime)}ms avg response, ${Math.round(downloadState.performanceMetrics.totalBytes / 1024)}KB total`);
 
     // Clear active connections tracking
     activeConnections.clear();
 
     // Second pass: retry failed emotes with smaller concurrent batches
     if (failedQueue.length > 0) {
-      console.log(`[Download] Retrying ${failedQueue.length} failed emotes with smaller batches...`);
+      warnDownload('retry-start', {
+        failed: failedQueue.length
+      });
 
       const RETRY_BATCH_SIZE = 5; // Smaller batches for retries
       const retryDownload = async (emoteData, retryAttempt = 1) => {
@@ -1066,37 +1289,26 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
           // Exponential timeout for retries: 20s, 30s, 45s for multiple attempts
           const retryTimeout = 20000 + (retryAttempt * 10000) + Math.min(retryAttempt * retryAttempt * 5000, 25000);
 
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), retryTimeout);
-
-          const response = await fetch(url, {
-            signal: controller.signal,
+          const blob = await fetchBlobWithTimeout(url, {
             headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
               'Cache-Control': 'no-cache',
               'Pragma': 'no-cache'
             }
-          });
-          clearTimeout(timeoutId);
+          }, retryTimeout);
 
-          if (response.ok) {
-            const blob = await response.blob();
-            if (blob.size > 0) {
-              await emoteDB.storeEmote(key, url, blob, {
-                channel: channel,
-                channelId: channelId,
-                retried: true
-              });
+          if (blob.size > 0) {
+            await emoteDB.storeEmote(key, url, blob, {
+              channel: channel,
+              channelId: channelId,
+              retried: true
+            });
 
-              globalEmoteMapping[key] = url;
-              console.log(`[Download] ✓ Retry successful: ${key}`);
-              return { success: true, key };
-            }
-          } else {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            globalEmoteMapping[key] = url;
+            return { success: true, key };
           }
+
+          throw new Error('Empty blob received');
         } catch (error) {
-          console.log(`[Download] ✗ Retry failed: ${key} - ${error.message}`);
           // Still store URL mapping for fallback
           globalEmoteMapping[key] = url;
           return { success: false, key, error: error.message };
@@ -1111,31 +1323,26 @@ console.log(`[Download] ✗ ${key}: ${error.message} (${responseTime}ms)`);
         const retryBatchNum = Math.floor(i/retryBatchSize) + 1;
         const totalRetryBatches = Math.ceil(failedQueue.length/retryBatchSize);
 
-        console.log(`[Download] Retry batch ${retryBatchNum}/${totalRetryBatches} (${retryBatch.length} emotes)`);
+        logDownload('retry-batch-start', {
+          batch: `${retryBatchNum}/${totalRetryBatches}`,
+          items: retryBatch.length
+        });
+        const retryBatchStartedAt = Date.now();
 
         await Promise.allSettled(
           retryBatch.map(emoteData => retryDownload(emoteData, retryBatchNum))
         );
+        logDownload('retry-batch-done', {
+          batch: `${retryBatchNum}/${totalRetryBatches}`,
+          durationMs: Date.now() - retryBatchStartedAt
+        });
 
         // Exponential backoff delay between retry batches
         if (i + retryBatchSize < failedQueue.length) {
           const exponentialDelay = 800 + (retryBatchNum * 400) + Math.min(retryBatchNum * retryBatchNum * 200, 2000);
-await new Promise(resolve => setTimeout(resolve, exponentialDelay));
+          await new Promise(resolve => setTimeout(resolve, exponentialDelay));
         }
       }
-
-      console.log(`[Download] Completed concurrent retry processing`);
-
-      // Final performance report with cache analysis
-      const finalMetrics = downloadState.performanceMetrics;
-      const cacheStats = {
-        totalUrls: urlCache.size,
-        avgAttempts: Array.from(urlCache.values()).reduce((sum, entry) => sum + entry.attempts, 0) / urlCache.size,
-        slowUrls: Array.from(urlCache.values()).filter(entry => entry.avgResponseTime > 5000).length
-      };
-
-      console.log(`[Download] Final metrics - Success rate: ${finalMetrics.successRate.toFixed(1)}%, Total data: ${Math.round(finalMetrics.totalBytes / 1024)}KB, Avg response: ${Math.round(finalMetrics.avgResponseTime)}ms`);
-      console.log(`[Download] Cache stats - ${cacheStats.totalUrls} URLs cached, ${cacheStats.avgAttempts.toFixed(1)} avg attempts, ${cacheStats.slowUrls} slow URLs`);
 
       // Clear cache to free memory
       urlCache.clear();
@@ -1169,11 +1376,17 @@ await new Promise(resolve => setTimeout(resolve, exponentialDelay));
 
     // Get final count from IndexedDB
     const totalStoredEmotes = await emoteDB.getEmoteCount();
-    console.log(`[Download] Completed! Downloaded ${totalNewEmotes} new emotes. Total stored: ${totalStoredEmotes}`);
+    logDownload('complete', {
+      downloaded: totalNewEmotes,
+      stored: totalStoredEmotes,
+      successRate: Number(downloadState.performanceMetrics.successRate.toFixed(1)),
+      avgResponseMs: Math.round(downloadState.performanceMetrics.avgResponseTime || 0),
+      totalBytes: downloadState.performanceMetrics.totalBytes
+    });
     return { success: true, totalEmotes: totalStoredEmotes };
 
   } catch (error) {
-    console.error("[Download] Error:", error);
+    console.error("[Mojify Download] error", error);
     downloadState.isDownloading = false;
 
     try {
@@ -2913,15 +3126,11 @@ async function pasteMediaIntoWhatsAppWithDebugger(tabId) {
 }
 
 async function handleChannelIdsChanged(oldChannelIds = [], newChannelIds = []) {
-  console.log('[Auto-Download] Channel IDs changed:', { old: oldChannelIds, new: newChannelIds });
-
   if (JSON.stringify(newChannelIds) === JSON.stringify(oldChannelIds)) {
-    console.log('[Auto-Download] Channel IDs unchanged, skipping');
     return;
   }
 
   if (newChannelIds.length === 0 && oldChannelIds.length > 0) {
-    console.log('[Auto-Download] Channel IDs cleared, cleaning up storage');
     try {
       await emoteDB.clearAll();
       await chrome.storage.local.remove([
@@ -2937,38 +3146,8 @@ async function handleChannelIdsChanged(oldChannelIds = [], newChannelIds = []) {
         toastType: 'success'
       });
     } catch (error) {
-      console.error('[Auto-Download] Error cleaning up storage:', error);
+      console.error('[Mojify] Error cleaning up channel storage:', error);
     }
-    return;
-  }
-
-  if (newChannelIds.length === 0) {
-    return;
-  }
-
-  sendRuntimeMessage({
-    type: 'automaticDownloadStarted',
-    channelIds: newChannelIds
-  });
-
-  try {
-    const result = await downloadEmotes();
-    if (!result?.success) {
-      sendRuntimeMessage({
-        type: 'showToast',
-        message: `Download failed: ${result.error}`,
-        toastType: 'error'
-      });
-    } else if (result?.skipped) {
-      console.log('[Auto-Download] Download already in progress, skipping duplicate notification');
-    }
-  } catch (error) {
-    console.error('[Auto-Download] Error during automatic download:', error);
-    sendRuntimeMessage({
-      type: 'showToast',
-      message: `Automatic download failed: ${error.message}`,
-      toastType: 'error'
-    });
   }
 }
 
@@ -2980,9 +3159,6 @@ chrome.runtime.onInstalled.addListener((details) => {
       contexts: ['action']
     });
   });
-
-  console.log('[Mojify] Extension installed/updated:', details.reason);
-  initializeEmoteMapping();
 });
 
 chrome.contextMenus.onClicked.addListener((info) => {
@@ -2992,47 +3168,13 @@ chrome.contextMenus.onClicked.addListener((info) => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  console.log('[Mojify] Storage changed:', { area, changes: Object.keys(changes) });
-
   if (area !== 'local' || !changes.channelIds) {
-    console.log('[Mojify] Storage change not for channelIds or not local area');
     return;
   }
 
   const oldChannelIds = changes.channelIds.oldValue || [];
   const newChannelIds = changes.channelIds.newValue || [];
   handleChannelIdsChanged(oldChannelIds, newChannelIds);
-});
-
-// Initialize emote mapping on startup
-async function initializeEmoteMapping() {
-  console.log("[Mojify] Initializing emote mapping on startup...");
-
-  try {
-    // Get stored emote mapping
-    const result = await chrome.storage.local.get(['emoteMapping', 'channels']);
-
-    if (result.emoteMapping && Object.keys(result.emoteMapping).length > 0) {
-      console.log("[Mojify] Found existing emote mapping with", Object.keys(result.emoteMapping).length, "emotes");
-      console.log("[Mojify] Sample emotes:", Object.keys(result.emoteMapping).slice(0, 5));
-    } else {
-      console.log("[Mojify] No emote mapping found - user needs to add channels");
-    }
-
-    if (result.channels && result.channels.length > 0) {
-      console.log("[Mojify] Found", result.channels.length, "configured channels");
-    } else {
-      console.log("[Mojify] No channels configured");
-    }
-  } catch (error) {
-    console.error("[Mojify] Error initializing emote mapping:", error);
-  }
-}
-
-// Extension startup listeners
-chrome.runtime.onStartup.addListener(() => {
-  console.log("[Mojify] Extension startup detected");
-  initializeEmoteMapping();
 });
 
 // Text detection and auto-replace functionality
@@ -3343,8 +3485,5 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     await startMonitoringTab(tabId);
   }
 });
-
-// Initialize on script load as well (for service worker reactivation)
-initializeEmoteMapping();
 
 chrome.runtime.onMessage.addListener(handleRuntimeMessage);

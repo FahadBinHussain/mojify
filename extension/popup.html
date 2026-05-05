@@ -162,209 +162,165 @@
         <!-- Settings Tab -->
         <div class="tab-pane" id="settings-tab">
           <div class="settings-shell">
-            <div class="settings-intro">
-              <span class="pane-kicker">Configuration</span>
-              <h2 class="settings-headline">Keep channels, backups, and provider access in one place.</h2>
-              <p class="settings-copy">Use usernames or numeric IDs, keep providers connected, and manage your local library without leaving the popup.</p>
-            </div>
+            <section class="settings-hero">
+              <span class="pane-kicker">Setup</span>
+              <h2 class="settings-headline">Manage your emote library.</h2>
+              <p class="settings-copy">Add Twitch channels, watch local storage, and keep a backup. Advanced tools stay out of the way until needed.</p>
+            </section>
 
-            <div class="settings-section">
-              <h2 class="section-title">Channels</h2>
-              <p class="section-description">Paste Twitch usernames or numeric IDs. Mojify resolves usernames on save and starts the download automatically.</p>
-
-              <div class="form-group">
-                <label for="channel-ids">Twitch Usernames or IDs</label>
-                <textarea id="channel-ids" placeholder="Enter usernames or IDs, one per line or comma-separated"></textarea>
-                <div class="helper-text">Example: xqc, forsen, sodapoppin</div>
+            <section class="settings-card settings-card-primary">
+              <div class="settings-card-header">
+                <div>
+                  <span class="settings-step">Step 1</span>
+                  <h2 class="section-title">Twitch Channels</h2>
+                  <p class="section-description">Paste usernames or numeric IDs. Mojify saves IDs and starts downloading right away.</p>
+                </div>
               </div>
 
-              <div class="info-box">
-                <div class="info-box-header">
-                  <i class="fas fa-info-circle"></i>
-                  <strong>Automatic Downloads</strong>
-                </div>
-                <p>Emotes download as soon as you save. Progress appears live in the popup, and new emotes become available as they land.</p>
+              <div class="form-group">
+                <label for="channel-ids">Usernames or IDs</label>
+                <textarea id="channel-ids" placeholder="xqc&#10;forsen&#10;71092938"></textarea>
+                <div class="helper-text">Example: xqc, forsen, sodapoppin</div>
               </div>
 
               <button id="save-button" class="primary-button" type="button">
                 <i class="fas fa-save"></i>
                 <span>Save Channels</span>
               </button>
-            </div>
 
-          <div class="settings-section channel-management" id="channel-management" style="display: none;">
-            <h2 class="section-title">Active Channels</h2>
-            <p class="section-description">Live counts update from your local library while downloads are running.</p>
-            <div class="channel-list" id="channel-list">
-              <!-- Channels will be populated here -->
-            </div>
-          </div>
+              <div class="settings-inline-note">
+                <i class="fas fa-bolt"></i>
+                <span>Saving converts usernames to IDs, stores them, then starts the download.</span>
+              </div>
+            </section>
 
-          <div class="settings-section backup-restore">
-            <h2 class="section-title">Backups</h2>
-            <p class="section-description">Capture the full library, settings, and channel setup so you can restore it anytime.</p>
+            <section class="settings-card storage-info">
+              <div class="settings-card-header">
+                <div>
+                  <span class="settings-step">Library</span>
+                  <h2 class="section-title">Local Status</h2>
+                  <p class="section-description">What Mojify has saved on this browser profile.</p>
+                </div>
+              </div>
 
-            <div class="backup-restore-actions">
-              <button id="create-backup" class="primary-button" type="button">
-                <i class="fas fa-download"></i>
-                <span>Create Backup</span>
+              <div class="storage-details">
+                <div class="storage-item">
+                  <span class="storage-label">Total Emotes</span>
+                  <span class="storage-value" id="total-emotes-count">0</span>
+                </div>
+                <div class="storage-item">
+                  <span class="storage-label">Channels</span>
+                  <span class="storage-value" id="channels-count">0</span>
+                </div>
+                <div class="storage-item">
+                  <span class="storage-label">Local Storage</span>
+                  <span class="storage-value" id="local-storage-used">0 KB</span>
+                </div>
+                <div class="storage-item">
+                  <span class="storage-label">IndexedDB</span>
+                  <span class="storage-value" id="indexeddb-storage-used">0 KB</span>
+                </div>
+              </div>
+
+              <div class="settings-section channel-management" id="channel-management" style="display: none;">
+                <div class="settings-subheader">
+                  <h3>Active Channels</h3>
+                  <span>Live counts</span>
+                </div>
+                <div class="channel-list" id="channel-list">
+                  <!-- Channels will be populated here -->
+                </div>
+              </div>
+
+              <button id="clear-all-storage" class="danger-button" type="button">
+                <i class="fas fa-trash"></i>
+                <span>Clear All Data</span>
+              </button>
+            </section>
+
+            <section class="settings-card backup-restore">
+              <div class="settings-card-header">
+                <div>
+                  <span class="settings-step">Safety</span>
+                  <h2 class="section-title">Backup & Access</h2>
+                  <p class="section-description">Export the library or open provider credentials when searches/imports need keys.</p>
+                </div>
+              </div>
+
+              <div class="backup-restore-actions">
+                <button id="create-backup" class="primary-button" type="button">
+                  <i class="fas fa-download"></i>
+                  <span>Create Backup</span>
+                </button>
+
+                <div class="restore-section">
+                  <input type="file" id="restore-file" accept=".json" style="display: none;">
+                  <button id="restore-backup" class="secondary-button" type="button">
+                    <i class="fas fa-upload"></i>
+                    <span>Restore Backup</span>
+                  </button>
+                </div>
+              </div>
+
+              <button id="open-api-keys-page" class="secondary-button settings-wide-button" type="button">
+                <i class="fas fa-key"></i>
+                <span>Open API Key Settings</span>
               </button>
 
-              <div class="restore-section">
-                <input type="file" id="restore-file" accept=".json" style="display: none;">
-                <button id="restore-backup" class="secondary-button" type="button">
-                  <i class="fas fa-upload"></i>
-                  <span>Restore Backup</span>
-                </button>
-              </div>
-            </div>
-
-            <div class="backup-info">
-              <div class="info-item">
-                <i class="fas fa-check-circle"></i>
-                <span>Emote collection with images</span>
-              </div>
-              <div class="info-item">
-                <i class="fas fa-check-circle"></i>
-                <span>Channel configurations</span>
-              </div>
-              <div class="info-item">
-                <i class="fas fa-check-circle"></i>
-                <span>Emote mappings</span>
-              </div>
-              <div class="info-item">
-                <i class="fas fa-check-circle"></i>
-                <span>Minibar positions for all sites</span>
-              </div>
-            </div>
-
-            <div class="backup-progress hidden" id="backup-progress">
-              <div class="progress-info">
-                <span id="backup-progress-text">Creating backup...</span>
-              </div>
-              <div class="progress-bar">
-                <div class="progress-fill" id="backup-progress-fill"></div>
-              </div>
-            </div>
-          </div>
-
-          <div class="settings-section">
-            <h2 class="section-title">Provider Keys</h2>
-            <p class="section-description">Open the dedicated API page for Twitch, Giphy, Klipy, Pixabay, and Tenor credentials.</p>
-            <button id="open-api-keys-page" class="secondary-button" type="button">
-              <i class="fas fa-key"></i>
-              <span>Open API Key Settings</span>
-            </button>
-          </div>
-
-          <div class="settings-section storage-info">
-            <h2 class="section-title">Library Status</h2>
-            <div class="storage-details">
-              <div class="storage-item">
-                <span class="storage-label">Total Emotes:</span>
-                <span class="storage-value" id="total-emotes-count">0</span>
-              </div>
-              <div class="storage-item">
-                <span class="storage-label">Local Storage:</span>
-                <span class="storage-value" id="local-storage-used">0 KB</span>
-              </div>
-              <div class="storage-item">
-                <span class="storage-label">IndexedDB Storage:</span>
-                <span class="storage-value" id="indexeddb-storage-used">0 KB</span>
-              </div>
-              <div class="storage-item">
-                <span class="storage-label">Channels:</span>
-                <span class="storage-value" id="channels-count">0</span>
-              </div>
-            </div>
-            <button id="clear-all-storage" class="danger-button" type="button">
-              <i class="fas fa-trash"></i>
-              <span>Clear All Data</span>
-            </button>
-          </div>
-
-          <div class="settings-section usage-section">
-            <h2 class="section-title">Quick Tips</h2>
-            <div class="usage-item">
-              <i class="fas fa-keyboard"></i>
-              <div>
-                <h3>Type Emote Code</h3>
-                <p>Use colon-wrapped codes such as <code>:kappa:</code> anywhere supported text replacement is active.</p>
-              </div>
-            </div>
-
-            <div class="usage-item">
-              <i class="fas fa-mouse-pointer"></i>
-              <div>
-                <h3>Click to Insert</h3>
-                <p>Pick any emote or GIF in the popup to insert it into the active text field on supported sites.</p>
-              </div>
-            </div>
-
-            <div class="usage-item">
-              <i class="fas fa-search"></i>
-              <div>
-                <h3>Search Emotes</h3>
-                <p>Use the search bar in the Emotes tab to quickly find specific emotes by name.</p>
-              </div>
-            </div>
-
-            <div class="usage-item">
-              <i class="fas fa-download"></i>
-              <div>
-                <h3>Add New Emotes</h3>
-                <p>Paste usernames or IDs in Channels and save. Mojify handles conversion and download from there.</p>
-              </div>
-            </div>
-
-            <div class="usage-item">
-              <i class="fas fa-cloud-download-alt"></i>
-              <div>
-                <h3>Backup & Restore</h3>
-                <p>Keep a backup of your library if you switch browsers, profiles, or machines.</p>
-              </div>
-            </div>
-          </div>
-
-          <div class="settings-section debug-section">
-            <h2 class="section-title">
-              Diagnostics
-              <button id="toggle-debug" class="toggle-button" type="button">Show</button>
-            </h2>
-
-            <div id="debug-content" class="debug-content" style="display: none;">
-              <div class="debug-info">
-                <p>Use these when Mojify cannot find the active text field or media insertion behaves strangely.</p>
+              <div class="settings-inline-note">
+                <i class="fas fa-shield-alt"></i>
+                <span>Backups include emotes, channels, mappings, settings, and minibar positions.</span>
               </div>
 
-              <div class="debug-actions">
-                <button id="debug-find-field" class="debug-button" type="button">
-                  <i class="fas fa-search"></i> Find Text Field
-                </button>
-
-                <button id="debug-insert-text" class="debug-button" type="button">
-                  <i class="fas fa-font"></i> Insert Test Text
-                </button>
-
-                <button id="debug-detect-page" class="debug-button" type="button">
-                  <i class="fas fa-code"></i> Analyze Page
-                </button>
-
-                <button id="debug-test-dragdrop" class="debug-button" type="button">
-                  <i class="fas fa-images"></i> Test Drag & Drop
-                </button>
-
-                <button id="debug-test-basic" class="debug-button" type="button">
-                  <i class="fas fa-vial"></i> Test Basic Functionality
-                </button>
+              <div class="backup-progress hidden" id="backup-progress">
+                <div class="progress-info">
+                  <span id="backup-progress-text">Creating backup...</span>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill" id="backup-progress-fill"></div>
+                </div>
               </div>
+            </section>
 
-              <div id="debug-result" class="debug-result">
-                <div class="debug-result-header">Results will appear here</div>
-                <div class="debug-result-content"></div>
+            <section class="settings-card debug-section">
+              <h2 class="section-title">
+                Advanced Diagnostics
+                <button id="toggle-debug" class="toggle-button" type="button">Show</button>
+              </h2>
+
+              <div id="debug-content" class="debug-content" style="display: none;">
+                <div class="debug-info">
+                  <p>Use these only when Mojify cannot find a text field or media insertion behaves strangely.</p>
+                </div>
+
+                <div class="debug-actions">
+                  <button id="debug-find-field" class="debug-button" type="button">
+                    <i class="fas fa-search"></i> Find Text Field
+                  </button>
+
+                  <button id="debug-insert-text" class="debug-button" type="button">
+                    <i class="fas fa-font"></i> Insert Test Text
+                  </button>
+
+                  <button id="debug-detect-page" class="debug-button" type="button">
+                    <i class="fas fa-code"></i> Analyze Page
+                  </button>
+
+                  <button id="debug-test-dragdrop" class="debug-button" type="button">
+                    <i class="fas fa-images"></i> Test Drag & Drop
+                  </button>
+
+                  <button id="debug-test-basic" class="debug-button" type="button">
+                    <i class="fas fa-vial"></i> Test Basic Functionality
+                  </button>
+                </div>
+
+                <div id="debug-result" class="debug-result">
+                  <div class="debug-result-header">Results will appear here</div>
+                  <div class="debug-result-content"></div>
+                </div>
               </div>
-            </div>
-          </div>
+            </section>
           </div>
         </div>
       </div>
