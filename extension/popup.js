@@ -272,6 +272,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const searchInput = document.getElementById('search-emotes');
   const sortSelect = document.getElementById('emote-sort');
   const sortToolbar = document.querySelector('.sort-toolbar');
+  const workspaceControls = document.getElementById('workspace-controls');
+  const scopeToggle = document.getElementById('scope-toggle');
+  const scopeCurrentLabel = document.getElementById('scope-current-label');
   const channelFilterBar = document.getElementById('channel-filter-bar');
   const discordImportPanel = document.getElementById('discord-import-panel');
   const discordImportButton = document.getElementById('discord-import-button');
@@ -335,6 +338,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let emoteGridDirty = true;
   let settingsPanelsDirty = true;
   let expandedChannelSetsKey = '';
+  let scopeDrawerOpen = false;
   const channelEmoteSetCache = new Map();
   const emoteObjectUrlCache = new Map();
   const emoteBlobHydrationPromises = new Map();
@@ -657,14 +661,23 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateSortToolbarVisibility() {
-    if (!sortToolbar) return;
-    sortToolbar.style.display = isLocalLibraryTab() ? 'flex' : 'none';
-    if (channelFilterBar) {
-      channelFilterBar.style.display = isLocalLibraryTab() ? 'flex' : 'none';
+    const showLocalControls = isLocalLibraryTab();
+    if (workspaceControls) {
+      workspaceControls.classList.toggle('hidden', !showLocalControls);
+    }
+    if (sortToolbar) {
+      sortToolbar.classList.toggle('hidden', !showLocalControls);
+    }
+    if (scopeToggle) {
+      scopeToggle.classList.toggle('hidden', !showLocalControls);
+    }
+    if (!showLocalControls) {
+      scopeDrawerOpen = false;
     }
     if (discordImportPanel) {
       discordImportPanel.classList.toggle('hidden', activeMediaTab !== 'discord');
     }
+    renderChannelFilterBar();
   }
 
   function getVisibleChannelsForSource(sourceType = getActiveLibrarySourceType()) {
@@ -674,29 +687,58 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  function renderChannelFilterBar() {
-    if (!channelFilterBar) return;
+  function getScopeValue(channel) {
+    return channel?.scopeValue || channel?.id || channel?.username || '';
+  }
 
-    channelFilterBar.innerHTML = '';
-    const visibleChannels = getVisibleChannelsForSource();
-    if (visibleChannels.length === 0) {
-      channelFilterBar.style.display = 'none';
-      return;
-    }
+  function getScopeEmoteCount(channel) {
+    return Object.keys(channel?.emotes || {}).length;
+  }
 
-    channelFilterBar.style.display = isLocalLibraryTab() ? 'flex' : 'none';
+  function getScopeParentName(channel) {
+    return channel?.baseUsername || channel?.username || channel?.parentUsername || 'Channel';
+  }
 
+  function getScopeSetName(channel, fallback = 'Emote Set') {
+    return channel?.emoteSetName || channel?.setName || channel?.username || fallback;
+  }
+
+  function shouldRenderChannelSetTree(channel) {
+    return getChannelSourceType(channel) === 'twitch' && !is7TVSetChannel(channel);
+  }
+
+  function createActiveScopeSet(channel) {
+    if (!channel || !shouldRenderChannelSetTree(channel)) return null;
+    const parentName = getScopeParentName(channel);
+    return {
+      ...channel,
+      scopeValue: getScopeValue(channel),
+      isSyntheticActiveSet: true,
+      emoteSetName: channel.emoteSetName || `${parentName}'s Emotes`,
+      parentUsername: parentName
+    };
+  }
+
+  function buildVisibleChannelGroups(visibleChannels) {
     const visibleChannelGroups = [];
     const groupByParent = new Map();
 
     visibleChannels.forEach((channel) => {
       if (!is7TVSetChannel(channel)) {
         const parentKey = normalizeChannelIdentifier(channel.id || channel.platformChannelId || channel.username);
-        const group = {
-          parent: channel,
-          children: []
-        };
-        visibleChannelGroups.push(group);
+        let group = groupByParent.get(parentKey);
+        if (!group) {
+          group = {
+            parent: channel,
+            activeSet: createActiveScopeSet(channel),
+            children: []
+          };
+          visibleChannelGroups.push(group);
+          groupByParent.set(parentKey, group);
+          return;
+        }
+        group.parent = channel;
+        group.activeSet = createActiveScopeSet(channel);
         groupByParent.set(parentKey, group);
         return;
       }
@@ -706,6 +748,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!group) {
         group = {
           parent: null,
+          activeSet: null,
           children: []
         };
         visibleChannelGroups.push(group);
@@ -715,47 +758,190 @@ document.addEventListener('DOMContentLoaded', () => {
       group.children.push(channel);
     });
 
-    const createChip = (label, value, extraClass = '', title = '') => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `channel-filter-chip ${extraClass} ${activeChannelFilter === value ? 'active' : ''}`.trim();
-      button.textContent = label;
-      if (title) {
-        button.title = title;
-      }
-      button.addEventListener('click', () => {
-        activeChannelFilter = value;
-        renderChannelFilterBar();
-        filterAndDisplayEmotes(false);
-      });
-      return button;
-    };
+    return visibleChannelGroups;
+  }
 
-    channelFilterBar.appendChild(createChip('All', 'all', 'all-chip'));
+  function getScopeLabel(visibleChannels, visibleChannelGroups) {
+    if (activeChannelFilter === 'all') return 'All Channels';
+
+    for (const group of visibleChannelGroups) {
+      const parentName = group.parent
+        ? getScopeParentName(group.parent)
+        : getScopeParentName(group.children[0]);
+
+      if (group.activeSet && getScopeValue(group.activeSet) === activeChannelFilter) {
+        return `${parentName} / ${getScopeSetName(group.activeSet, `${parentName}'s Emotes`)}`;
+      }
+
+      const child = group.children.find((candidate) => getScopeValue(candidate) === activeChannelFilter);
+      if (child) {
+        return `${parentName} / ${getScopeSetName(child)}`;
+      }
+
+      if (group.parent && getScopeValue(group.parent) === activeChannelFilter) {
+        return getScopeParentName(group.parent);
+      }
+    }
+
+    const selected = visibleChannels.find((channel) => getScopeValue(channel) === activeChannelFilter);
+    return selected ? getChannelDisplayName(selected) : 'All Channels';
+  }
+
+  function selectScopeFilter(value) {
+    activeChannelFilter = value || 'all';
+    scopeDrawerOpen = false;
+    renderChannelFilterBar();
+    filterAndDisplayEmotes(false);
+  }
+
+  function initScopeDrawer() {
+    if (scopeToggle) {
+      scopeToggle.addEventListener('click', () => {
+        if (scopeToggle.disabled || !isLocalLibraryTab()) return;
+        scopeDrawerOpen = !scopeDrawerOpen;
+        renderChannelFilterBar();
+      });
+    }
+
+    document.addEventListener('click', (event) => {
+      if (!scopeDrawerOpen) return;
+      const target = event.target;
+      const clickedScopeControl = scopeToggle?.contains(target) || channelFilterBar?.contains(target);
+      if (clickedScopeControl) return;
+      scopeDrawerOpen = false;
+      renderChannelFilterBar();
+    });
+  }
+
+  function createScopeParentHeader(group) {
+    const parentName = getScopeParentName(group.parent || group.children[0]);
+    const setCount = (group.activeSet ? 1 : 0) + group.children.length;
+    const emoteTotal = [group.activeSet, ...group.children]
+      .filter(Boolean)
+      .reduce((total, channel) => total + getScopeEmoteCount(channel), 0);
+    const header = document.createElement('div');
+    header.className = 'scope-parent-header';
+    header.innerHTML = `
+      <span class="scope-parent-title">${escapeHtml(parentName)}</span>
+      <span class="scope-parent-meta">${setCount} ${setCount === 1 ? 'set' : 'sets'} | ${emoteTotal} emotes</span>
+    `;
+    return header;
+  }
+
+  function createScopeRow({ label, value, meta = '', type = 'parent', extraClass = '' }) {
+    const button = document.createElement('button');
+    const isActive = activeChannelFilter === value;
+    button.type = 'button';
+    button.className = ['scope-row', `scope-row-${type}`, extraClass, isActive ? 'active' : '']
+      .filter(Boolean)
+      .join(' ');
+    button.setAttribute('role', 'treeitem');
+    button.setAttribute('aria-selected', String(isActive));
+    button.innerHTML = `
+      <span class="scope-row-main">
+        <span class="scope-row-title">${escapeHtml(label)}</span>
+        ${meta ? `<span class="scope-row-meta">${escapeHtml(meta)}</span>` : ''}
+      </span>
+      ${isActive ? '<i class="fas fa-check scope-row-check"></i>' : ''}
+    `;
+    button.addEventListener('click', () => selectScopeFilter(value));
+    return button;
+  }
+
+  function renderChannelFilterBar() {
+    if (!channelFilterBar) return;
+
+    channelFilterBar.innerHTML = '';
+    channelFilterBar.classList.add('scope-drawer');
+
+    if (!isLocalLibraryTab()) {
+      channelFilterBar.classList.add('hidden');
+      if (scopeCurrentLabel) scopeCurrentLabel.textContent = 'All Channels';
+      if (scopeToggle) {
+        scopeToggle.setAttribute('aria-expanded', 'false');
+        scopeToggle.classList.remove('open');
+      }
+      return;
+    }
+
+    const visibleChannels = getVisibleChannelsForSource();
+    const visibleChannelGroups = buildVisibleChannelGroups(visibleChannels);
+
+    if (visibleChannels.length === 0) {
+      scopeDrawerOpen = false;
+      channelFilterBar.classList.add('hidden');
+      if (scopeCurrentLabel) scopeCurrentLabel.textContent = 'No Channels';
+      if (scopeToggle) {
+        scopeToggle.disabled = true;
+        scopeToggle.setAttribute('aria-expanded', 'false');
+        scopeToggle.classList.remove('open');
+      }
+      return;
+    }
+
+    if (scopeCurrentLabel) {
+      scopeCurrentLabel.textContent = getScopeLabel(visibleChannels, visibleChannelGroups);
+    }
+    if (scopeToggle) {
+      scopeToggle.disabled = false;
+      scopeToggle.setAttribute('aria-expanded', String(scopeDrawerOpen));
+      scopeToggle.classList.toggle('open', scopeDrawerOpen);
+    }
+
+    channelFilterBar.classList.toggle('hidden', !scopeDrawerOpen);
+    channelFilterBar.classList.toggle('open', scopeDrawerOpen);
+    if (!scopeDrawerOpen) return;
+
+    const scopeTree = document.createElement('div');
+    scopeTree.className = 'scope-tree';
+    scopeTree.setAttribute('role', 'tree');
+    scopeTree.appendChild(createScopeRow({
+      label: 'All Channels',
+      value: 'all',
+      meta: `${visibleChannels.reduce((total, channel) => total + getScopeEmoteCount(channel), 0)} emotes`,
+      type: 'all'
+    }));
+
     visibleChannelGroups.forEach((group) => {
       const wrapper = document.createElement('div');
-      wrapper.className = 'channel-filter-group';
+      wrapper.className = 'scope-group';
 
       if (group.parent) {
-        wrapper.appendChild(createChip(
-          group.parent.baseUsername || group.parent.username,
-          group.parent.id || group.parent.username,
-          'parent-chip',
-          'Main active channel set'
-        ));
+        if (group.activeSet || group.children.length > 0) {
+          wrapper.appendChild(createScopeParentHeader(group));
+        } else {
+          wrapper.appendChild(createScopeRow({
+            label: getScopeParentName(group.parent),
+            value: getScopeValue(group.parent),
+            meta: `${getScopeEmoteCount(group.parent)} emotes`,
+            type: 'parent'
+          }));
+        }
+      }
+
+      if (group.activeSet) {
+        wrapper.appendChild(createScopeRow({
+          label: getScopeSetName(group.activeSet, `${getScopeParentName(group.parent)}'s Emotes`),
+          value: getScopeValue(group.activeSet),
+          meta: `${getScopeEmoteCount(group.activeSet)} emotes | Active`,
+          type: 'child',
+          extraClass: 'scope-row-active-set'
+        }));
       }
 
       group.children.forEach((child) => {
-        wrapper.appendChild(createChip(
-          child.emoteSetName || child.username,
-          child.id || child.username,
-          'child-chip',
-          `${child.baseUsername || group.parent?.username || '7TV'} emote set`
-        ));
+        wrapper.appendChild(createScopeRow({
+          label: getScopeSetName(child),
+          value: getScopeValue(child),
+          meta: `${getScopeEmoteCount(child)} emotes | Saved`,
+          type: 'child'
+        }));
       });
 
-      channelFilterBar.appendChild(wrapper);
+      scopeTree.appendChild(wrapper);
     });
+
+    channelFilterBar.appendChild(scopeTree);
   }
 
   function getActiveSortMode() {
@@ -1839,6 +2025,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!selectedTab || selectedTab === activeMediaTab) return;
 
         activeMediaTab = selectedTab;
+        scopeDrawerOpen = false;
         mediaTabButtons.forEach(btn => btn.classList.remove('active'));
         button.classList.add('active');
         updateSortToolbarVisibility();
@@ -2407,11 +2594,13 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } else {
       const visibleChannels = getVisibleChannelsForSource();
+      const visibleChannelGroups = buildVisibleChannelGroups(visibleChannels);
       renderChannelFilterBar();
 
       const channelsToRender = activeChannelFilter === 'all'
         ? visibleChannels
         : visibleChannels.filter((channel) => (channel.id || channel.username) === activeChannelFilter);
+      const activeScopeLabel = getScopeLabel(visibleChannels, visibleChannelGroups);
 
       const flattenedEntries = [];
       channelsToRender.forEach((channel) => {
@@ -2437,7 +2626,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="channel-header-content">
           <span class="channel-name">${activeChannelFilter === 'all'
             ? (activeMediaTab === 'discord' ? 'All Servers' : 'All Channels')
-            : (channelsToRender[0]?.username || 'Channel')}</span>
+            : activeScopeLabel}</span>
           <span class="channel-emote-count">${flattenedEntries.length} emotes</span>
         </div>
       `;
@@ -3215,7 +3404,6 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
               <div class="channel-stats">
                 ${emoteCount} emotes
-                ${channel.emoteSetName ? ` | Active set: ${escapeHtml(channel.emoteSetName)}` : ''}
               </div>
             </div>
             <div class="channel-actions">
@@ -3229,6 +3417,13 @@ document.addEventListener('DOMContentLoaded', () => {
               </button>
             </div>
           </div>
+          ${channel.emoteSetName ? `
+            <div class="channel-active-set">
+              <span>Active set</span>
+              <strong>${escapeHtml(channel.emoteSetName)}</strong>
+              <small>${emoteCount} emotes</small>
+            </div>
+          ` : ''}
           <div class="channel-set-panel ${isExpanded ? '' : 'hidden'}"></div>
         `;
 
@@ -3720,6 +3915,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function init() {
     initTabs();
     initMediaTabs();
+    initScopeDrawer();
     loadRecentItems();
     loadFavoriteEmotes();
     loadSavedSortMode();
