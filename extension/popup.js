@@ -305,10 +305,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const recentGrid = document.getElementById('recent-grid');
   const recentEmptyState = document.getElementById('recent-empty-state');
   const recentCount = document.getElementById('recent-count');
+  const recentLoadMore = document.getElementById('recent-load-more');
+  const recentLoadMoreBtn = document.getElementById('recent-load-more-btn');
 
   // Constants
   const ITEMS_PER_PAGE = 30;
-  const RECENT_ITEMS_LIMIT = 60;
+  const RECENT_ITEMS_LIMIT = 150;
+  const RECENT_ITEMS_INITIAL_RENDER = 48;
+  const RECENT_ITEMS_PAGE_SIZE = 48;
 
   // State variables
   let allEmotes = {};
@@ -332,6 +336,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let downloadCompletionHandled = false;
   let discordImportCompletionHandled = false;
   let recentItems = [];
+  let visibleRecentItemCount = RECENT_ITEMS_INITIAL_RENDER;
   let favoriteEmotes = new Set();
   let emoteLibraryLoaded = false;
   let emoteLibraryLoadingPromise = null;
@@ -1108,6 +1113,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ...recentItems.filter((entry) => entry?.dedupeKey !== dedupeKey)
     ].slice(0, RECENT_ITEMS_LIMIT);
 
+    visibleRecentItemCount = Math.max(visibleRecentItemCount, RECENT_ITEMS_INITIAL_RENDER);
     await saveRecentItems();
     renderRecentGrid();
   }
@@ -1126,15 +1132,21 @@ document.addEventListener('DOMContentLoaded', () => {
     recentGrid.innerHTML = '';
     const total = recentItems.length;
     recentCount.textContent = `${total} item${total === 1 ? '' : 's'}`;
+    visibleRecentItemCount = Math.min(
+      Math.max(visibleRecentItemCount || RECENT_ITEMS_INITIAL_RENDER, RECENT_ITEMS_INITIAL_RENDER),
+      total
+    );
 
     if (total === 0) {
       recentEmptyState.classList.remove('hidden');
+      recentLoadMore?.classList.add('hidden');
       return;
     }
 
+    visibleRecentItemCount = Math.min(visibleRecentItemCount, total);
     recentEmptyState.classList.add('hidden');
 
-    recentItems.forEach((item) => {
+    recentItems.slice(0, visibleRecentItemCount).forEach((item) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'recent-item';
@@ -1178,7 +1190,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
       recentGrid.appendChild(button);
     });
+
+    const remaining = total - visibleRecentItemCount;
+    if (recentLoadMore && recentLoadMoreBtn) {
+      recentLoadMore.classList.toggle('hidden', remaining <= 0);
+      recentLoadMoreBtn.innerHTML = `
+        <i class="fas fa-chevron-down"></i>
+        <span>Load ${Math.min(RECENT_ITEMS_PAGE_SIZE, remaining)} More</span>
+      `;
+    }
   }
+
+  recentLoadMoreBtn?.addEventListener('click', () => {
+    visibleRecentItemCount = Math.min(
+      recentItems.length,
+      visibleRecentItemCount + RECENT_ITEMS_PAGE_SIZE
+    );
+    renderRecentGrid();
+  });
 
   // Notification function
   function showToast(message, type = 'info') {
