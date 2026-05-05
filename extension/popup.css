@@ -1323,6 +1323,10 @@ select:focus {
   overflow: visible;
 }
 
+.channel-row + .channel-row {
+  margin-top: 8px;
+}
+
 .channel-item {
   justify-content: space-between;
   gap: 12px;
@@ -1334,9 +1338,34 @@ select:focus {
 }
 
 .channel-info .channel-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
+}
+
+.channel-type-pill,
+.set-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(111, 220, 255, 0.12);
+  border: 1px solid rgba(111, 220, 255, 0.22);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.set-pill.downloaded {
+  color: var(--green);
+  border-color: rgba(57, 217, 138, 0.24);
+  background: rgba(57, 217, 138, 0.1);
 }
 
 .channel-stats {
@@ -1346,14 +1375,170 @@ select:focus {
 }
 
 .channel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex-shrink: 0;
 }
 
-.delete-channel-btn {
+.delete-channel-btn,
+.view-channel-sets-btn,
+.download-set-btn {
   min-height: 32px;
   border-radius: var(--radius-sm);
   padding: 0 10px;
   font-size: 11px;
+}
+
+.view-channel-sets-btn {
+  background: rgba(111, 220, 255, 0.1);
+  color: var(--accent);
+  border: 1px solid rgba(111, 220, 255, 0.22);
+}
+
+.channel-set-panel {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid rgba(111, 220, 255, 0.16);
+  border-radius: var(--radius-md);
+  background:
+    radial-gradient(circle at 12% 0%, rgba(111, 220, 255, 0.12), transparent 34%),
+    rgba(5, 14, 27, 0.55);
+}
+
+.channel-set-panel.hidden {
+  display: none;
+}
+
+.channel-set-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.channel-set-header strong {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.channel-set-header a {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.channel-set-kicker {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.channel-set-list {
+  display: grid;
+  gap: 8px;
+}
+
+.channel-set-card {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 62px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(10, 23, 42, 0.76);
+}
+
+.channel-set-card.active-set {
+  border-color: rgba(111, 220, 255, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(111, 220, 255, 0.08);
+}
+
+.set-preview {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 2px;
+  width: 46px;
+  height: 46px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+}
+
+.set-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.set-preview-empty {
+  grid-column: 1 / -1;
+  display: grid;
+  place-items: center;
+  color: var(--text-tertiary);
+}
+
+.set-meta {
+  min-width: 0;
+}
+
+.set-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.set-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.set-details {
+  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  color: var(--text-tertiary);
+}
+
+.download-set-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(111, 220, 255, 0.26);
+  background: linear-gradient(135deg, rgba(111, 220, 255, 0.18), rgba(85, 152, 255, 0.14));
+  color: var(--text-primary);
+  font-weight: 800;
+}
+
+.channel-set-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.channel-set-state.error {
+  color: var(--red);
 }
 
 /* ── Storage ────────────────────────────────── */

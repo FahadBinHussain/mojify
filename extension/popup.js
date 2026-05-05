@@ -334,6 +334,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let emoteLibraryLoadingPromise = null;
   let emoteGridDirty = true;
   let settingsPanelsDirty = true;
+  let expandedChannelSetsKey = '';
+  const channelEmoteSetCache = new Map();
   const emoteObjectUrlCache = new Map();
   const emoteBlobHydrationPromises = new Map();
 
@@ -469,6 +471,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function getChannelSourceType(channel) {
     return channel?.sourceType || 'twitch';
+  }
+
+  function getChannelDisplayName(channel) {
+    return channel?.username || channel?.baseUsername || channel?.id || 'Unknown channel';
+  }
+
+  function getChannelSetsLookupKey(channel) {
+    return normalizeChannelIdentifier(
+      channel?.sevenTvUserId ||
+      channel?.activeSetId ||
+      channel?.emoteSetId ||
+      channel?.platformChannelId ||
+      channel?.id
+    );
+  }
+
+  function is7TVSetChannel(channel) {
+    return Boolean(channel?.isEmoteSet || String(channel?.id || '').startsWith('7tv-set:'));
   }
 
   function isLocalLibraryTab(tabName = activeMediaTab) {
@@ -2931,6 +2951,176 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function sendBackgroundMessage(message) {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+
+        resolve(response);
+      });
+    });
+  }
+
+  function renderSetPreviewImages(set) {
+    const previews = (set?.previewImages || []).slice(0, 4);
+    if (previews.length === 0) {
+      return '<span class="set-preview-empty"><i class="fas fa-layer-group"></i></span>';
+    }
+
+    return previews
+      .map((url) => `<img src="${escapeHtml(url)}" alt="" loading="lazy">`)
+      .join('');
+  }
+
+  function renderChannelSetRows(panel, channel, sets) {
+    const activeSetId = channel.activeSetId || channel.emoteSetId || '';
+    const downloadedSetIds = new Set(
+      (channels || [])
+        .filter((candidate) => normalizeChannelIdentifier(candidate.platformChannelId || candidate.parentChannelId) === normalizeChannelIdentifier(channel.id || channel.platformChannelId))
+        .map((candidate) => candidate.emoteSetId)
+        .filter(Boolean)
+    );
+
+    if (activeSetId) downloadedSetIds.add(activeSetId);
+
+    panel.innerHTML = `
+      <div class="channel-set-header">
+        <div>
+          <span class="channel-set-kicker">7TV Emote Sets</span>
+          <strong>${escapeHtml(getChannelDisplayName(channel))}</strong>
+        </div>
+        <a href="https://7tv.app/users/${escapeHtml(channel.sevenTvUserId || activeSetId)}/emote-sets" target="_blank" rel="noreferrer">Open 7TV</a>
+      </div>
+      <div class="channel-set-list">
+        ${sets.map((set) => {
+          const isActive = set.id === activeSetId || set.isActive;
+          const isDownloaded = downloadedSetIds.has(set.id);
+          const buttonText = isDownloaded ? 'Refresh' : 'Download';
+          return `
+            <div class="channel-set-card ${isActive ? 'active-set' : ''}">
+              <div class="set-preview">${renderSetPreviewImages(set)}</div>
+              <div class="set-meta">
+                <div class="set-title-row">
+                  <span class="set-name">${escapeHtml(set.name)}</span>
+                  ${isActive ? '<span class="set-pill">Active</span>' : ''}
+                  ${!isActive && isDownloaded ? '<span class="set-pill downloaded">Saved</span>' : ''}
+                </div>
+                <div class="set-details">${Number(set.totalCount || 0)} emotes • ${escapeHtml(set.kind || 'NORMAL')} • cap ${Number(set.capacity || 0)}</div>
+              </div>
+              <button class="download-set-btn" type="button"
+                data-set-id="${escapeHtml(set.id)}"
+                data-set-name="${escapeHtml(set.name)}">
+                <i class="fas fa-cloud-arrow-down"></i>
+                <span>${buttonText}</span>
+              </button>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+
+    panel.querySelectorAll('.download-set-btn').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await downloadChannelEmoteSet(channel, {
+          id: button.dataset.setId,
+          name: button.dataset.setName
+        }, button);
+      });
+    });
+  }
+
+  async function loadChannelEmoteSets(channel, panel, toggleButton) {
+    const lookupKey = getChannelSetsLookupKey(channel);
+    if (!lookupKey) {
+      panel.innerHTML = '<div class="channel-set-state error">No 7TV user ID saved for this channel yet. Refresh this channel once, then try again.</div>';
+      return;
+    }
+
+    panel.innerHTML = '<div class="channel-set-state"><i class="fas fa-spinner fa-spin"></i> Loading 7TV emote sets...</div>';
+    toggleButton.disabled = true;
+
+    try {
+      let response = channelEmoteSetCache.get(lookupKey);
+      if (!response) {
+        response = await sendBackgroundMessage({
+          action: 'get7TVChannelEmoteSets',
+          channelId: channel.platformChannelId || channel.id,
+          sevenTvUserId: channel.sevenTvUserId || channel.activeSetId || channel.emoteSetId,
+          activeSetId: channel.activeSetId || channel.emoteSetId
+        });
+
+        if (!response?.success) {
+          throw new Error(response?.error || 'Could not load 7TV emote sets');
+        }
+
+        channelEmoteSetCache.set(lookupKey, response);
+      }
+
+      if (!response.sets || response.sets.length === 0) {
+        panel.innerHTML = '<div class="channel-set-state">No extra emote sets found for this channel.</div>';
+        return;
+      }
+
+      renderChannelSetRows(panel, {
+        ...channel,
+        username: response.username || channel.username,
+        baseUsername: response.username || channel.baseUsername,
+        sevenTvUserId: response.sevenTvUserId || channel.sevenTvUserId,
+        activeSetId: response.activeSetId || channel.activeSetId
+      }, response.sets);
+    } catch (error) {
+      panel.innerHTML = `<div class="channel-set-state error">${escapeHtml(error.message)}</div>`;
+    } finally {
+      toggleButton.disabled = false;
+    }
+  }
+
+  async function downloadChannelEmoteSet(channel, set, button) {
+    if (!set?.id) return;
+
+    const originalHtml = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Starting</span>';
+
+    try {
+      setDownloadUiActive(`Downloading ${set.name || '7TV emote set'}...`);
+      const response = await sendBackgroundMessage({
+        action: 'download7TVEmoteSet',
+        channelId: channel.platformChannelId || channel.id,
+        setId: set.id,
+        setName: set.name,
+        username: channel.baseUsername || channel.username,
+        sevenTvUserId: channel.sevenTvUserId || channel.activeSetId || channel.emoteSetId,
+        activeSetId: channel.activeSetId || channel.emoteSetId
+      });
+
+      if (!response?.success) {
+        throw new Error(response?.error || 'Download failed');
+      }
+
+      showToast(`Downloaded ${set.name || 'emote set'}`, 'success');
+      channelEmoteSetCache.clear();
+      await loadEmotes({ renderGrid: false, refreshPanels: true });
+    } catch (error) {
+      finishDownloadFlow({ error: error.message });
+    } finally {
+      button.disabled = false;
+      button.innerHTML = originalHtml;
+    }
+  }
+
   function updateChannelManagement() {
     const renderToken = ++channelManagementRenderToken;
     const managedChannels = dedupeChannelsById(channels || []);
@@ -2951,28 +3141,64 @@ document.addEventListener('DOMContentLoaded', () => {
         const channelKey = normalizeChannelIdentifier(channel.id || channel.username);
         const emoteCount = emoteCountByChannel[channelKey] ??
           (channel.emotes ? Object.keys(channel.emotes).length : 0);
+        const isSetChannel = is7TVSetChannel(channel);
+        const canBrowseSets = getChannelSourceType(channel) === 'twitch' && !isSetChannel;
+        const setsKey = getChannelSetsLookupKey(channel);
+        const isExpanded = Boolean(setsKey && expandedChannelSetsKey === setsKey);
 
-        const channelItem = document.createElement('div');
-        channelItem.className = 'channel-item';
-        channelItem.innerHTML = `
-          <div class="channel-info">
-            <div class="channel-name">${channel.username}</div>
-            <div class="channel-stats">${emoteCount} emotes</div>
+        const channelRow = document.createElement('div');
+        channelRow.className = `channel-row ${isExpanded ? 'sets-open' : ''}`;
+        channelRow.innerHTML = `
+          <div class="channel-item">
+            <div class="channel-info">
+              <div class="channel-name">
+                ${escapeHtml(getChannelDisplayName(channel))}
+                ${isSetChannel ? '<span class="channel-type-pill">Set</span>' : ''}
+              </div>
+              <div class="channel-stats">
+                ${emoteCount} emotes
+                ${channel.emoteSetName ? ` • ${escapeHtml(channel.emoteSetName)}` : ''}
+              </div>
+            </div>
+            <div class="channel-actions">
+              ${canBrowseSets ? `
+                <button class="view-channel-sets-btn" type="button" data-channel-id="${escapeHtml(channel.id)}">
+                  <i class="fas fa-layer-group"></i> Sets
+                </button>
+              ` : ''}
+              <button class="delete-channel-btn" type="button" data-channel-id="${escapeHtml(channel.id)}">
+                <i class="fas fa-trash"></i> Delete
+              </button>
+            </div>
           </div>
-          <div class="channel-actions">
-            <button class="delete-channel-btn" data-channel-id="${channel.id}">
-              <i class="fas fa-trash"></i> Delete
-            </button>
-          </div>
+          <div class="channel-set-panel ${isExpanded ? '' : 'hidden'}"></div>
         `;
 
-        channelList.appendChild(channelItem);
+        channelList.appendChild(channelRow);
+
+        if (isExpanded && canBrowseSets) {
+          const panel = channelRow.querySelector('.channel-set-panel');
+          const toggleButton = channelRow.querySelector('.view-channel-sets-btn');
+          loadChannelEmoteSets(channel, panel, toggleButton);
+        }
       });
 
       channelList.querySelectorAll('.delete-channel-btn').forEach((btn) => {
         btn.addEventListener('click', (e) => {
           const channelId = e.target.closest('.delete-channel-btn').dataset.channelId;
           deleteChannel(channelId);
+        });
+      });
+
+      channelList.querySelectorAll('.view-channel-sets-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          const channelId = e.target.closest('.view-channel-sets-btn').dataset.channelId;
+          const channel = managedChannels.find((candidate) => normalizeChannelIdentifier(candidate.id) === normalizeChannelIdentifier(channelId));
+          if (!channel) return;
+
+          const lookupKey = getChannelSetsLookupKey(channel);
+          expandedChannelSetsKey = expandedChannelSetsKey === lookupKey ? '' : lookupKey;
+          updateChannelManagement();
         });
       });
     } else {
@@ -3002,16 +3228,30 @@ document.addEventListener('DOMContentLoaded', () => {
       const targetId = normalizeChannelIdentifier(channelId);
       const targetChannel = channels.find(c => normalizeChannelIdentifier(c.id) === targetId);
       if (!targetChannel) return;
-      const removedEmoteKeys = Object.keys(targetChannel.emotes || {});
+      const targetChannels = channels.filter((channel) => {
+        const id = normalizeChannelIdentifier(channel.id);
+        const parentId = normalizeChannelIdentifier(channel.parentChannelId || channel.platformChannelId);
+        return id === targetId || (!is7TVSetChannel(targetChannel) && parentId === targetId);
+      });
+      const removedEmoteKeys = Array.from(new Set(
+        targetChannels.flatMap((channel) => Object.keys(channel.emotes || {}))
+      ));
 
-      // Remove emotes from global mappings
-      removedEmoteKeys.forEach(emoteKey => {
+      // Remove all matching channel entries (in case of previous duplicates)
+      const targetChannelIds = new Set(targetChannels.map((channel) => normalizeChannelIdentifier(channel.id)));
+      const cleanedChannels = channels.filter(c => !targetChannelIds.has(normalizeChannelIdentifier(c.id)));
+      const stillReferencedKeys = new Set();
+      cleanedChannels.forEach((channel) => {
+        Object.keys(channel.emotes || {}).forEach((key) => stillReferencedKeys.add(key));
+      });
+      const emoteKeysSafeToDelete = removedEmoteKeys.filter((key) => !stillReferencedKeys.has(key));
+
+      // Remove emotes from global mappings only if no remaining channel/set uses them.
+      emoteKeysSafeToDelete.forEach(emoteKey => {
         delete emoteMapping[emoteKey];
         delete emoteImageData[emoteKey];
       });
 
-      // Remove all matching channel entries (in case of previous duplicates)
-      const cleanedChannels = channels.filter(c => normalizeChannelIdentifier(c.id) !== targetId);
       const targetUsername = normalizeChannelIdentifier(targetChannel.username);
       const cleanedChannelIds = channelIds.filter((id) => {
         const normalized = normalizeChannelIdentifier(id);
@@ -3026,8 +3266,8 @@ document.addEventListener('DOMContentLoaded', () => {
         emoteImageData
       }, async () => {
         try {
-          if (removedEmoteKeys.length > 0) {
-            await chrome.runtime.sendMessage({ action: 'deleteStoredEmotes', keys: removedEmoteKeys });
+          if (emoteKeysSafeToDelete.length > 0) {
+            await chrome.runtime.sendMessage({ action: 'deleteStoredEmotes', keys: emoteKeysSafeToDelete });
           }
         } catch (error) {
           console.warn('[Mojify] Failed to delete stored emote blobs:', error);
