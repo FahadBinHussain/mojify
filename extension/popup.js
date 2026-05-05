@@ -686,11 +686,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
     channelFilterBar.style.display = isLocalLibraryTab() ? 'flex' : 'none';
 
-    const createChip = (label, value) => {
+    const visibleChannelGroups = [];
+    const groupByParent = new Map();
+
+    visibleChannels.forEach((channel) => {
+      if (!is7TVSetChannel(channel)) {
+        const parentKey = normalizeChannelIdentifier(channel.id || channel.platformChannelId || channel.username);
+        const group = {
+          parent: channel,
+          children: []
+        };
+        visibleChannelGroups.push(group);
+        groupByParent.set(parentKey, group);
+        return;
+      }
+
+      const parentKey = normalizeChannelIdentifier(channel.parentChannelId || channel.platformChannelId);
+      let group = groupByParent.get(parentKey);
+      if (!group) {
+        group = {
+          parent: null,
+          children: []
+        };
+        visibleChannelGroups.push(group);
+        groupByParent.set(parentKey, group);
+      }
+
+      group.children.push(channel);
+    });
+
+    const createChip = (label, value, extraClass = '', title = '') => {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = `channel-filter-chip ${activeChannelFilter === value ? 'active' : ''}`;
+      button.className = `channel-filter-chip ${extraClass} ${activeChannelFilter === value ? 'active' : ''}`.trim();
       button.textContent = label;
+      if (title) {
+        button.title = title;
+      }
       button.addEventListener('click', () => {
         activeChannelFilter = value;
         renderChannelFilterBar();
@@ -699,9 +731,30 @@ document.addEventListener('DOMContentLoaded', () => {
       return button;
     };
 
-    channelFilterBar.appendChild(createChip('All', 'all'));
-    visibleChannels.forEach((channel) => {
-      channelFilterBar.appendChild(createChip(channel.username, channel.id || channel.username));
+    channelFilterBar.appendChild(createChip('All', 'all', 'all-chip'));
+    visibleChannelGroups.forEach((group) => {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'channel-filter-group';
+
+      if (group.parent) {
+        wrapper.appendChild(createChip(
+          group.parent.baseUsername || group.parent.username,
+          group.parent.id || group.parent.username,
+          'parent-chip',
+          'Main active channel set'
+        ));
+      }
+
+      group.children.forEach((child) => {
+        wrapper.appendChild(createChip(
+          child.emoteSetName || child.username,
+          child.id || child.username,
+          'child-chip',
+          `${child.baseUsername || group.parent?.username || '7TV'} emote set`
+        ));
+      });
+
+      channelFilterBar.appendChild(wrapper);
     });
   }
 

@@ -501,10 +501,11 @@ img {
 
 .channel-filter-bar {
   display: flex;
-  flex-wrap: nowrap;
-  gap: 6px;
-  margin-top: 8px;
-  padding-bottom: 2px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 2px 0 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -524,6 +525,55 @@ img {
   font-weight: 600;
   white-space: nowrap;
   transition: all var(--transition);
+}
+
+.channel-filter-group {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  max-width: 100%;
+}
+
+.channel-filter-group .channel-filter-chip {
+  position: relative;
+}
+
+.channel-filter-group .parent-chip {
+  z-index: 2;
+  font-weight: 800;
+}
+
+.channel-filter-group .child-chip {
+  margin-left: 18px;
+  padding-left: 21px;
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-color: rgba(56, 189, 248, 0.16);
+  background: rgba(56, 189, 248, 0.07);
+}
+
+.channel-filter-group .child-chip::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  width: 18px;
+  height: 12px;
+  border-left: 1px solid rgba(56, 189, 248, 0.42);
+  border-bottom: 1px solid rgba(56, 189, 248, 0.42);
+  border-bottom-left-radius: 7px;
+  transform: translateY(-9px);
+  background: transparent;
+}
+
+.channel-filter-group .child-chip + .child-chip {
+  margin-left: 18px;
+}
+
+.channel-filter-group .child-chip.active::before {
+  border-color: rgba(56, 189, 248, 0.85);
 }
 
 .channel-filter-chip:hover {
