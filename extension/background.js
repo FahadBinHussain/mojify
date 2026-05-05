@@ -3507,19 +3507,78 @@ async function handleChannelIdsChanged(oldChannelIds = [], newChannelIds = []) {
   }
 }
 
-chrome.runtime.onInstalled.addListener((details) => {
+function setupContextMenus() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
-      id: 'downloadEmotes',
-      title: 'Download Emotes',
+      id: 'importDiscordServer',
+      title: 'Import Discord Server',
+      contexts: ['action']
+    });
+
+    chrome.contextMenus.create({
+      id: 'refreshTwitchEmotes',
+      title: 'Refresh Twitch/7TV Emotes',
       contexts: ['action']
     });
   });
+}
+
+chrome.runtime.onInstalled.addListener((details) => {
+  setupContextMenus();
 });
 
-chrome.contextMenus.onClicked.addListener((info) => {
-  if (info.menuItemId === 'downloadEmotes') {
+chrome.runtime.onStartup.addListener(() => {
+  setupContextMenus();
+});
+
+async function getContextMenuTargetTab(tab) {
+  if (tab?.id) return tab;
+
+  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tabs[0] || null;
+}
+
+async function importDiscordServerFromContextMenu(tab) {
+  const targetTab = await getContextMenuTargetTab(tab);
+  if (!targetTab?.id || !/discord(app)?\.com\/channels\//.test(targetTab.url || '')) {
+    sendRuntimeMessage({
+      type: 'showToast',
+      message: 'Open a Discord server tab before importing',
+      toastType: 'error'
+    });
+    return;
+  }
+
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: '#5865F2' });
+    await chrome.action.setBadgeText({ text: 'IMP' });
+    const result = await importDiscordServerEmojis(targetTab.id);
+    sendRuntimeMessage({
+      type: 'showToast',
+      message: result?.importedCount
+        ? `Imported ${result.importedCount} Discord item${result.importedCount === 1 ? '' : 's'}`
+        : 'Discord import completed',
+      toastType: 'success'
+    });
+  } catch (error) {
+    sendRuntimeMessage({
+      type: 'showToast',
+      message: error?.message || 'Discord import failed',
+      toastType: 'error'
+    });
+  } finally {
+    await chrome.action.setBadgeText({ text: '' });
+  }
+}
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  if (info.menuItemId === 'refreshTwitchEmotes') {
     downloadEmotes();
+    return;
+  }
+
+  if (info.menuItemId === 'importDiscordServer') {
+    importDiscordServerFromContextMenu(tab);
   }
 });
 
