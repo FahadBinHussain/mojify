@@ -2986,9 +2986,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderChannelSetRows(panel, channel, sets) {
     const activeSetId = channel.activeSetId || channel.emoteSetId || '';
+    const parentChannelKey = normalizeChannelIdentifier(channel.id || channel.platformChannelId);
     const downloadedSetIds = new Set(
       (channels || [])
-        .filter((candidate) => normalizeChannelIdentifier(candidate.platformChannelId || candidate.parentChannelId) === normalizeChannelIdentifier(channel.id || channel.platformChannelId))
+        .filter((candidate) => {
+          const candidateParentKey = normalizeChannelIdentifier(candidate.platformChannelId || candidate.parentChannelId);
+          const candidateIdKey = normalizeChannelIdentifier(candidate.id);
+          return candidateParentKey === parentChannelKey || candidateIdKey === parentChannelKey;
+        })
         .map((candidate) => candidate.emoteSetId)
         .filter(Boolean)
     );
@@ -3001,7 +3006,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <span class="channel-set-kicker">7TV Emote Sets</span>
           <strong>${escapeHtml(getChannelDisplayName(channel))}</strong>
         </div>
-        <a href="https://7tv.app/users/${escapeHtml(channel.sevenTvUserId || activeSetId)}/emote-sets" target="_blank" rel="noreferrer">Open 7TV</a>
+        <a href="https://7tv.app/users/${escapeHtml(channel.sevenTvUserId || activeSetId)}/emote-sets" target="_blank" rel="noreferrer">Open on 7TV</a>
       </div>
       <div class="channel-set-list">
         ${sets.map((set) => {
@@ -3017,7 +3022,7 @@ document.addEventListener('DOMContentLoaded', () => {
                   ${isActive ? '<span class="set-pill">Active</span>' : ''}
                   ${!isActive && isDownloaded ? '<span class="set-pill downloaded">Saved</span>' : ''}
                 </div>
-                <div class="set-details">${Number(set.totalCount || 0)} emotes • ${escapeHtml(set.kind || 'NORMAL')} • cap ${Number(set.capacity || 0)}</div>
+                <div class="set-details">${Number(set.totalCount || 0)} emotes | ${escapeHtml(set.kind || 'NORMAL')} | cap ${Number(set.capacity || 0)}</div>
               </div>
               <button class="download-set-btn" type="button"
                 data-set-id="${escapeHtml(set.id)}"
@@ -3123,7 +3128,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateChannelManagement() {
     const renderToken = ++channelManagementRenderToken;
-    const managedChannels = dedupeChannelsById(channels || []);
+    const managedChannels = dedupeChannelsById(channels || []).filter((channel) => !is7TVSetChannel(channel));
     if (renderToken !== channelManagementRenderToken) return;
 
     if (managedChannels.length > 0) {
@@ -3157,17 +3162,17 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
               <div class="channel-stats">
                 ${emoteCount} emotes
-                ${channel.emoteSetName ? ` • ${escapeHtml(channel.emoteSetName)}` : ''}
+                ${channel.emoteSetName ? ` | Active set: ${escapeHtml(channel.emoteSetName)}` : ''}
               </div>
             </div>
             <div class="channel-actions">
               ${canBrowseSets ? `
                 <button class="view-channel-sets-btn" type="button" data-channel-id="${escapeHtml(channel.id)}">
-                  <i class="fas fa-layer-group"></i> Sets
+                  <i class="fas fa-layer-group"></i> Browse Sets
                 </button>
               ` : ''}
               <button class="delete-channel-btn" type="button" data-channel-id="${escapeHtml(channel.id)}">
-                <i class="fas fa-trash"></i> Delete
+                <i class="fas fa-trash"></i> Remove
               </button>
             </div>
           </div>
