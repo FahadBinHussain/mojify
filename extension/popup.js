@@ -2622,7 +2622,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const section = document.createElement('div');
-    section.className = 'channel-section';
+    section.className = 'channel-section giphy-section';
     section.innerHTML = `
       <div class="channel-header">
         <div class="channel-header-content">
@@ -2663,6 +2663,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     section.appendChild(grid);
+
+    const attribution = document.createElement('div');
+    attribution.className = 'giphy-attribution';
+    attribution.innerHTML = `<div class="giphy-attribution-pill"><svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5 7v10h6.5a4.5 4.5 0 0 0 0-9H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 10h3l-3 7h4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Powered by GIPHY</span></div>`;
+    section.appendChild(attribution);
+
     emoteGrid.appendChild(section);
   }
 
