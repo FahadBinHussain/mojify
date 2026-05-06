@@ -1306,6 +1306,46 @@ button:disabled {
   text-overflow: ellipsis;
 }
 
+.giphy-section {
+  position: relative;
+}
+
+.giphy-attribution {
+  position: sticky;
+  bottom: 8px;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.giphy-attribution-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  background: linear-gradient(135deg, rgba(5, 10, 22, 0.96), rgba(11, 30, 50, 0.94));
+  border: 1px solid rgba(114, 229, 255, 0.42);
+  border-radius: var(--radius-full);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42), 0 0 18px rgba(56, 217, 255, 0.16);
+  opacity: 0.94;
+  font-size: 9.5px;
+  font-weight: 800;
+  color: #f8fcff;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 8px rgba(114, 229, 255, 0.34);
+}
+
+.giphy-attribution-pill svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  color: #72e5ff;
+  opacity: 1;
+  filter: drop-shadow(0 0 6px rgba(114, 229, 255, 0.45));
+}
+
 /* ── Load More ──────────────────────────────── */
 .load-more {
   margin-top: 4px;
