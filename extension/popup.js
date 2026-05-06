@@ -1631,6 +1631,221 @@ document.addEventListener('DOMContentLoaded', () => {
   // Function to inject into content script for emote insertion from base64
   async function insertEmoteFromBase64(base64Data, filename, trigger) {
     try {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+      const sanitizeUploadFilename = (rawName, rawTrigger, mimeType) => {
+        const extensionByMime = {
+          'image/png': 'png',
+          'image/jpeg': 'jpg',
+          'image/jpg': 'jpg',
+          'image/gif': 'gif',
+          'image/webp': 'webp',
+          'video/mp4': 'mp4'
+        };
+        const fallbackExtension = extensionByMime[String(mimeType || '').toLowerCase()] || 'png';
+        const fallbackBase = String(rawTrigger || 'mojify-emote')
+          .replace(/:/g, '')
+          .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+          .replace(/\s+/g, '_')
+          .slice(0, 48) || 'mojify-emote';
+        const cleaned = String(rawName || `${fallbackBase}.${fallbackExtension}`)
+          .replace(/:/g, '')
+          .replace(/[<>"/\\|?*\x00-\x1F]/g, '_')
+          .replace(/\s+/g, '_')
+          .slice(0, 96);
+        const withName = cleaned || `${fallbackBase}.${fallbackExtension}`;
+        return /\.[a-z0-9]{2,5}$/i.test(withName) ? withName : `${withName}.${fallbackExtension}`;
+      };
+
+      const isVisible = (element) => {
+        if (!element) return false;
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 &&
+          rect.height > 0 &&
+          style.display !== 'none' &&
+          style.visibility !== 'hidden';
+      };
+
+      const getDiscordAttachmentSignal = (fileName = '') => {
+        const lowerFileName = String(fileName || '').toLowerCase();
+        const selectors = [
+          '[class*="channelAttachmentArea"]',
+          '[class*="uploadContainer"]',
+          '[class*="upload_"]',
+          '[class*="attachment"] [class*="filename"]',
+          '[aria-label*="Remove attachment" i]',
+          '[aria-label*="Remove file" i]',
+          '[aria-label*="Cancel upload" i]'
+        ];
+
+        let visibleCount = 0;
+        selectors.forEach((selector) => {
+          document.querySelectorAll(selector).forEach((element) => {
+            if (isVisible(element)) visibleCount += 1;
+          });
+        });
+
+        const bodyText = lowerFileName && document.body?.innerText
+          ? document.body.innerText.toLowerCase()
+          : '';
+
+        return {
+          visibleCount,
+          hasFilename: Boolean(lowerFileName && bodyText.includes(lowerFileName))
+        };
+      };
+
+      const waitForDiscordAttachment = async (fileName, beforeSignal, timeoutMs = 4500) => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          const signal = getDiscordAttachmentSignal(fileName);
+          if (
+            signal.hasFilename ||
+            signal.visibleCount > (beforeSignal?.visibleCount || 0)
+          ) {
+            return true;
+          }
+          await sleep(120);
+        }
+        return false;
+      };
+
+      const findDiscordComposer = () => {
+        const selectors = [
+          '[data-slate-editor="true"][contenteditable="true"]',
+          '[role="textbox"][contenteditable="true"]',
+          '[contenteditable="true"][aria-label*="Message" i]',
+          '[contenteditable="true"]'
+        ];
+
+        for (const selector of selectors) {
+          const matches = Array.from(document.querySelectorAll(selector))
+            .filter(isVisible);
+          if (matches.length === 0) continue;
+          return matches.sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom)[0];
+        }
+
+        return document.activeElement && document.activeElement.isContentEditable
+          ? document.activeElement
+          : null;
+      };
+
+      const findDiscordFileInput = () => {
+        const inputs = Array.from(document.querySelectorAll('input[type="file"]'))
+          .filter((input) => !input.disabled);
+
+        if (inputs.length === 0) return null;
+
+        const scoreInput = (input) => {
+          const accept = String(input.accept || '').toLowerCase();
+          let score = 0;
+          if (input.multiple) score += 4;
+          if (accept.includes('image') || accept.includes('video') || accept.includes('*/*')) score += 6;
+          if (input.closest('[class*="channelTextArea"]')) score += 8;
+          if (input.closest('form')) score += 4;
+          if (input.offsetWidth > 0 || input.offsetHeight > 0) score += 2;
+          return score;
+        };
+
+        return inputs.sort((a, b) => scoreInput(b) - scoreInput(a))[0];
+      };
+
+      const assignFilesToInput = (input, file) => {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+
+        input.value = '';
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files');
+        if (descriptor?.set) {
+          descriptor.set.call(input, dataTransfer.files);
+        } else {
+          input.files = dataTransfer.files;
+        }
+
+        input.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+      };
+
+      const dispatchDiscordPaste = (target, file) => {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        const event = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dataTransfer
+        });
+        return target.dispatchEvent(event);
+      };
+
+      const dispatchDiscordDrop = async (target, file) => {
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        const rect = target.getBoundingClientRect();
+        const x = Math.round(rect.left + Math.min(rect.width / 2, 80));
+        const y = Math.round(rect.top + Math.min(rect.height / 2, 24));
+
+        for (const eventType of ['dragenter', 'dragover', 'drop']) {
+          const event = new DragEvent(eventType, {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer,
+            clientX: x,
+            clientY: y,
+            screenX: x,
+            screenY: y
+          });
+          target.dispatchEvent(event);
+          await sleep(80);
+        }
+      };
+
+      const insertFileOnDiscord = async (file) => {
+        const composer = findDiscordComposer();
+        if (!composer) {
+          return { success: false, error: 'Discord message box not found' };
+        }
+
+        composer.focus();
+        if (typeof composer.click === 'function') composer.click();
+        await sleep(120);
+
+        let beforeSignal = getDiscordAttachmentSignal(file.name);
+        const fileInput = findDiscordFileInput();
+        if (fileInput) {
+          try {
+            assignFilesToInput(fileInput, file);
+            if (await waitForDiscordAttachment(file.name, beforeSignal)) {
+              return { success: true, method: 'discord-file-input' };
+            }
+          } catch (inputError) {
+            console.warn('[Mojify] Discord file input route failed:', inputError);
+          }
+        }
+
+        beforeSignal = getDiscordAttachmentSignal(file.name);
+        try {
+          dispatchDiscordPaste(composer, file);
+          if (await waitForDiscordAttachment(file.name, beforeSignal)) {
+            return { success: true, method: 'discord-paste-event' };
+          }
+        } catch (pasteError) {
+          console.warn('[Mojify] Discord paste route failed:', pasteError);
+        }
+
+        beforeSignal = getDiscordAttachmentSignal(file.name);
+        try {
+          await dispatchDiscordDrop(composer, file);
+          if (await waitForDiscordAttachment(file.name, beforeSignal)) {
+            return { success: true, method: 'discord-drop-event' };
+          }
+        } catch (dropError) {
+          console.warn('[Mojify] Discord drop route failed:', dropError);
+        }
+
+        return { success: false, error: 'Discord did not accept the media' };
+      };
+
       // Create File directly from base64 (faster - no blob conversion)
       const base64 = base64Data.split(',')[1];
       const mimeMatch = base64Data.match(/data:([^;]+)/);
@@ -1644,7 +1859,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const byteArray = new Uint8Array(byteNumbers);
 
       // Create File object directly from byteArray
-      const file = new File([byteArray], filename, { type: mimeType });
+      const safeFilename = sanitizeUploadFilename(filename, trigger, mimeType);
+      const file = new File([byteArray], safeFilename, { type: mimeType });
+
+      if (/discord(app)?\.com$/i.test(window.location.hostname)) {
+        return await insertFileOnDiscord(file);
+      }
 
       // Find input field
       const inputSelectors = [
