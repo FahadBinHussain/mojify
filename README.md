@@ -1,265 +1,183 @@
-# Mojify - Browser Extension
+# Mojify
 
-<img src="https://wakapi-qt1b.onrender.com/api/badge/fahad/interval:any/project:Mojify"
-     alt="Wakapi Time Tracking"
-     title="Time spent on this project">
+<p align="center">
+  <img src="extension/icons/icon128.png" alt="Mojify logo" width="96" height="96">
+</p>
 
-A powerful browser extension that brings Twitch emotes to any website with intelligent suggestions and seamless integration.
+<p align="center">
+  <strong>A universal emote deck for the web.</strong><br>
+  Search, import, cache, and insert Twitch, 7TV, Discord, and reaction media from one browser extension.
+</p>
 
-<div align="center">
-  <h2>✨ See Mojify in Action ✨</h2>
-  <table>
-    <tr>
-      <td width="50%">
-        <p><strong>Instant Emote Insertion</strong></p>
-        <img src="https://i.postimg.cc/BQdczFyK/animation.gif" alt="Mojify Smart Suggestions" width="100%">
-      </td>
-      <td width="50%">
-        <p><strong>Smart Emote Suggestions</strong></p>
-        <img src="https://i.postimg.cc/s29DdZK2/Animation.gif" alt="Mojify Emote Insertion" width="100%">
-      </td>
-    </tr>
-  </table>
-</div>
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-38d9ff?style=for-the-badge"></a>
+  <img alt="Chrome Manifest V3" src="https://img.shields.io/badge/Chrome-MV3-0f172a?style=for-the-badge&logo=googlechrome&logoColor=white">
+  <img alt="Local first" src="https://img.shields.io/badge/storage-local--first-72e5ff?style=for-the-badge">
+  <img alt="Status" src="https://img.shields.io/badge/status-active--development-1d4ed8?style=for-the-badge">
+</p>
 
-## ✨ Features
+---
 
-### 🎯 **Smart Emote Integration**
-- **Universal Emote Support**: Use Twitch emotes anywhere on the web
-- **Intelligent Minibar**: Real-time emote suggestions with modern floating UI
-- **Auto-Complete**: Type `:emote_name:` and watch it transform into the actual emote
-- **Click-to-Insert**: Select emotes from the suggestion bar with a single click
+## What Is Mojify?
 
-### 🌐 **Platform Support**
-- **Messenger** (Facebook Messenger)
-- **Discord**
-- **WhatsApp Web**
-- **Telegram Web**
-- **Facebook**
-- And more platforms being added regularly!
+Mojify is a browser extension for people who live in emotes. It builds a local reaction library from Twitch/7TV channels, Discord servers, and media providers, then makes that library available through a fast popup, a typing minibar, and platform-specific insertion adapters.
 
-### 🎨 **Modern User Experience**
-- **Glassmorphism Design**: Beautiful, modern UI with blur effects
-- **Minimal Floating Bar**: Clean emote picker that stays out of your way
-- **Responsive Suggestions**: Instant emote filtering as you type
-- **Position Memory**: Remembers minibar position per website
-- **Smooth Animations**: Elegant hover effects and transitions
+It is designed around three ideas:
 
-### ⚡ **Advanced Technology**
-- **Intelligent Caching**: Fast emote loading with IndexedDB storage
-- **Real-time Updates**: Automatic background emote syncing
-- **Progressive Downloads**: Smart batching and priority-based downloading
-- **Cross-platform File Insertion**: Advanced drag-and-drop simulation
+- **Own your reaction library.** Emotes are cached locally in IndexedDB so browsing stays fast after import.
+- **Move faster than platform pickers.** Search, recent items, favorites, provider tabs, and channel/set filters keep the right emote close.
+- **Respect the weird web.** Messenger, Discord, WhatsApp, Telegram, and Facebook all behave differently, so Mojify uses adapter-based insertion paths instead of pretending one method works everywhere.
 
-## 🚀 Quick Start
+## Highlights
 
-### Installation
+- **Twitch and 7TV imports**: Add Twitch usernames or channel IDs, resolve them, and download their active 7TV emote sets.
+- **7TV set browsing**: View available emote sets for a channel and download alternate sets into Mojify.
+- **Discord server import**: Import custom emojis and stickers from the Discord server open in your browser.
+- **Reaction media tabs**: Search Giphy, Klipy, and Pixabay when API keys are configured.
+- **Smart minibar**: Type `:emote:` on supported pages and get quick suggestions near the composer.
+- **Recent and favorites**: Keep frequently used reactions one click away.
+- **Local-first storage**: Metadata and blobs live in the browser profile, with backup and restore support.
+- **MV3 extension architecture**: Service worker, content script, popup UI, options page, and release workflow.
 
-1. **Load the Extension**:
-   - Open Chrome and go to `chrome://extensions/`
-   - Enable "Developer mode" in the top right
-   - Click "Load unpacked" and select the `extension` folder
-
-2. **Configure Channels**:
-   - Click the Mojify extension icon
-   - Go to "Settings" tab
-   - Add Twitch channel IDs (e.g., `xqc`, `forsen`, `sodapoppin`)
-   - Click "Save Channel IDs"
-
-3. **Download Emotes**:
-   - Emotes will automatically download when you save channel IDs
-   - Progress will be shown in real-time
-   - Emotes are ready to use immediately after download completes
-
-4. **Backup & Restore**:
-   - Create backups of your emote collection regularly
-   - Restore your collection on any device with the extension installed
-
-### Usage
+## Product Preview
 
 <table>
   <tr>
-    <td width="33%" valign="top">
-      <h4>📝 Method 1: Auto-Complete</h4>
-      <p>Type an emote code surrounded by colons anywhere on the web:</p>
-      <pre>Type: :kappa:<br>Result: 🐸 (Kappa emote)</pre>
-      <p><em>The text is automatically replaced with the actual emote image.</em></p>
+    <td width="50%">
+      <strong>Instant insertion</strong><br>
+      <img src="https://i.postimg.cc/BQdczFyK/animation.gif" alt="Mojify insertion preview" width="100%">
     </td>
-    <td width="33%" valign="top">
-      <h4>💡 Method 2: Smart Suggestions</h4>
-      <ol>
-        <li>Start typing <code>:emote</code> on any website</li>
-        <li>Minibar appears with matching emotes</li>
-        <li>Click any emote to insert it instantly</li>
-        <li>Partial text is automatically cleaned up</li>
-      </ol>
-    </td>
-    <td width="33%" valign="top">
-      <h4>🔍 Method 3: Extension Popup</h4>
-      <ol>
-        <li>Click the Mojify extension icon</li>
-        <li>Browse or search your emote collection</li>
-        <li>Click any emote to insert it on supported sites</li>
-        <li>Organize emotes by channel for easy access</li>
-      </ol>
+    <td width="50%">
+      <strong>Smart suggestions</strong><br>
+      <img src="https://i.postimg.cc/s29DdZK2/Animation.gif" alt="Mojify suggestion preview" width="100%">
     </td>
   </tr>
 </table>
 
-## 🔧 Technical Architecture
+## Supported Sources
 
-### Core Components
+| Source | What Mojify imports | Notes |
+| --- | --- | --- |
+| Twitch + 7TV | Channel emotes and 7TV emote sets | Usernames require Twitch credentials; numeric IDs can be used directly. |
+| Discord Web | Server custom emojis and stickers | Import works from the active Discord server tab. |
+| Giphy | Search results | Requires a Giphy API key. |
+| Klipy | Search results | Requires a Klipy API key. |
+| Pixabay | Search results | Requires a Pixabay API key. |
 
-- **Content Script** (`content.js`): Handles page interaction and emote insertion
-- **Background Service** (`background.js`): Manages downloads and storage
-- **Popup Interface** (`popup.html/js/css`): Extension configuration and browsing
-- **Manifest V3**: Modern extension architecture
+## Supported Insertion Targets
 
-### Smart Features
+| Target | Status | Notes |
+| --- | --- | --- |
+| Messenger | Supported | Uses site-specific insertion handling. |
+| Discord Web | Supported | Local media insertion and Discord imports are separate features. |
+| Facebook | Supported | Depends on composer shape. |
+| Telegram Web | Supported | Depends on composer shape. |
+| WhatsApp Web | Experimental | WhatsApp changes often and has stricter media handling. |
 
-#### **Intelligent Minibar**
-- **Real-time Filtering**: Suggests emotes as you type
-- **Position Persistence**: Remembers location per domain using localStorage
-- **Collision Detection**: Prevents text overlap with smart spacing
-- **Performance Optimized**: Efficient DOM manipulation and caching
+If a platform changes its composer, Mojify may need an adapter update. Please open a bug with the platform, browser version, and console error.
 
-#### **Advanced Download System**
-- **Incremental Updates**: Only downloads new/changed emotes
-- **Progress Tracking**: Real-time download status with detailed feedback
-- **Error Recovery**: Robust handling of network issues
-- **Batch Processing**: Intelligent grouping for optimal performance
+## Install From Source
 
-#### **Cross-Platform Insertion**
-- **Multiple Methods**: File dropping, clipboard simulation, direct injection
-- **Platform Detection**: Automatic adaptation to different websites
-- **Input Field Discovery**: Smart detection of text input areas
-- **Fallback Systems**: Multiple insertion strategies for reliability
+1. Clone or download this repository.
+2. Open Chrome or a Chromium browser.
+3. Go to `chrome://extensions/`.
+4. Enable `Developer mode`.
+5. Click `Load unpacked`.
+6. Select the `extension` directory.
 
-## 🎨 Customization
+## First Run
 
-### Minibar Appearance
-The minibar automatically adapts to each website while maintaining its minimal design:
-- Transparent background with blur effects
-- Floating emote previews with command tooltips
-- Smooth scaling and hover animations
-- Compact horizontal layout
+1. Open the Mojify extension popup.
+2. Go to `Settings`.
+3. Add Twitch usernames or numeric channel IDs.
+4. Save the list. Mojify starts downloading automatically.
+5. Open the `Emotes` tab and search or browse your local library.
 
-### Adding Custom Channels
-1. Open extension popup
-2. Navigate to Settings tab
-3. Add channel IDs (usernames) in the text area
-4. Save and refresh emotes
+For Discord imports:
 
-### Position Adjustment
-- Drag the minibar to your preferred position
-- Position is automatically saved per website
-- Reset by refreshing the page
+1. Open Discord Web in a normal browser tab.
+2. Navigate to the server you want to import.
+3. Open Mojify and switch to the Discord provider.
+4. Click `Import Open Server`.
 
-## 🔍 Debugging
+## Repository Layout
 
-### Debug Tools (Built-in)
-The extension includes comprehensive debugging tools:
-
-1. **Open Extension Popup**
-2. **Go to Settings > Debug Tools**
-3. **Available Tools**:
-   - **Find Text Field**: Locate input areas on current page
-   - **Insert Test Text**: Verify text insertion works
-   - **Analyze Page**: Get detailed page information
-   - **Test Drag & Drop**: Verify file insertion capability
-   - **Test Basic Functionality**: Overall system check
-
-### Console Logging
-Enable detailed logging by opening browser DevTools:
-```javascript
-// Check for errors in console
-console.log("Mojify debug info appears here")
-```
-
-## 🛠️ Development
-
-### Project Structure
-```
+```text
 Mojify/
-├── extension/           # Browser extension files
-│   ├── manifest.json   # Extension manifest
-│   ├── content.js      # Page interaction logic
-│   ├── background.js   # Service worker
-│   ├── popup.html      # Extension popup UI
-│   ├── popup.js        # Popup functionality
-│   ├── popup.css       # Modern styling
-│   └── icons/          # Extension icons
-├── desktop/            # Future desktop app
-├── python/             # Python utilities
+├── extension/                 # Chrome MV3 extension
+│   ├── background.js          # Service worker, imports, downloads, insertion adapters
+│   ├── content.js             # Page integration and minibar behavior
+│   ├── popup.html             # Main extension interface
+│   ├── popup.css              # Popup visual system
+│   ├── popup.js               # Popup state, search, import, and grid logic
+│   ├── options.*              # Provider key management
+│   ├── vendor/                # Small bundled browser-side libraries
+│   └── icons/                 # Extension icons
+├── web/                       # Companion Twitch lookup web app
+├── desktop/                   # Desktop experiments and Tauri prototype
+├── .github/                   # Release workflow and community templates
+├── docs/                      # Architecture and project notes
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+├── SECURITY.md
 └── README.md
 ```
 
-### Key Technologies
-- **Manifest V3**: Modern extension framework
-- **IndexedDB**: Client-side emote storage
-- **7TV API**: Twitch emote data source
-- **Advanced DOM Manipulation**: Cross-platform compatibility
-- **Modern CSS**: Glassmorphism and smooth animations
+## Development
 
-### Contributing
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly on multiple platforms
-5. Submit a pull request
+This repo is intentionally lightweight at the extension layer. Most checks can be run directly with Node syntax validation:
 
-## 🔒 Privacy & Security
+```bash
+node --check extension/background.js
+node --check extension/content.js
+node --check extension/popup.js
+node --check extension/options.js
+```
 
-- **Local Storage Only**: All emotes stored locally in your browser
-- **No Data Collection**: Extension doesn't track or store personal data
-- **Secure Downloads**: Direct connection to 7TV API only
-- **Minimal Permissions**: Only requests necessary browser permissions
+For the companion web app:
 
-## 🐛 Known Issues & Solutions
+```bash
+cd web
+pnpm install
+pnpm dev
+```
 
-### **Emotes Not Appearing**
-- Verify you've added channel IDs in settings
-- Check that "Refresh Emotes" completed successfully
-- Ensure you're on a supported platform
+## Release Artifacts
 
-### **Minibar Not Showing**
-- Make sure you're typing in a text input field
-- Verify the website is supported
-- Check browser console for errors
+The GitHub workflow in `.github/workflows/release-extension.yml` packages the `extension` directory as a ZIP and CRX artifact. It expects a `MOJIFY_EXTENSION_PEM_B64` secret for CRX signing.
 
-### **Position Not Saving**
-- Ensure localStorage is enabled in your browser
-- Try refreshing the page after repositioning
+## Privacy Model
 
-## 📝 Changelog
+- Mojify stores emote metadata, blobs, provider keys, and settings in browser-local storage.
+- Mojify does not run a tracking backend for extension usage.
+- Provider API keys are optional and stored locally through the options page.
+- Discord imports read the currently open Discord Web server context to discover server media.
+- Site insertion adapters only run in the browser context needed to place media into composers.
 
-### Latest Updates
-- ✅ **Improved Minibar**: Ultra-minimal floating design
-- ✅ **Better Messaging**: Accurate download status feedback
-- ✅ **Enhanced Performance**: Faster emote loading and insertion
-- ✅ **Position Memory**: Per-site minibar position saving
-- ✅ **Smart Cleanup**: Automatic partial text removal
-- ✅ **Modern UI**: Glassmorphism design with smooth animations
+## Contributing
 
-## 🤝 Support
+Mojify is friendly to focused contributions: bug fixes, provider import improvements, platform adapter fixes, UI polish, docs, and performance work.
 
-- **Issues**: Report bugs on GitHub Issues
-- **Feature Requests**: Submit enhancement ideas
-- **Documentation**: Check this README for detailed info
+Start with [CONTRIBUTING.md](CONTRIBUTING.md), then open an issue or pull request using the templates in `.github/`.
 
-## 📄 License
+## Security
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+Please do not publish exploit details in public issues. Read [SECURITY.md](SECURITY.md) for responsible reporting guidance.
 
-## 🙏 Acknowledgements
+## Roadmap Themes
 
-- **7TV**: For providing the emote API and data
-- **Twitch Community**: For creating amazing emotes
-- **Browser Extension APIs**: For enabling cross-platform functionality
-- **Modern Web Standards**: For making advanced features possible
+- More reliable platform-specific media insertion.
+- Better import progress and resumability.
+- Cleaner provider plug-in boundaries.
+- Stronger performance with very large local emote libraries.
+- Better docs for extension architecture and release flow.
 
----
+## License
 
-Made with ❤️ for the emote community
+Mojify is released under the [MIT License](LICENSE).
 
-**Ready to bring your favorite Twitch emotes everywhere? Install Mojify today!** 🚀
+## Acknowledgements
+
+- 7TV and the Twitch emote community for the reaction culture Mojify builds around.
+- Discord, Giphy, Klipy, and Pixabay for media ecosystems that make reaction libraries richer.
+- Browser extension APIs for making local-first user tools possible.

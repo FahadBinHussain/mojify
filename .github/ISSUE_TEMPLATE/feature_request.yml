@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest an improvement or new provider/platform support
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What pain does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What should Mojify do?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Provider/import source
+        - Platform insertion
+        - Popup UX
+        - Minibar UX
+        - Performance
+        - Backup/restore
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional, but useful if you have tried another workflow.
+  - type: textarea
+    id: context
+    attributes:
+      label: Extra context
+      description: Screenshots, links, examples, or API references.
