@@ -1,0 +1,70 @@
+name: Bug report
+description: Report something broken in Mojify
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Platform bugs are much easier to fix with exact browser, site, and media details.
+  - type: input
+    id: version
+    attributes:
+      label: Mojify version or commit
+      placeholder: "v1.0 or commit SHA"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Popup UI
+        - Minibar
+        - Twitch/7TV import
+        - Discord import
+        - Messenger insertion
+        - Discord insertion
+        - WhatsApp insertion
+        - Telegram insertion
+        - Facebook insertion
+        - Backup or restore
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser
+      placeholder: "Chrome 125, Edge 125, Brave 1.x"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Tell us exactly what you clicked or typed.
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console errors or screenshots
+      description: Include popup, service worker, and page console errors when possible. Do not paste tokens or secrets.
+      render: text
