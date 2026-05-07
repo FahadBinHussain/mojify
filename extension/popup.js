@@ -1545,61 +1545,13 @@ document.addEventListener('DOMContentLoaded', () => {
           };
 
           if (currentPlatform === 'whatsapp') {
-            if (String(payloadMimeType).startsWith('image/')) {
-              try {
-                await writeBlobToClipboard(payloadBlob);
-
-                chrome.runtime.sendMessage({
-                  type: 'whatsappDebuggerPaste',
-                  tabId: currentTab.id
-                }, (response) => {
-                  if (chrome.runtime.lastError) {
-                    console.error('[Mojify] WhatsApp debugger connection error:', chrome.runtime.lastError);
-                    handleInsertResult({ success: false, error: 'Paste route failed to start' });
-                    return;
-                  }
-
-                  handleInsertResult(response);
-                });
-                return;
-              } catch (clipboardError) {
-                console.warn('[Mojify] WhatsApp image clipboard path failed, falling back to debugger insert:', clipboardError);
-              }
-            }
-
-            if (String(payloadMimeType).startsWith('video/')) {
-              await writeBlobToClipboard(payloadBlob);
-
-              chrome.runtime.sendMessage({
-                type: 'whatsappDebuggerPaste',
-                tabId: currentTab.id
-              }, (response) => {
-                if (chrome.runtime.lastError) {
-                  console.error('[Mojify] WhatsApp debugger connection error:', chrome.runtime.lastError);
-                  handleInsertResult({ success: false, error: 'Paste route failed to start' });
-                  return;
-                }
-
-                handleInsertResult(response);
-              });
-              return;
-            }
-
-            chrome.runtime.sendMessage({
-              type: 'whatsappDebuggerInsert',
-              tabId: currentTab.id,
-              dataUrl: payloadDataUrl,
+            const response = await sendWhatsAppInternalMedia(
+              currentTab.id,
+              payloadDataUrl,
               filename,
-              mimeType: payloadMimeType
-            }, (response) => {
-              if (chrome.runtime.lastError) {
-                console.error('[Mojify] WhatsApp debugger connection error:', chrome.runtime.lastError);
-                handleInsertResult({ success: false, error: 'Debugger route failed to start' });
-                return;
-              }
-
-              handleInsertResult(response);
-            });
+              payloadMimeType
+            );
+            handleInsertResult(response);
             return;
           }
 
@@ -1626,6 +1578,150 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       })();
     });
+  }
+
+  function getExecuteScriptResult(results) {
+    return Array.isArray(results) && results[0] ? results[0].result : undefined;
+  }
+
+  async function ensureWhatsAppInternalBridge(tabId) {
+    const getBridgeStatus = async () => getExecuteScriptResult(await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => ({
+        hasWPP: Boolean(window.WPP),
+        ready: Boolean(window.WPP?.isReady || window.WPP?.isFullReady),
+        hasChatApi: Boolean(window.WPP?.chat?.sendFileMessage && window.WPP?.chat?.getActiveChat),
+        version: window.WPP?.version || null
+      })
+    }));
+
+    let status = await getBridgeStatus();
+    if (!status?.hasChatApi) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        files: ['vendor/wppconnect-wa.js']
+      });
+    }
+
+    const waitResult = getExecuteScriptResult(await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: async () => {
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          const hasChatApi = Boolean(window.WPP?.chat?.sendFileMessage && window.WPP?.chat?.getActiveChat);
+          const ready = Boolean(window.WPP?.isReady || window.WPP?.isFullReady);
+          if (hasChatApi && ready) {
+            return {
+              success: true,
+              version: window.WPP?.version || null
+            };
+          }
+          await sleep(250);
+        }
+
+        return {
+          success: false,
+          hasWPP: Boolean(window.WPP),
+          hasChatApi: Boolean(window.WPP?.chat?.sendFileMessage && window.WPP?.chat?.getActiveChat),
+          ready: Boolean(window.WPP?.isReady || window.WPP?.isFullReady),
+          version: window.WPP?.version || null
+        };
+      }
+    }));
+
+    if (!waitResult?.success) {
+      throw new Error('WhatsApp internal sender is not ready yet. Reload WhatsApp and try again.');
+    }
+
+    return waitResult;
+  }
+
+  async function sendWhatsAppInternalMedia(tabId, dataUrl, filename, mimeType = '') {
+    try {
+      await ensureWhatsAppInternalBridge(tabId);
+
+      const result = getExecuteScriptResult(await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: async (mediaDataUrl, uploadFilename, uploadMimeType) => {
+          const timeout = (promise, ms) => Promise.race([
+            promise,
+            new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('WhatsApp internal send timed out')), ms);
+            })
+          ]);
+
+          const getSerializedId = (id) => {
+            if (!id) return '';
+            if (typeof id === 'string') return id;
+            if (id._serialized) return id._serialized;
+            if (id.user && id.server) return `${id.user}@${id.server}`;
+            if (typeof id.toString === 'function') return id.toString();
+            return '';
+          };
+
+          if (!window.WPP?.chat?.sendFileMessage || !window.WPP?.chat?.getActiveChat) {
+            return {
+              success: false,
+              error: 'WA-JS chat API is unavailable'
+            };
+          }
+
+          const activeChat = window.WPP.chat.getActiveChat();
+          const chatId = getSerializedId(activeChat?.id);
+          if (!chatId) {
+            return {
+              success: false,
+              error: 'Open a WhatsApp chat first'
+            };
+          }
+
+          const normalizedMimeType = String(uploadMimeType || '').toLowerCase();
+          const mediaType = normalizedMimeType.startsWith('video/')
+            ? 'video'
+            : normalizedMimeType.startsWith('image/')
+              ? 'image'
+              : 'document';
+
+          const options = {
+            type: mediaType,
+            filename: uploadFilename || 'mojify-media',
+            mimetype: uploadMimeType || undefined,
+            waitForAck: false
+          };
+
+          if (mediaType === 'video') {
+            options.isGif = true;
+          }
+
+          const sendResult = await timeout(
+            window.WPP.chat.sendFileMessage(chatId, mediaDataUrl, options),
+            30000
+          );
+
+          return {
+            success: true,
+            method: 'wa-js-sendFileMessage',
+            chatId,
+            resultType: typeof sendResult
+          };
+        },
+        args: [dataUrl, filename, mimeType]
+      }));
+
+      return result?.success
+        ? result
+        : { success: false, error: result?.error || 'WhatsApp internal send failed' };
+    } catch (error) {
+      console.error('[Mojify] WhatsApp internal sender failed:', error);
+      return {
+        success: false,
+        error: error.message || 'WhatsApp internal sender failed'
+      };
+    }
   }
 
   // Function to inject into content script for emote insertion from base64
@@ -2405,19 +2501,6 @@ document.addEventListener('DOMContentLoaded', () => {
     };
   }
 
-  async function writeBlobToClipboard(blob) {
-    if (!(navigator.clipboard && window.ClipboardItem)) {
-      throw new Error('Clipboard file copy is not supported in this browser');
-    }
-
-    const mimeType = blob.type || 'application/octet-stream';
-    await navigator.clipboard.write([
-      new ClipboardItem({
-        [mimeType]: blob
-      })
-    ]);
-  }
-
   function initMediaTabs() {
     updateSortToolbarVisibility();
     mediaTabButtons.forEach((button) => {
@@ -2837,70 +2920,18 @@ document.addEventListener('DOMContentLoaded', () => {
             outputBlob = converted.blob;
           }
 
-          if (String(outputMimeType).startsWith('image/')) {
-            try {
-              await writeBlobToClipboard(outputBlob);
+          const insertResult = await sendWhatsAppInternalMedia(
+            currentTab.id,
+            base64Data,
+            outputFilename,
+            outputMimeType
+          );
 
-              chrome.runtime.sendMessage({
-                type: 'whatsappDebuggerPaste',
-                tabId: currentTab.id
-              }, (response) => {
-                if (chrome.runtime.lastError) {
-                  showToast('Paste route failed to start', 'error');
-                  return;
-                }
-
-                if (response?.success) {
-                  showToast('Media pasted successfully', 'success');
-                } else {
-                  showToast(response?.error || 'Could not paste media', 'error');
-                }
-              });
-              return;
-            } catch (clipboardError) {
-              console.warn('[Mojify] WhatsApp image clipboard path failed, falling back to debugger insert:', clipboardError);
-            }
+          if (insertResult?.success) {
+            showToast('Media sent through WhatsApp internal sender', 'success');
+          } else {
+            showToast(insertResult?.error || 'Could not send media on WhatsApp', 'error');
           }
-
-          if (String(outputMimeType).startsWith('video/')) {
-            await writeBlobToClipboard(outputBlob);
-
-            chrome.runtime.sendMessage({
-              type: 'whatsappDebuggerPaste',
-              tabId: currentTab.id
-            }, (response) => {
-              if (chrome.runtime.lastError) {
-                showToast('Paste route failed to start', 'error');
-                return;
-              }
-
-              if (response?.success) {
-                showToast('Media pasted successfully', 'success');
-              } else {
-                showToast(response?.error || 'Could not paste media', 'error');
-              }
-            });
-            return;
-          }
-
-          chrome.runtime.sendMessage({
-            type: 'whatsappDebuggerInsert',
-            tabId: currentTab.id,
-            dataUrl: base64Data,
-            filename: outputFilename,
-            mimeType: outputMimeType
-          }, (response) => {
-            if (chrome.runtime.lastError) {
-              showToast('Debugger route failed to start', 'error');
-              return;
-            }
-
-            if (response?.success) {
-              showToast('Media inserted successfully', 'success');
-            } else {
-              showToast(response?.error || 'Could not insert media', 'error');
-            }
-          });
           return;
         }
 
