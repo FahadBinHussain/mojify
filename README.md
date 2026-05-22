@@ -181,3 +181,9 @@ Mojify is released under the [MIT License](LICENSE).
 - 7TV and the Twitch emote community for the reaction culture Mojify builds around.
 - Discord, Giphy, Klipy, and Pixabay for media ecosystems that make reaction libraries richer.
 - Browser extension APIs for making local-first user tools possible.
+
+## Contributors
+
+<a href="https://github.com/FahadBinHussain/mojify/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=FahadBinHussain/mojify" alt="Contributors" />
+</a>
