@@ -64,6 +64,33 @@ It is designed around three ideas:
 | Klipy | Search results | Requires a Klipy API key. |
 | Pixabay | Search results | Requires a Pixabay API key. |
 
+## Comparison
+
+`✅` means the tool is built around that capability. `partial` means it has a related feature, but
+not the same workflow or depth. `-` means it is not the point of that tool.
+
+| Capability | Mojify | [7TV](https://7tv.app/) | [BetterTTV](https://betterttv.com/) | [FrankerFaceZ](https://www.frankerfacez.com/) | Discord built-in emoji/stickers | Giphy/Tenor-style pickers |
+| --- | --- | --- | --- | --- | --- | --- |
+| Twitch/7TV emote import into a personal library | ✅ | partial | partial | partial | - | - |
+| Twitch/YouTube/Kick chat rendering and channel emote management | - | ✅ | ✅ | ✅ | - | - |
+| Discord server emoji/sticker import | ✅ | - | - | - | ✅ | - |
+| Local-first cache in the browser profile | ✅ | partial | partial | partial | partial | partial |
+| Search, recents, favorites, and provider tabs | ✅ | ✅ | ✅ | ✅ | partial | ✅ |
+| Giphy/Klipy/Pixabay reaction search | ✅ | - | - | - | partial | ✅ |
+| Insert reactions into Messenger, Facebook, Telegram, Discord, and WhatsApp Web | partial | - | - | - | partial | partial |
+| Adapter-based insertion for weird composers | ✅ | - | - | - | - | - |
+| Backup/restore of personal reaction library | ✅ | partial | partial | partial | partial | - |
+| Chat moderation and platform customization | - | partial | ✅ | ✅ | ✅ | - |
+
+The mature emote extensions are better at their home turf: rendering and managing Twitch-style
+chat emotes. Discord's own picker is also better inside Discord, especially for Nitro and server
+permissions. Mojify is aimed at a different workflow: collect reaction media once, keep it local,
+and use adapter-specific insertion on the messy social web.
+
+The biggest gaps are reliable WhatsApp media insertion, channel-owner management, Twitch chat
+rendering, and import progress/resume polish. Those are worth treating as real backlog items,
+not pretending the table is already won.
+
 ## Supported Insertion Targets
 
 | Target | Status | Notes |
