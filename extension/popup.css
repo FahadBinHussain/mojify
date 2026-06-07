@@ -1495,6 +1495,96 @@ button:disabled {
   line-height: 1.5;
 }
 
+.setting-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  margin-bottom: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: rgba(17, 31, 51, 0.72);
+  color: var(--text-primary);
+  cursor: pointer;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.setting-toggle-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.setting-toggle-copy strong {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+}
+
+.setting-toggle-copy span {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.45;
+  color: var(--text-tertiary);
+}
+
+.setting-toggle-copy code {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.setting-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 26px;
+}
+
+.setting-switch input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.setting-switch-track {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
+}
+
+.setting-switch-track::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  transition: transform var(--transition), background var(--transition);
+}
+
+.setting-switch input:checked + .setting-switch-track {
+  border-color: rgba(56, 189, 248, 0.52);
+  background: rgba(56, 189, 248, 0.18);
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.1);
+}
+
+.setting-switch input:checked + .setting-switch-track::after {
+  transform: translateX(18px);
+  background: var(--accent);
+}
+
 .form-group {
   margin-top: 12px;
 }
