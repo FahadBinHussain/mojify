@@ -74,6 +74,64 @@ img {
   max-width: 100%;
 }
 
+.fas,
+.fab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  min-width: 1em;
+  height: 1em;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 1em;
+  font-style: normal;
+  line-height: 1;
+}
+
+.fas::before,
+.fab::before {
+  content: "•";
+}
+
+.fa-arrow-down-short-wide::before { content: "↧"; }
+.fa-bolt::before { content: "⚡"; }
+.fa-check::before { content: "✓"; }
+.fa-chevron-down::before { content: "⌄"; }
+.fa-clock::before,
+.fa-clock-rotate-left::before { content: "↺"; }
+.fa-cloud-arrow-down::before,
+.fa-download::before { content: "↓"; }
+.fa-code::before { content: "<>"; }
+.fa-cog::before { content: "⚙"; }
+.fa-discord::before { content: "◈"; }
+.fa-exchange-alt::before { content: "⇄"; }
+.fa-exclamation-triangle::before { content: "⚠"; }
+.fa-font::before { content: "A"; }
+.fa-ghost::before { content: "○"; }
+.fa-grin::before { content: "☺"; }
+.fa-images::before { content: "▧"; }
+.fa-key::before { content: "⚿"; }
+.fa-layer-group::before { content: "▤"; }
+.fa-save::before { content: "▣"; }
+.fa-search::before { content: "⌕"; }
+.fa-shield-alt::before { content: "◇"; }
+.fa-spinner::before,
+.fa-sync-alt::before { content: "↻"; }
+.fa-star::before { content: "★"; }
+.fa-trash::before { content: "×"; }
+.fa-upload::before { content: "↑"; }
+.fa-vial::before { content: "◌"; }
+
+.fa-spin {
+  animation: mojify-icon-spin 1s linear infinite;
+}
+
+@keyframes mojify-icon-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .app-container {
   position: relative;
   display: flex;
