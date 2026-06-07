@@ -90,37 +90,37 @@ img {
 
 .fas::before,
 .fab::before {
-  content: "•";
+  content: "\2022";
 }
 
-.fa-arrow-down-short-wide::before { content: "↧"; }
-.fa-bolt::before { content: "⚡"; }
-.fa-check::before { content: "✓"; }
-.fa-chevron-down::before { content: "⌄"; }
+.fa-arrow-down-short-wide::before { content: "\21e7"; }
+.fa-bolt::before { content: "\26a1"; }
+.fa-check::before { content: "\2713"; }
+.fa-chevron-down::before { content: "\2304"; }
 .fa-clock::before,
-.fa-clock-rotate-left::before { content: "↺"; }
+.fa-clock-rotate-left::before { content: "\21bb"; }
 .fa-cloud-arrow-down::before,
-.fa-download::before { content: "↓"; }
+.fa-download::before { content: "\2193"; }
 .fa-code::before { content: "<>"; }
-.fa-cog::before { content: "⚙"; }
-.fa-discord::before { content: "◈"; }
-.fa-exchange-alt::before { content: "⇄"; }
-.fa-exclamation-triangle::before { content: "⚠"; }
+.fa-cog::before { content: "\2699"; }
+.fa-discord::before { content: "\25c8"; }
+.fa-exchange-alt::before { content: "\21c4"; }
+.fa-exclamation-triangle::before { content: "\26a0"; }
 .fa-font::before { content: "A"; }
-.fa-ghost::before { content: "○"; }
-.fa-grin::before { content: "☺"; }
-.fa-images::before { content: "▧"; }
-.fa-key::before { content: "⚿"; }
-.fa-layer-group::before { content: "▤"; }
-.fa-save::before { content: "▣"; }
-.fa-search::before { content: "⌕"; }
-.fa-shield-alt::before { content: "◇"; }
+.fa-ghost::before { content: "\25cb"; }
+.fa-grin::before { content: "\263a"; }
+.fa-images::before { content: "\25a7"; }
+.fa-key::before { content: "\26bf"; }
+.fa-layer-group::before { content: "\25a4"; }
+.fa-save::before { content: "\25a3"; }
+.fa-search::before { content: "\2315"; }
+.fa-shield-alt::before { content: "\25c7"; }
 .fa-spinner::before,
-.fa-sync-alt::before { content: "↻"; }
-.fa-star::before { content: "★"; }
-.fa-trash::before { content: "×"; }
-.fa-upload::before { content: "↑"; }
-.fa-vial::before { content: "◌"; }
+.fa-sync-alt::before { content: "\21bb"; }
+.fa-star::before { content: "\2605"; }
+.fa-trash::before { content: "\00d7"; }
+.fa-upload::before { content: "\2191"; }
+.fa-vial::before { content: "\25cc"; }
 
 .fa-spin {
   animation: mojify-icon-spin 1s linear infinite;
