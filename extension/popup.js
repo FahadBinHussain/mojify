@@ -304,12 +304,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const recentCount = document.getElementById('recent-count');
   const recentLoadMore = document.getElementById('recent-load-more');
   const recentLoadMoreBtn = document.getElementById('recent-load-more-btn');
+  const sendEmoteNameToggle = document.getElementById('send-emote-name-toggle');
 
   // Constants
   const ITEMS_PER_PAGE = 30;
   const RECENT_ITEMS_LIMIT = 150;
   const RECENT_ITEMS_INITIAL_RENDER = 48;
   const RECENT_ITEMS_PAGE_SIZE = 48;
+  const SEND_EMOTE_NAME_SETTING_KEY = 'sendEmoteNameWithMedia';
 
   // State variables
   let allEmotes = {};
@@ -335,6 +337,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let recentItems = [];
   let visibleRecentItemCount = RECENT_ITEMS_INITIAL_RENDER;
   let favoriteEmotes = new Set();
+  let sendEmoteNameWithMedia = false;
   let emoteLibraryLoaded = false;
   let emoteLibraryLoadingPromise = null;
   let emoteGridDirty = true;
@@ -604,6 +607,51 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function sanitizeRecentLabel(value, fallback = 'Media') {
     return String(value || fallback).trim().slice(0, 40) || fallback;
+  }
+
+  function formatEmoteNameForSend(value, fallback = 'EMOTE') {
+    const cleaned = String(value || fallback)
+      .trim()
+      .replace(/^:+|:+$/g, '')
+      .replace(/\s+/g, '_')
+      .replace(/[^a-z0-9_.-]/gi, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 64);
+
+    return cleaned ? `:${cleaned}:` : '';
+  }
+
+  function getEmoteNameText(value, fallback = 'EMOTE') {
+    return sendEmoteNameWithMedia ? formatEmoteNameForSend(value, fallback) : '';
+  }
+
+  async function loadSendEmoteNameSetting() {
+    const result = await new Promise((resolve) => {
+      chrome.storage.local.get([SEND_EMOTE_NAME_SETTING_KEY], resolve);
+    });
+
+    sendEmoteNameWithMedia = Boolean(result[SEND_EMOTE_NAME_SETTING_KEY]);
+    if (sendEmoteNameToggle) {
+      sendEmoteNameToggle.checked = sendEmoteNameWithMedia;
+    }
+  }
+
+  async function initSendEmoteNameSetting() {
+    await loadSendEmoteNameSetting();
+
+    if (!sendEmoteNameToggle) return;
+
+    sendEmoteNameToggle.addEventListener('change', async () => {
+      sendEmoteNameWithMedia = sendEmoteNameToggle.checked;
+      await chrome.storage.local.set({
+        [SEND_EMOTE_NAME_SETTING_KEY]: sendEmoteNameWithMedia
+      });
+      showToast(
+        sendEmoteNameWithMedia ? 'Emote names enabled' : 'Emote names disabled',
+        'success'
+      );
+    });
   }
 
   async function loadRecentItems() {
@@ -1414,17 +1462,19 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const currentTab = tabs[0];
+      const currentUrl = currentTab.url || '';
+      const emoteNameText = getEmoteNameText(emoteTrigger, 'EMOTE');
 
       // Detect platform and show warnings
       let currentPlatform = null;
-      if (currentTab.url.includes('messenger.com')) currentPlatform = 'messenger';
-      else if (currentTab.url.includes('discord.com') || currentTab.url.includes('discordapp.com')) currentPlatform = 'discord';
-      else if (currentTab.url.includes('facebook.com')) currentPlatform = 'facebook';
-      else if (currentTab.url.includes('telegram.org')) currentPlatform = 'telegram';
-      else if (currentTab.url.includes('web.whatsapp.com')) currentPlatform = 'whatsapp';
+      if (currentUrl.includes('messenger.com')) currentPlatform = 'messenger';
+      else if (currentUrl.includes('discord.com') || currentUrl.includes('discordapp.com')) currentPlatform = 'discord';
+      else if (currentUrl.includes('facebook.com')) currentPlatform = 'facebook';
+      else if (currentUrl.includes('telegram.org')) currentPlatform = 'telegram';
+      else if (currentUrl.includes('web.whatsapp.com')) currentPlatform = 'whatsapp';
 
       // Show platform-specific warnings
-      showPlatformWarning(currentPlatform, currentTab.url);
+      showPlatformWarning(currentPlatform, currentUrl);
 
       // Check if the current tab is on a supported platform
       const isSupportedPlatform = currentPlatform !== null;
@@ -1439,7 +1489,7 @@ document.addEventListener('DOMContentLoaded', () => {
         diagInfo.innerHTML = `
           <div class="diagnostic-header">
             <h3>Unsupported Platform</h3>
-            <p>Current URL: <code>${currentTab.url}</code></p>
+            <p>Current URL: <code>${currentUrl}</code></p>
             <p>This feature works on:</p>
             <ul>
               <li><code>messenger.com</code></li>
@@ -1576,7 +1626,8 @@ document.addEventListener('DOMContentLoaded', () => {
               currentTab.id,
               payloadDataUrl,
               filename,
-              payloadMimeType
+              payloadMimeType,
+              emoteNameText
             );
             handleInsertResult(response);
             return;
@@ -1586,7 +1637,7 @@ document.addEventListener('DOMContentLoaded', () => {
           chrome.scripting.executeScript({
             target: { tabId: currentTab.id },
             func: insertEmoteFromBase64,
-            args: [payloadDataUrl, filename, emoteTrigger]
+            args: [payloadDataUrl, filename, emoteTrigger, emoteNameText]
           }, (result) => {
             // Check for connection errors
             if (chrome.runtime.lastError) {
@@ -1666,14 +1717,14 @@ document.addEventListener('DOMContentLoaded', () => {
     return waitResult;
   }
 
-  async function sendWhatsAppInternalMedia(tabId, dataUrl, filename, mimeType = '') {
+  async function sendWhatsAppInternalMedia(tabId, dataUrl, filename, mimeType = '', nameText = '') {
     try {
       await ensureWhatsAppInternalBridge(tabId);
 
       const result = getExecuteScriptResult(await chrome.scripting.executeScript({
         target: { tabId },
         world: 'MAIN',
-        func: async (mediaDataUrl, uploadFilename, uploadMimeType) => {
+        func: async (mediaDataUrl, uploadFilename, uploadMimeType, uploadNameText) => {
           const timeout = (promise, ms) => Promise.race([
             promise,
             new Promise((_, reject) => {
@@ -1707,6 +1758,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
 
           const normalizedMimeType = String(uploadMimeType || '').toLowerCase();
+          const normalizedNameText = String(uploadNameText || '').trim().slice(0, 96);
           const mediaType = normalizedMimeType.startsWith('video/')
             ? 'video'
             : normalizedMimeType.startsWith('image/')
@@ -1719,6 +1771,10 @@ document.addEventListener('DOMContentLoaded', () => {
             mimetype: uploadMimeType || undefined,
             waitForAck: false
           };
+
+          if (normalizedNameText) {
+            options.caption = normalizedNameText;
+          }
 
           if (mediaType === 'video') {
             options.isGif = true;
@@ -1733,10 +1789,11 @@ document.addEventListener('DOMContentLoaded', () => {
             success: true,
             method: 'wa-js-sendFileMessage',
             chatId,
+            hasCaption: Boolean(normalizedNameText),
             resultType: typeof sendResult
           };
         },
-        args: [dataUrl, filename, mimeType]
+        args: [dataUrl, filename, mimeType, nameText]
       }));
 
       return result?.success
@@ -1752,9 +1809,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Function to inject into content script for emote insertion from base64
-  async function insertEmoteFromBase64(base64Data, filename, trigger) {
+  async function insertEmoteFromBase64(base64Data, filename, trigger, nameText = '') {
     try {
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const normalizedNameText = String(nameText || '').trim().slice(0, 96);
 
       const sanitizeUploadFilename = (rawName, rawTrigger, mimeType) => {
         const extensionByMime = {
@@ -1923,6 +1981,70 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       };
 
+      const insertNameText = (target) => {
+        if (!normalizedNameText || !target) return false;
+
+        try {
+          target.focus();
+          if (typeof target.click === 'function') target.click();
+
+          if (typeof target.value === 'string') {
+            const start = Number.isInteger(target.selectionStart) ? target.selectionStart : target.value.length;
+            const end = Number.isInteger(target.selectionEnd) ? target.selectionEnd : start;
+            const prefix = start > 0 && !/\s$/.test(target.value.slice(0, start)) ? ' ' : '';
+            const textToInsert = `${prefix}${normalizedNameText}`;
+
+            if (typeof target.setRangeText === 'function') {
+              target.setRangeText(textToInsert, start, end, 'end');
+            } else {
+              target.value = `${target.value.slice(0, start)}${textToInsert}${target.value.slice(end)}`;
+              target.selectionStart = target.selectionEnd = start + textToInsert.length;
+            }
+
+            target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+            target.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+            return true;
+          }
+
+          if (target.isContentEditable || target.getAttribute('contenteditable') === 'true') {
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(target);
+            range.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(range);
+
+            const currentText = target.textContent || '';
+            const textToInsert = currentText && !/\s$/.test(currentText) ? ` ${normalizedNameText}` : normalizedNameText;
+            if (document.queryCommandSupported?.('insertText') && document.execCommand('insertText', false, textToInsert)) {
+              target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+              return true;
+            }
+
+            const textNode = document.createTextNode(textToInsert);
+            range.insertNode(textNode);
+            range.setStartAfter(textNode);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            target.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+            return true;
+          }
+        } catch (error) {
+          console.warn('[Mojify] Failed to insert emote name text:', error);
+        }
+
+        return false;
+      };
+
+      const withOptionalNameResult = (result, target) => {
+        if (!normalizedNameText) return result;
+        return {
+          ...result,
+          nameInserted: insertNameText(target)
+        };
+      };
+
       const insertFileOnDiscord = async (file) => {
         const composer = findDiscordComposer();
         if (!composer) {
@@ -1939,7 +2061,7 @@ document.addEventListener('DOMContentLoaded', () => {
           try {
             assignFilesToInput(fileInput, file);
             if (await waitForDiscordAttachment(file.name, beforeSignal)) {
-              return { success: true, method: 'discord-file-input' };
+              return withOptionalNameResult({ success: true, method: 'discord-file-input' }, composer);
             }
           } catch (inputError) {
             console.warn('[Mojify] Discord file input route failed:', inputError);
@@ -1950,7 +2072,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           dispatchDiscordPaste(composer, file);
           if (await waitForDiscordAttachment(file.name, beforeSignal)) {
-            return { success: true, method: 'discord-paste-event' };
+            return withOptionalNameResult({ success: true, method: 'discord-paste-event' }, composer);
           }
         } catch (pasteError) {
           console.warn('[Mojify] Discord paste route failed:', pasteError);
@@ -1960,7 +2082,7 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           await dispatchDiscordDrop(composer, file);
           if (await waitForDiscordAttachment(file.name, beforeSignal)) {
-            return { success: true, method: 'discord-drop-event' };
+            return withOptionalNameResult({ success: true, method: 'discord-drop-event' }, composer);
           }
         } catch (dropError) {
           console.warn('[Mojify] Discord drop route failed:', dropError);
@@ -2034,7 +2156,7 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       console.log("[Mojify] File insertion completed for:", trigger);
-      return { success: true };
+      return withOptionalNameResult({ success: true }, inputField);
 
     } catch (error) {
       console.error("[Mojify] Error in insertEmoteFromBase64:", error);
@@ -2904,7 +3026,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       const currentTab = tabs[0];
-      const isWhatsApp = currentTab.url.includes('web.whatsapp.com');
+      const currentUrl = currentTab.url || '';
+      const isWhatsApp = currentUrl.includes('web.whatsapp.com');
       const resolvedMediaUrl = isWhatsApp && options.whatsappUrl
         ? options.whatsappUrl
         : mediaUrl;
@@ -2927,6 +3050,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const blob = await response.blob();
         const safeTitle = (title || 'media').replace(/[^a-z0-9-_]/gi, '_').slice(0, 40);
+        const emoteNameText = getEmoteNameText(safeTitle, 'MEDIA');
         const extension = (blob.type.split('/')[1] || 'bin').replace(/[^a-z0-9]/gi, '');
         let base64Data = await new Promise((resolve, reject) => {
           const reader = new FileReader();
@@ -2951,7 +3075,8 @@ document.addEventListener('DOMContentLoaded', () => {
             currentTab.id,
             base64Data,
             outputFilename,
-            outputMimeType
+            outputMimeType,
+            emoteNameText
           );
 
           if (insertResult?.success) {
@@ -2965,7 +3090,7 @@ document.addEventListener('DOMContentLoaded', () => {
         chrome.scripting.executeScript({
           target: { tabId: currentTab.id },
           func: insertEmoteFromBase64,
-          args: [base64Data, outputFilename, `:${safeTitle}:`]
+          args: [base64Data, outputFilename, `:${safeTitle}:`, emoteNameText]
         }, (result) => {
           if (chrome.runtime.lastError) {
             showToast('Connection error - refresh the page and retry', 'error');
@@ -4399,6 +4524,7 @@ document.addEventListener('DOMContentLoaded', () => {
     runPopupTask('recent items', loadRecentItems);
     runPopupTask('favorites', loadFavoriteEmotes);
     runPopupTask('saved sort mode', loadSavedSortMode);
+    runPopupTask('emote name setting', initSendEmoteNameSetting);
     runPopupTask('channel ids', loadChannelIds);
     runPopupTask('button effects', addButtonEffects);
     runPopupTask('debug section', initDebugSection);
