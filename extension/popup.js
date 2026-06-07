@@ -288,9 +288,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const tabIndicator = document.querySelector('.tab-indicator');
   // Remove this line as it's declared too early
 
-  // Auto-focus on search input when popup opens
-  searchInput.focus();
-
   // Progress and storage elements
   const downloadProgress = document.getElementById('download-progress');
   const progressText = document.getElementById('progress-text');
@@ -347,6 +344,35 @@ document.addEventListener('DOMContentLoaded', () => {
   const channelEmoteSetCache = new Map();
   const emoteObjectUrlCache = new Map();
   const emoteBlobHydrationPromises = new Map();
+
+  function runPopupTask(label, task) {
+    try {
+      const result = task();
+      if (result && typeof result.catch === 'function') {
+        result.catch((error) => {
+          console.warn(`[Mojify] Popup startup task failed (${label}):`, error);
+        });
+      }
+    } catch (error) {
+      console.warn(`[Mojify] Popup startup task failed (${label}):`, error);
+    }
+  }
+
+  function isElementVisible(element) {
+    if (!element) return false;
+    const style = window.getComputedStyle(element);
+    return style.display !== 'none' && style.visibility !== 'hidden' && element.offsetParent !== null;
+  }
+
+  function focusSearchInputIfVisible() {
+    if (!isElementVisible(searchInput)) return;
+
+    try {
+      searchInput.focus({ preventScroll: true });
+    } catch (error) {
+      console.warn('[Mojify] Failed to focus popup search input:', error);
+    }
+  }
 
   function isTabActive(tabName) {
     return document.getElementById(`${tabName}-tab`)?.classList.contains('active') || false;
@@ -1335,6 +1361,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (!emoteLibraryLoaded) {
             renderEmoteLoadingState();
           }
+          requestAnimationFrame(focusSearchInputIfVisible);
           ensureEmoteLibraryLoaded({ renderGrid: true }).catch(() => {});
           return;
         }
@@ -3591,17 +3618,21 @@ document.addEventListener('DOMContentLoaded', () => {
       const emoteCount = result.emoteMapping ? Object.keys(result.emoteMapping).length : 0;
       const channelCount = result.channels ? result.channels.length : 0;
 
-      totalEmotesCount.textContent = emoteCount;
-      channelsCount.textContent = channelCount;
+      if (totalEmotesCount) totalEmotesCount.textContent = emoteCount;
+      if (channelsCount) channelsCount.textContent = channelCount;
 
       const storageString = JSON.stringify(result);
-      localStorageUsed.textContent = formatSize(new Blob([storageString]).size);
+      if (localStorageUsed) {
+        localStorageUsed.textContent = formatSize(new Blob([storageString]).size);
+      }
 
       const indexedDBSize = Array.from(emoteDataMap.values()).reduce((total, emote) => {
         return total + Number(emote?.size || emote?.blob?.size || 0);
       }, 0);
 
-      indexedDBStorageUsed.textContent = formatSize(indexedDBSize);
+      if (indexedDBStorageUsed) {
+        indexedDBStorageUsed.textContent = formatSize(indexedDBSize);
+      }
     });
   }
 
@@ -4362,45 +4393,48 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initialize
   function init() {
-    initTabs();
-    initMediaTabs();
-    initScopeDrawer();
-    loadRecentItems();
-    loadFavoriteEmotes();
-    loadSavedSortMode();
-    loadChannelIds();
-    addButtonEffects();
-    initDebugSection();
-    checkDownloadStatus();
-    checkDiscordImportStatus();
-    initSaveButton();
-    initDiscordImportButton();
-    scheduleEmoteLibraryWarmup();
+    runPopupTask('tabs', initTabs);
+    runPopupTask('media tabs', initMediaTabs);
+    runPopupTask('scope drawer', initScopeDrawer);
+    runPopupTask('recent items', loadRecentItems);
+    runPopupTask('favorites', loadFavoriteEmotes);
+    runPopupTask('saved sort mode', loadSavedSortMode);
+    runPopupTask('channel ids', loadChannelIds);
+    runPopupTask('button effects', addButtonEffects);
+    runPopupTask('debug section', initDebugSection);
+    runPopupTask('download status', checkDownloadStatus);
+    runPopupTask('discord import status', checkDiscordImportStatus);
+    runPopupTask('save button', initSaveButton);
+    runPopupTask('discord import button', initDiscordImportButton);
+    runPopupTask('emote library warmup', scheduleEmoteLibraryWarmup);
 
     // Check current platform and show warnings
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    runPopupTask('platform warning', () => chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs.length > 0) {
         const currentTab = tabs[0];
+        const currentUrl = currentTab.url || '';
         let currentPlatform = null;
-        if (currentTab.url.includes('messenger.com')) currentPlatform = 'messenger';
-        else if (currentTab.url.includes('discord.com') || currentTab.url.includes('discordapp.com')) currentPlatform = 'discord';
-        else if (currentTab.url.includes('facebook.com')) currentPlatform = 'facebook';
-        else if (currentTab.url.includes('telegram.org')) currentPlatform = 'telegram';
-        else if (currentTab.url.includes('web.whatsapp.com')) currentPlatform = 'whatsapp';
+        if (currentUrl.includes('messenger.com')) currentPlatform = 'messenger';
+        else if (currentUrl.includes('discord.com') || currentUrl.includes('discordapp.com')) currentPlatform = 'discord';
+        else if (currentUrl.includes('facebook.com')) currentPlatform = 'facebook';
+        else if (currentUrl.includes('telegram.org')) currentPlatform = 'telegram';
+        else if (currentUrl.includes('web.whatsapp.com')) currentPlatform = 'whatsapp';
 
-        showPlatformWarning(currentPlatform, currentTab.url);
+        showPlatformWarning(currentPlatform, currentUrl);
       }
-    });
+    }));
   }
 
-  initApiKeysPageButton();
+  runPopupTask('api keys page button', initApiKeysPageButton);
   init();
-  initBackupRestore();
+  runPopupTask('backup restore', initBackupRestore);
   // Backup and Restore functionality
   function initBackupRestore() {
     const createBackupBtn = document.getElementById('create-backup');
     const restoreBackupBtn = document.getElementById('restore-backup');
     const restoreFileInput = document.getElementById('restore-file');
+
+    if (!createBackupBtn || !restoreBackupBtn || !restoreFileInput) return;
 
     createBackupBtn.addEventListener('click', createBackup);
     restoreBackupBtn.addEventListener('click', () => restoreFileInput.click());
