@@ -4529,7 +4529,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (telegramImportProgressText) {
       telegramImportProgressText.textContent = statusText;
     }
-    scheduleTelegramImportLibraryRefresh(progressData);
   }
 
   function resetTelegramImportUi() {
@@ -4571,6 +4570,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (telegramImportProgressText) {
       telegramImportProgressText.textContent = statusText;
     }
+    scheduleTelegramImportLibraryRefresh(progressData);
   }
 
   function createTelegramImportToast(progressData = {}) {
