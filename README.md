@@ -61,7 +61,7 @@ It is designed around three ideas:
 | --- | --- | --- |
 | Twitch + 7TV | Channel emotes and 7TV emote sets | Usernames require Twitch credentials; numeric IDs can be used directly. |
 | Discord Web | Server custom emojis and stickers | Import works from the active Discord server tab. |
-| Telegram | Public sticker and custom emoji sets | Requires a Telegram bot token; static image and WebM video stickers import directly, and animated TGS stickers use the optional native lossless helper when installed, with a browser fallback. |
+| Telegram | Public sticker and custom emoji sets | Requires a Telegram bot token; static image and WebM video stickers import directly, and animated TGS stickers require the optional native lossless helper. |
 | Giphy | Search results | Requires a Giphy API key. |
 | Klipy | Search results | Requires a Klipy API key. |
 | Pixabay | Search results | Requires a Pixabay API key. |
@@ -147,7 +147,8 @@ insertion.
 For the best local output, install the Native Messaging helper. It renders the
 animation frame-by-frame at the source frame rate in a local Chromium renderer
 and encodes those frames with ffmpeg/libvpx-vp9 lossless mode. If the helper is
-not installed, Mojify falls back to the browser offscreen converter.
+not installed or a conversion fails, Mojify skips animated TGS stickers so
+lower-quality browser conversions do not mix into the library.
 
 Requirements on Windows:
 
@@ -177,11 +178,9 @@ Mojify/
 ├── extension/                 # Chrome MV3 extension
 │   ├── background.js          # Service worker, imports, downloads, insertion adapters
 │   ├── content.js             # Page integration and minibar behavior
-│   ├── offscreen.html         # Local renderer shell for TGS conversion
 │   ├── popup.html             # Main extension interface
 │   ├── popup.css              # Popup visual system
 │   ├── popup.js               # Popup state, search, import, and grid logic
-│   ├── tgs-converter.js       # Lottie/TGS to WebM conversion worker
 │   ├── options.*              # Provider key management
 │   ├── vendor/                # Small bundled browser-side libraries
 │   └── icons/                 # Extension icons
@@ -206,7 +205,6 @@ node --check extension/background.js
 node --check extension/content.js
 node --check extension/popup.js
 node --check extension/options.js
-node --check extension/tgs-converter.js
 node --check native/telegram-tgs-host/mojify-native-host.js
 node native/telegram-tgs-host/mojify-native-host.js --self-test
 ```

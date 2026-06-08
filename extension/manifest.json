@@ -10,7 +10,6 @@
     "scripting",
     "contextMenus",
     "tabs",
-    "offscreen",
     "nativeMessaging",
     "clipboardWrite",
     "clipboardRead"
