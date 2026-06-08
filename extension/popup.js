@@ -4560,6 +4560,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const setTitle = progressData.setTitle || progressData.setName || 'Telegram set';
     const stickerCount = Number(progressData.importedStickerCount || 0);
     const videoCount = Number(progressData.importedVideoCount || 0);
+    const previewCount = Number(progressData.importedPreviewCount || 0);
     const parts = [];
 
     if (stickerCount > 0) {
@@ -4567,6 +4568,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (videoCount > 0) {
       parts.push(`${videoCount} video sticker${videoCount === 1 ? '' : 's'}`);
+    }
+    if (previewCount > 0) {
+      parts.push(`${previewCount} animated preview${previewCount === 1 ? '' : 's'}`);
     }
     if (parts.length === 0) {
       const total = Number(progressData.importedCount || 0);
