@@ -24,6 +24,7 @@
     "https://*.pixabay.com/*",
     "https://api.twitch.tv/*",
     "https://id.twitch.tv/*",
+    "https://api.telegram.org/*",
     "https://*.messenger.com/*",
     "https://*.discord.com/*",
     "https://*.discordapp.com/*",

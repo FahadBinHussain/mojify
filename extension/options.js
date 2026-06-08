@@ -5,7 +5,8 @@ const API_KEY_FIELDS = {
   klipy: 'klipy-api-key',
   pixabay: 'pixabay-api-key',
   twitchClientId: 'twitch-client-id',
-  twitchClientSecret: 'twitch-client-secret'
+  twitchClientSecret: 'twitch-client-secret',
+  telegramBotToken: 'telegram-bot-token'
 };
 
 const SUPPORTED_KEY_NAMES = Object.keys(API_KEY_FIELDS);
