@@ -282,6 +282,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const discordImportProgressText = document.getElementById('discord-import-progress-text');
   const discordImportProgressCount = document.getElementById('discord-import-progress-count');
   const discordImportProgressFill = document.getElementById('discord-import-progress-fill');
+  const telegramImportPanel = document.getElementById('telegram-import-panel');
+  const telegramStickerSetInput = document.getElementById('telegram-sticker-set-input');
+  const telegramImportButton = document.getElementById('telegram-import-button');
+  const telegramImportProgress = document.getElementById('telegram-import-progress');
+  const telegramImportProgressText = document.getElementById('telegram-import-progress-text');
+  const telegramImportProgressCount = document.getElementById('telegram-import-progress-count');
+  const telegramImportProgressFill = document.getElementById('telegram-import-progress-fill');
   const mediaTabButtons = document.querySelectorAll('.media-tab-btn');
   const tabButtons = document.querySelectorAll('.tab-btn');
   const tabPanes = document.querySelectorAll('.tab-pane');
@@ -332,8 +339,10 @@ document.addEventListener('DOMContentLoaded', () => {
   let lastChannelManagementRefreshAt = 0;
   let progressPollInterval = null;
   let discordImportPollInterval = null;
+  let telegramImportPollInterval = null;
   let downloadCompletionHandled = false;
   let discordImportCompletionHandled = false;
+  let telegramImportCompletionHandled = false;
   let recentItems = [];
   let visibleRecentItemCount = RECENT_ITEMS_INITIAL_RENDER;
   let favoriteEmotes = new Set();
@@ -530,12 +539,23 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function isLocalLibraryTab(tabName = activeMediaTab) {
-    return tabName === 'twitch' || tabName === 'discord';
+    return tabName === 'twitch' || tabName === 'discord' || tabName === 'telegram';
   }
 
   function getActiveLibrarySourceType(tabName = activeMediaTab) {
     if (tabName === 'discord') return 'discord';
+    if (tabName === 'telegram') return 'telegram';
     return 'twitch';
+  }
+
+  function getActiveLibraryAllLabel(tabName = activeMediaTab) {
+    if (tabName === 'discord') return 'All Servers';
+    if (tabName === 'telegram') return 'All Packs';
+    return 'All Channels';
+  }
+
+  function getActiveLibraryItemUnit(tabName = activeMediaTab) {
+    return tabName === 'discord' || tabName === 'telegram' ? 'items' : 'emotes';
   }
 
   function dedupeChannelIds(channelIds) {
@@ -756,6 +776,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (discordImportPanel) {
       discordImportPanel.classList.toggle('hidden', activeMediaTab !== 'discord');
     }
+    if (telegramImportPanel) {
+      telegramImportPanel.classList.toggle('hidden', activeMediaTab !== 'telegram');
+    }
     renderChannelFilterBar();
   }
 
@@ -904,7 +927,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function getScopeLabel(visibleChannels, visibleChannelGroups) {
     if (activeChannelFilter === 'all') {
-      return activeMediaTab === 'discord' ? 'All Servers' : 'All Channels';
+      return getActiveLibraryAllLabel();
     }
 
     for (const group of visibleChannelGroups) {
@@ -927,7 +950,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const selected = visibleChannels.find((channel) => getScopeValue(channel) === activeChannelFilter);
-    return selected ? getChannelDisplayName(selected) : 'All Channels';
+    return selected ? getChannelDisplayName(selected) : getActiveLibraryAllLabel();
   }
 
   function getValidScopeValuesForChannels(visibleChannels) {
@@ -1075,7 +1098,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (!isLocalLibraryTab()) {
       channelFilterBar.classList.add('hidden');
-      if (scopeCurrentLabel) scopeCurrentLabel.textContent = 'All Channels';
+      if (scopeCurrentLabel) scopeCurrentLabel.textContent = getActiveLibraryAllLabel();
       if (scopeToggle) {
         scopeToggle.setAttribute('aria-expanded', 'false');
         scopeToggle.classList.remove('open');
@@ -1120,9 +1143,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const scopeTree = document.createElement('div');
     scopeTree.className = 'scope-tree';
     scopeTree.setAttribute('role', 'tree');
-    const itemUnit = activeMediaTab === 'discord' ? 'items' : 'emotes';
+    const itemUnit = getActiveLibraryItemUnit();
     scopeTree.appendChild(createScopeRow({
-      label: activeMediaTab === 'discord' ? 'All Servers' : 'All Channels',
+      label: getActiveLibraryAllLabel(),
       value: 'all',
       meta: `${visibleChannels.reduce((total, channel) => total + getScopeEmoteCount(channel), 0)} ${itemUnit}`,
       type: 'all'
@@ -1139,7 +1162,7 @@ document.addEventListener('DOMContentLoaded', () => {
           wrapper.appendChild(createScopeRow({
             label: getScopeParentName(group.parent),
             value: getScopeValue(group.parent),
-            meta: `${getScopeEmoteCount(group.parent)} emotes`,
+            meta: `${getScopeEmoteCount(group.parent)} ${getActiveLibraryItemUnit()}`,
             type: 'parent'
           }));
         }
@@ -2343,7 +2366,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (isLocalLibraryTab()) {
         emoteGrid.innerHTML = `
           <div class="no-emotes-message" style="grid-column: 1 / -1;">
-            <p>${activeMediaTab === 'discord' ? 'No Discord emojis or stickers imported yet' : 'No emotes loaded'}</p>
+            <p>${activeMediaTab === 'discord' ? 'No Discord emojis or stickers imported yet' : activeMediaTab === 'telegram' ? 'No Telegram stickers imported yet' : 'No emotes loaded'}</p>
           </div>
         `;
         loadMoreContainer.classList.add('hidden');
@@ -2423,6 +2446,8 @@ document.addEventListener('DOMContentLoaded', () => {
     emoteItem.className = 'emote-item';
     emoteItem.setAttribute('data-emote-key', key);
     const imageUrl = getEmotePreviewUrl(key, emoteDbData);
+    const mediaType = String(emoteDbData?.mimeType || emoteDataMap.get(key)?.mimeType || '').toLowerCase();
+    const isVideoPreview = mediaType.startsWith('video/');
 
     if (!imageUrl) return null;
 
@@ -2431,7 +2456,9 @@ document.addEventListener('DOMContentLoaded', () => {
         <i class="fas fa-star"></i>
       </button>
       <div class="emote-img-container">
-        <img src="${imageUrl}" alt="${emoteName}" class="emote-img" loading="lazy" decoding="async">
+        ${isVideoPreview
+          ? `<video src="${imageUrl}" class="emote-img" muted loop playsinline preload="metadata" aria-label="${emoteName}"></video>`
+          : `<img src="${imageUrl}" alt="${emoteName}" class="emote-img" loading="lazy" decoding="async">`}
       </div>
       <div class="emote-details">
         <div class="emote-trigger" title="${key}">
@@ -2443,6 +2470,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const favoriteButton = emoteItem.querySelector('.favorite-toggle');
     const imageElement = emoteItem.querySelector('.emote-img');
     const triggerElement = emoteItem.querySelector('.emote-trigger');
+    if (isVideoPreview && imageElement) {
+      imageElement.addEventListener('canplay', () => {
+        imageElement.play().catch(() => {});
+      }, { once: true });
+    }
     favoriteButton?.addEventListener('click', async (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -2666,6 +2698,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (searchInput) {
           if (selectedTab === 'discord') {
             searchInput.placeholder = 'Search imported Discord media';
+          } else if (selectedTab === 'telegram') {
+            searchInput.placeholder = 'Search imported Telegram stickers';
           } else if (selectedTab === 'twitch') {
             searchInput.placeholder = 'Search emotes, GIFs, or reaction media';
           } else {
@@ -3202,9 +3236,9 @@ document.addEventListener('DOMContentLoaded', () => {
       sectionHeader.innerHTML = `
         <div class="channel-header-content">
           <span class="channel-name">${activeChannelFilter === 'all'
-            ? (activeMediaTab === 'discord' ? 'All Servers' : 'All Channels')
+            ? getActiveLibraryAllLabel()
             : activeScopeLabel}</span>
-          <span class="channel-emote-count">${flattenedEntries.length} ${activeMediaTab === 'discord' ? 'items' : 'emotes'}</span>
+          <span class="channel-emote-count">${flattenedEntries.length} ${getActiveLibraryItemUnit()}</span>
         </div>
       `;
 
@@ -4463,6 +4497,185 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 1000);
   }
 
+  function setTelegramImportUiActive(statusText = 'Importing Telegram stickers...') {
+    telegramImportCompletionHandled = false;
+    if (telegramImportButton) {
+      telegramImportButton.disabled = true;
+      telegramImportButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Importing...</span>';
+    }
+    if (telegramImportProgress) {
+      telegramImportProgress.classList.remove('hidden');
+    }
+    if (telegramImportProgressText) {
+      telegramImportProgressText.textContent = statusText;
+    }
+  }
+
+  function resetTelegramImportUi() {
+    if (telegramImportButton) {
+      telegramImportButton.disabled = false;
+      telegramImportButton.innerHTML = '<i class="fas fa-paper-plane"></i><span>Import Set</span>';
+    }
+    if (telegramImportProgress) {
+      telegramImportProgress.classList.add('hidden');
+    }
+    if (telegramImportProgressFill) {
+      telegramImportProgressFill.style.width = '0%';
+    }
+    if (telegramImportProgressText) {
+      telegramImportProgressText.textContent = 'Importing Telegram stickers...';
+    }
+    if (telegramImportProgressCount) {
+      telegramImportProgressCount.textContent = '0/0';
+    }
+  }
+
+  function applyTelegramImportProgressState(progressData = {}) {
+    const current = Number(progressData.current || 0);
+    const total = Number(progressData.total || 0);
+    const percentage = total > 0 ? Math.min((current / total) * 100, 100) : 0;
+    const setTitle = progressData.setTitle || progressData.setName || 'Telegram set';
+    const currentItem = progressData.currentItem || '';
+    const statusText = currentItem
+      ? `Importing ${currentItem} from ${setTitle}`
+      : progressData.statusText || `Importing Telegram stickers from ${setTitle}`;
+
+    setTelegramImportUiActive(statusText);
+    if (telegramImportProgressFill) {
+      telegramImportProgressFill.style.width = `${percentage}%`;
+    }
+    if (telegramImportProgressCount) {
+      telegramImportProgressCount.textContent = `${current}/${total}`;
+    }
+    if (telegramImportProgressText) {
+      telegramImportProgressText.textContent = statusText;
+    }
+  }
+
+  function createTelegramImportToast(progressData = {}) {
+    if (progressData.toastMessage) {
+      return progressData.toastMessage;
+    }
+
+    const setTitle = progressData.setTitle || progressData.setName || 'Telegram set';
+    const stickerCount = Number(progressData.importedStickerCount || 0);
+    const videoCount = Number(progressData.importedVideoCount || 0);
+    const parts = [];
+
+    if (stickerCount > 0) {
+      parts.push(`${stickerCount} sticker${stickerCount === 1 ? '' : 's'}`);
+    }
+    if (videoCount > 0) {
+      parts.push(`${videoCount} video sticker${videoCount === 1 ? '' : 's'}`);
+    }
+    if (parts.length === 0) {
+      const total = Number(progressData.importedCount || 0);
+      parts.push(`${total} Telegram item${total === 1 ? '' : 's'}`);
+    }
+
+    return `Imported ${parts.join(' and ')} from ${setTitle}`;
+  }
+
+  function stopTelegramImportPolling() {
+    if (telegramImportPollInterval) {
+      clearInterval(telegramImportPollInterval);
+      telegramImportPollInterval = null;
+    }
+  }
+
+  async function finishTelegramImportFlow({
+    completed = false,
+    error = '',
+    toastMessage = '',
+    channelId = 'all'
+  } = {}) {
+    if (telegramImportCompletionHandled) {
+      return;
+    }
+
+    telegramImportCompletionHandled = true;
+    stopTelegramImportPolling();
+    resetTelegramImportUi();
+
+    if (completed) {
+      await ensureEmoteLibraryLoaded({ renderGrid: activeMediaTab === 'telegram', refreshPanels: true });
+      await loadEmotes({ renderGrid: activeMediaTab === 'telegram', refreshPanels: true });
+      activeChannelFilter = channelId || 'all';
+      renderChannelFilterBar();
+      if (activeMediaTab === 'telegram') {
+        filterAndDisplayEmotes(true);
+      }
+      if (toastMessage) {
+        showToast(toastMessage, 'success');
+      }
+    } else if (error) {
+      showToast(error, 'error');
+    }
+
+    chrome.storage.local.remove(['telegramImportProgress']);
+  }
+
+  function checkTelegramImportStatus() {
+    chrome.storage.local.get(['telegramImportInProgress', 'telegramImportProgress'], (result) => {
+      const importInProgress = result.telegramImportInProgress;
+      const importProgressData = result.telegramImportProgress;
+
+      if (importInProgress && importProgressData) {
+        applyTelegramImportProgressState(importProgressData);
+        startTelegramImportPolling();
+        return;
+      }
+
+      if (importProgressData?.completed) {
+        finishTelegramImportFlow({
+          completed: true,
+          channelId: importProgressData.channelId || 'all',
+          toastMessage: createTelegramImportToast(importProgressData)
+        });
+        return;
+      }
+
+      if (importProgressData?.error) {
+        finishTelegramImportFlow({ error: importProgressData.error });
+        return;
+      }
+
+      stopTelegramImportPolling();
+      resetTelegramImportUi();
+    });
+  }
+
+  function startTelegramImportPolling() {
+    if (telegramImportPollInterval) {
+      return;
+    }
+
+    telegramImportPollInterval = setInterval(() => {
+      chrome.storage.local.get(['telegramImportInProgress', 'telegramImportProgress'], (result) => {
+        if (result.telegramImportInProgress && result.telegramImportProgress) {
+          applyTelegramImportProgressState(result.telegramImportProgress);
+          return;
+        }
+
+        if (result.telegramImportProgress?.completed) {
+          finishTelegramImportFlow({
+            completed: true,
+            channelId: result.telegramImportProgress.channelId || 'all',
+            toastMessage: createTelegramImportToast(result.telegramImportProgress)
+          });
+          return;
+        }
+
+        if (result.telegramImportProgress?.error) {
+          finishTelegramImportFlow({ error: result.telegramImportProgress.error });
+          return;
+        }
+
+        stopTelegramImportPolling();
+      });
+    }, 1000);
+  }
+
   chrome.runtime.onMessage.addListener((message) => {
     try {
       if (message.type === 'downloadProgress') {
@@ -4493,6 +4706,24 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         applyDiscordImportProgressState(message);
+      }
+
+      if (message.type === 'telegramImportProgress') {
+        if (message.completed) {
+          finishTelegramImportFlow({
+            completed: true,
+            channelId: message.channelId || 'all',
+            toastMessage: createTelegramImportToast(message)
+          });
+          return;
+        }
+
+        if (message.error) {
+          finishTelegramImportFlow({ error: message.error });
+          return;
+        }
+
+        applyTelegramImportProgressState(message);
       }
 
       if (message.type === 'showToast') {
@@ -4530,8 +4761,10 @@ document.addEventListener('DOMContentLoaded', () => {
     runPopupTask('debug section', initDebugSection);
     runPopupTask('download status', checkDownloadStatus);
     runPopupTask('discord import status', checkDiscordImportStatus);
+    runPopupTask('telegram import status', checkTelegramImportStatus);
     runPopupTask('save button', initSaveButton);
     runPopupTask('discord import button', initDiscordImportButton);
+    runPopupTask('telegram import button', initTelegramImportButton);
     runPopupTask('emote library warmup', scheduleEmoteLibraryWarmup);
 
     // Check current platform and show warnings
@@ -4611,6 +4844,57 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (error) {
         console.error('[Mojify] Discord import failed:', error);
         finishDiscordImportFlow({ error: error.message || 'Discord import failed' });
+      }
+    });
+  }
+
+  function initTelegramImportButton() {
+    if (!telegramImportButton || !telegramStickerSetInput) return;
+
+    telegramImportButton.addEventListener('click', async () => {
+      const stickerSet = telegramStickerSetInput.value.trim();
+
+      try {
+        telegramImportCompletionHandled = false;
+        if (!stickerSet) {
+          throw new Error('Paste a Telegram sticker set link or short name first');
+        }
+
+        setTelegramImportUiActive('Starting Telegram import...');
+        if (telegramImportProgressFill) {
+          telegramImportProgressFill.style.width = '0%';
+        }
+        if (telegramImportProgressCount) {
+          telegramImportProgressCount.textContent = '0/0';
+        }
+        startTelegramImportPolling();
+
+        const response = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage({
+            action: 'importTelegramStickerSet',
+            stickerSet
+          }, (result) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve(result);
+          });
+        });
+
+        if (!response?.success) {
+          finishTelegramImportFlow({ error: response?.error || 'Telegram import failed' });
+        }
+      } catch (error) {
+        console.error('[Mojify] Telegram import failed:', error);
+        finishTelegramImportFlow({ error: error.message || 'Telegram import failed' });
+      }
+    });
+
+    telegramStickerSetInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        telegramImportButton.click();
       }
     });
   }

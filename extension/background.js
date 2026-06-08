@@ -4,6 +4,8 @@ const TWITCH_API_BASE_URL = `${SEVEN_TV_V3_BASE_URL}/users/twitch`;
 const SEVEN_TV_EMOTE_SET_BASE_URL = `${SEVEN_TV_V3_BASE_URL}/emote-sets`;
 const SEVEN_TV_GQL_URL = `${SEVEN_TV_API_ORIGIN}/v4/gql`;
 const SEVEN_TV_RESOLVE_TIMEOUT_MS = 45000;
+const TELEGRAM_BOT_API_ORIGIN = 'https://api.telegram.org';
+const TELEGRAM_IMPORT_TIMEOUT_MS = 45000;
 const SEVEN_TV_USER_EMOTE_SETS_QUERY = `
   query UserEmoteSets($id: Id!) {
     users {
@@ -630,6 +632,15 @@ let discordImportState = {
   startedAt: null
 };
 
+let telegramImportState = {
+  isImporting: false,
+  current: 0,
+  total: 0,
+  setName: '',
+  setTitle: '',
+  startedAt: null
+};
+
 // Reset download state on service worker startup
 async function resetDownloadState() {
   downloadState.isDownloading = false;
@@ -674,6 +685,31 @@ async function resetDiscordImportState() {
     });
   } catch (error) {
     console.error('[Service Worker] Error resetting Discord import state:', error);
+  }
+}
+
+async function resetTelegramImportState() {
+  telegramImportState = {
+    isImporting: false,
+    current: 0,
+    total: 0,
+    setName: '',
+    setTitle: '',
+    startedAt: null
+  };
+
+  try {
+    await chrome.storage.local.set({
+      telegramImportInProgress: false,
+      telegramImportProgress: {
+        current: 0,
+        total: 0,
+        completed: false,
+        reset: true
+      }
+    });
+  } catch (error) {
+    console.error('[Service Worker] Error resetting Telegram import state:', error);
   }
 }
 
@@ -2284,6 +2320,37 @@ async function updateDiscordImportProgress(progress = {}) {
   });
 }
 
+async function updateTelegramImportProgress(progress = {}) {
+  const payload = {
+    current: Number(progress.current || 0),
+    total: Number(progress.total || 0),
+    setName: progress.setName || telegramImportState.setName || '',
+    setTitle: progress.setTitle || telegramImportState.setTitle || '',
+    currentItem: progress.currentItem || '',
+    statusText: progress.statusText || '',
+    importedCount: Number(progress.importedCount || 0),
+    importedStickerCount: Number(progress.importedStickerCount || 0),
+    importedVideoCount: Number(progress.importedVideoCount || 0),
+    skippedCount: Number(progress.skippedCount || 0),
+    skippedAnimatedCount: Number(progress.skippedAnimatedCount || 0),
+    skippedUnsupportedCount: Number(progress.skippedUnsupportedCount || 0),
+    completed: Boolean(progress.completed),
+    error: progress.error || '',
+    channelId: progress.channelId || '',
+    toastMessage: progress.toastMessage || ''
+  };
+
+  await chrome.storage.local.set({
+    telegramImportInProgress: Boolean(progress.inProgress),
+    telegramImportProgress: payload
+  });
+
+  sendRuntimeMessage({
+    type: 'telegramImportProgress',
+    ...payload
+  });
+}
+
 function sanitizeDiscordEmojiName(name, fallback = 'emoji') {
   const sanitized = String(name || fallback)
     .trim()
@@ -2345,6 +2412,186 @@ function buildUniqueDiscordEmojiKey(name, guildName, reservedKeys) {
     }
     counter += 1;
   }
+}
+
+function sanitizeTelegramStickerSetName(input) {
+  const rawInput = String(input || '').trim();
+  if (!rawInput) {
+    throw new Error('Paste a Telegram sticker set link or short name first');
+  }
+
+  const patterns = [
+    /(?:https?:\/\/)?(?:t\.me|telegram\.me)\/add(?:stickers|emoji)\/([A-Za-z][A-Za-z0-9_]{0,63})/i,
+    /(?:^|\/)add(?:stickers|emoji)\/([A-Za-z][A-Za-z0-9_]{0,63})/i,
+    /^@?([A-Za-z][A-Za-z0-9_]{0,63})$/
+  ];
+
+  for (const pattern of patterns) {
+    const match = rawInput.match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  throw new Error('Could not read a Telegram sticker set short name from that value');
+}
+
+function sanitizeTelegramEmoteName(name, fallback = 'telegram') {
+  const sanitized = String(name || fallback)
+    .trim()
+    .replace(/[^\w]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 44);
+
+  return sanitized || fallback;
+}
+
+function buildUniqueTelegramStickerKey(stickerSetName, index, reservedKeys) {
+  const baseName = sanitizeTelegramEmoteName(`${stickerSetName}_${String(index + 1).padStart(2, '0')}`, 'telegram');
+  const baseKey = `:${baseName}:`;
+
+  if (!reservedKeys.has(baseKey)) {
+    reservedKeys.add(baseKey);
+    return baseKey;
+  }
+
+  let counter = 2;
+  while (true) {
+    const candidate = `:${baseName}_${counter}:`;
+    if (!reservedKeys.has(candidate)) {
+      reservedKeys.add(candidate);
+      return candidate;
+    }
+    counter += 1;
+  }
+}
+
+function getTelegramFileExtension(filePath = '') {
+  const match = String(filePath || '').match(/\.([a-z0-9]+)(?:[?#].*)?$/i);
+  return match ? match[1].toLowerCase() : '';
+}
+
+function getTelegramMimeType(filePath = '', sticker = {}) {
+  const extension = getTelegramFileExtension(filePath);
+  const mimeByExtension = {
+    webp: 'image/webp',
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webm: 'video/webm',
+    tgs: 'application/x-tgsticker'
+  };
+
+  if (mimeByExtension[extension]) {
+    return mimeByExtension[extension];
+  }
+
+  if (sticker?.is_video) return 'video/webm';
+  if (sticker?.is_animated) return 'application/x-tgsticker';
+  return 'image/webp';
+}
+
+function getTelegramStoredReference(sticker = {}) {
+  const stableId = sticker.file_unique_id || sticker.file_id || '';
+  return stableId ? `telegram://file/${encodeURIComponent(stableId)}` : 'telegram://file/unknown';
+}
+
+function getTelegramItemLabel(stickerSetName, index, sticker = {}) {
+  const emoji = String(sticker.emoji || '').trim();
+  return emoji ? `${stickerSetName} ${index + 1} ${emoji}` : `${stickerSetName} ${index + 1}`;
+}
+
+function isTelegramStickerSupported(sticker = {}, filePath = '') {
+  const extension = getTelegramFileExtension(filePath);
+  if (sticker.is_animated || extension === 'tgs') {
+    return {
+      supported: false,
+      reason: 'animated'
+    };
+  }
+
+  const mimeType = getTelegramMimeType(filePath, sticker);
+  if (mimeType.startsWith('image/') || mimeType === 'video/webm') {
+    return {
+      supported: true,
+      mimeType,
+      extension: extension || (mimeType === 'video/webm' ? 'webm' : 'webp')
+    };
+  }
+
+  return {
+    supported: false,
+    reason: 'unsupported'
+  };
+}
+
+async function fetchTelegramBotApi(botToken, methodName, params = {}) {
+  const cleanToken = String(botToken || '').trim();
+  if (!cleanToken) {
+    throw new Error('Add a Telegram bot token in API Key Settings first');
+  }
+
+  const url = new URL(`${TELEGRAM_BOT_API_ORIGIN}/bot${cleanToken}/${methodName}`);
+  Object.entries(params || {}).forEach(([key, value]) => {
+    url.searchParams.set(key, value);
+  });
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), TELEGRAM_IMPORT_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url.toString(), { signal: controller.signal });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload?.ok) {
+      throw new Error(payload?.description || `Telegram API responded with ${response.status}`);
+    }
+
+    return payload.result;
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw createTimeoutError(`Telegram API timed out after ${TELEGRAM_IMPORT_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function fetchTelegramStickerBlob(botToken, sticker = {}) {
+  const fileInfo = await fetchTelegramBotApi(botToken, 'getFile', {
+    file_id: sticker.file_id
+  });
+  const filePath = fileInfo?.file_path || '';
+  if (!filePath) {
+    throw new Error('Telegram did not return a downloadable file path');
+  }
+
+  const support = isTelegramStickerSupported(sticker, filePath);
+  if (!support.supported) {
+    return {
+      skipped: true,
+      reason: support.reason,
+      filePath
+    };
+  }
+
+  const downloadUrl = `${TELEGRAM_BOT_API_ORIGIN}/file/bot${String(botToken || '').trim()}/${filePath}`;
+  let blob = await fetchBlobWithTimeout(downloadUrl, {}, TELEGRAM_IMPORT_TIMEOUT_MS);
+  if (!(blob instanceof Blob) || blob.size === 0) {
+    throw new Error('Telegram returned an empty sticker file');
+  }
+
+  if (!blob.type || blob.type === 'application/octet-stream') {
+    blob = new Blob([await blob.arrayBuffer()], { type: support.mimeType });
+  }
+
+  return {
+    skipped: false,
+    blob,
+    filePath,
+    extension: support.extension,
+    mimeType: support.mimeType
+  };
 }
 
 async function extractDiscordGuildFromTab(tabId) {
@@ -2944,6 +3191,262 @@ async function importDiscordServerEmojis(tabId) {
   }
 }
 
+async function importTelegramStickerSet(stickerSetInput) {
+  if (telegramImportState.isImporting) {
+    throw new Error('A Telegram import is already in progress');
+  }
+
+  const setName = sanitizeTelegramStickerSetName(stickerSetInput);
+
+  telegramImportState.isImporting = true;
+  telegramImportState.current = 0;
+  telegramImportState.total = 0;
+  telegramImportState.setName = setName;
+  telegramImportState.setTitle = setName;
+  telegramImportState.startedAt = Date.now();
+
+  let setTitle = setName;
+  let channelId = `telegram:${setName}`;
+  let importedCount = 0;
+  let importedStickerCount = 0;
+  let importedVideoCount = 0;
+  let skippedCount = 0;
+  let skippedAnimatedCount = 0;
+  let skippedUnsupportedCount = 0;
+
+  try {
+    await updateTelegramImportProgress({
+      inProgress: true,
+      current: 0,
+      total: 0,
+      setName,
+      setTitle,
+      statusText: 'Reading Telegram sticker set...'
+    });
+
+    const { apiKeys = {} } = await chrome.storage.local.get(['apiKeys']);
+    const botToken = String(apiKeys.telegramBotToken || '').trim();
+    if (!botToken) {
+      throw new Error('Add a Telegram bot token in API Key Settings first');
+    }
+
+    const stickerSet = await fetchTelegramBotApi(botToken, 'getStickerSet', { name: setName });
+    const stickers = Array.isArray(stickerSet?.stickers)
+      ? stickerSet.stickers.filter((sticker) => sticker?.file_id)
+      : [];
+
+    setTitle = stickerSet?.title || setName;
+    channelId = `telegram:${stickerSet?.name || setName}`;
+    telegramImportState.setTitle = setTitle;
+    telegramImportState.total = stickers.length;
+
+    if (stickers.length === 0) {
+      throw new Error('Telegram returned no stickers for that set');
+    }
+
+    await updateTelegramImportProgress({
+      inProgress: true,
+      current: 0,
+      total: stickers.length,
+      setName,
+      setTitle,
+      statusText: `Found ${stickers.length} Telegram item${stickers.length === 1 ? '' : 's'} in ${setTitle}`
+    });
+
+    if (!emoteDB.db) {
+      await emoteDB.init();
+    }
+
+    const existing = await chrome.storage.local.get(['emoteMapping', 'channels']);
+    const globalEmoteMapping = { ...(existing.emoteMapping || {}) };
+    const channelsById = new Map();
+
+    (existing.channels || []).forEach((channel) => {
+      const id = String(channel?.id || '').trim();
+      if (id) {
+        channelsById.set(id, {
+          ...channel,
+          sourceType: channel?.sourceType || 'twitch'
+        });
+      }
+    });
+
+    const existingTelegramChannel = channelsById.get(channelId);
+    const previousTelegramKeys = new Set(Object.keys(existingTelegramChannel?.emotes || {}));
+    const reservedKeys = new Set(Object.keys(globalEmoteMapping));
+    previousTelegramKeys.forEach((key) => reservedKeys.delete(key));
+
+    const importedEmotes = {};
+
+    for (let index = 0; index < stickers.length; index += 1) {
+      const sticker = stickers[index];
+      const itemLabel = getTelegramItemLabel(stickerSet?.name || setName, index, sticker);
+
+      try {
+        if (sticker.is_animated) {
+          skippedCount += 1;
+          skippedAnimatedCount += 1;
+        } else {
+          const fileResult = await fetchTelegramStickerBlob(botToken, sticker);
+          if (fileResult.skipped) {
+            skippedCount += 1;
+            if (fileResult.reason === 'animated') {
+              skippedAnimatedCount += 1;
+            } else {
+              skippedUnsupportedCount += 1;
+            }
+          } else {
+            const key = buildUniqueTelegramStickerKey(stickerSet?.name || setName, index, reservedKeys);
+            const url = getTelegramStoredReference(sticker);
+            const extension = fileResult.extension || 'webp';
+            const filename = `${key.replace(/:/g, '')}.${extension}`;
+            const isVideo = fileResult.mimeType === 'video/webm';
+
+            await emoteDB.storeEmote(key, url, fileResult.blob, {
+              channel: setTitle,
+              channelId,
+              sourceType: 'telegram',
+              sourceLabel: isVideo ? 'Telegram Video Sticker' : 'Telegram Sticker',
+              telegramStickerSetName: stickerSet?.name || setName,
+              telegramStickerSetTitle: setTitle,
+              telegramStickerFileId: sticker.file_id || '',
+              telegramStickerFileUniqueId: sticker.file_unique_id || '',
+              telegramStickerEmoji: sticker.emoji || '',
+              telegramStickerType: stickerSet?.sticker_type || '',
+              animated: Boolean(sticker.is_animated),
+              video: Boolean(sticker.is_video || isVideo),
+              filename
+            });
+
+            importedEmotes[key] = url;
+            globalEmoteMapping[key] = url;
+            importedCount += 1;
+            if (isVideo) {
+              importedVideoCount += 1;
+            } else {
+              importedStickerCount += 1;
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('[Telegram Import] Skipping sticker:', itemLabel, error?.message || error);
+        skippedCount += 1;
+        skippedUnsupportedCount += 1;
+      }
+
+      telegramImportState.current = importedCount + skippedCount;
+      await updateTelegramImportProgress({
+        inProgress: true,
+        current: telegramImportState.current,
+        total: stickers.length,
+        setName,
+        setTitle,
+        currentItem: itemLabel,
+        statusText: `Importing Telegram stickers from ${setTitle}`,
+        importedCount,
+        importedStickerCount,
+        importedVideoCount,
+        skippedCount,
+        skippedAnimatedCount,
+        skippedUnsupportedCount
+      });
+    }
+
+    if (importedCount === 0) {
+      const skipReason = skippedAnimatedCount > 0 && skippedAnimatedCount === skippedCount
+        ? 'Animated TGS stickers need conversion support before Mojify can import them.'
+        : 'No supported Telegram stickers were imported from this set.';
+      throw new Error(skipReason);
+    }
+
+    for (const oldKey of previousTelegramKeys) {
+      if (Object.prototype.hasOwnProperty.call(importedEmotes, oldKey)) continue;
+      delete globalEmoteMapping[oldKey];
+      await emoteDB.deleteEmote(oldKey);
+    }
+
+    channelsById.set(channelId, {
+      id: channelId,
+      username: setTitle,
+      emotes: importedEmotes,
+      mediaCounts: {
+        stickers: importedStickerCount,
+        videoStickers: importedVideoCount,
+        skipped: skippedCount,
+        skippedAnimated: skippedAnimatedCount
+      },
+      sourceType: 'telegram'
+    });
+
+    await chrome.storage.local.set({
+      emoteMapping: globalEmoteMapping,
+      channels: Array.from(channelsById.values())
+    });
+
+    telegramImportState.isImporting = false;
+
+    const importedParts = [];
+    if (importedStickerCount > 0) {
+      importedParts.push(`${importedStickerCount} sticker${importedStickerCount === 1 ? '' : 's'}`);
+    }
+    if (importedVideoCount > 0) {
+      importedParts.push(`${importedVideoCount} video sticker${importedVideoCount === 1 ? '' : 's'}`);
+    }
+
+    const skippedNote = skippedAnimatedCount > 0
+      ? ` (${skippedAnimatedCount} animated TGS skipped)`
+      : '';
+    const toastMessage = `Imported ${importedParts.join(' and ')} from ${setTitle}${skippedNote}`;
+
+    await updateTelegramImportProgress({
+      inProgress: false,
+      completed: true,
+      current: stickers.length,
+      total: stickers.length,
+      setName,
+      setTitle,
+      importedCount,
+      importedStickerCount,
+      importedVideoCount,
+      skippedCount,
+      skippedAnimatedCount,
+      skippedUnsupportedCount,
+      channelId,
+      toastMessage
+    });
+
+    return {
+      success: true,
+      setName,
+      setTitle,
+      channelId,
+      importedCount,
+      importedStickerCount,
+      importedVideoCount,
+      skippedCount,
+      skippedAnimatedCount,
+      skippedUnsupportedCount
+    };
+  } catch (error) {
+    telegramImportState.isImporting = false;
+    await updateTelegramImportProgress({
+      inProgress: false,
+      current: telegramImportState.current,
+      total: telegramImportState.total,
+      setName,
+      setTitle,
+      importedCount,
+      importedStickerCount,
+      importedVideoCount,
+      skippedCount,
+      skippedAnimatedCount,
+      skippedUnsupportedCount,
+      error: error.message
+    });
+    throw error;
+  }
+}
+
 async function handleChannelIdsChanged(oldChannelIds = [], newChannelIds = []) {
   if (JSON.stringify(newChannelIds) === JSON.stringify(oldChannelIds)) {
     return;
@@ -3322,6 +3825,13 @@ function handleRuntimeMessage(request, sender, sendResponse) {
 
   if (request.action === 'importDiscordServerEmojis') {
     importDiscordServerEmojis(request.tabId)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'importTelegramStickerSet') {
+    importTelegramStickerSet(request.stickerSet)
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;

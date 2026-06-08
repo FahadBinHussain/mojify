@@ -19,7 +19,7 @@
       <div class="hero-status">
         <div class="status-tile">
           <span class="tile-label">Configured</span>
-          <strong id="configured-count">0 / 6</strong>
+          <strong id="configured-count">0 / 7</strong>
         </div>
         <div class="status-tile">
           <span class="tile-label">Storage</span>
@@ -112,6 +112,28 @@
           </div>
         </div>
 
+        <div class="section-block">
+          <div class="section-head">
+            <span class="section-kicker">Telegram</span>
+            <h2>Sticker set import</h2>
+            <p>A bot token lets Mojify fetch public sticker and custom emoji sets by short name while keeping imported media local.</p>
+          </div>
+
+          <div class="field-grid">
+            <label class="field" for="telegram-bot-token">
+              <span class="field-label">Telegram Bot Token</span>
+              <input
+                id="telegram-bot-token"
+                type="password"
+                placeholder="Enter Telegram bot token"
+                autocomplete="off"
+              >
+            </label>
+
+            <div class="field-note">Telegram imports fetch media once, store blobs in IndexedDB, and avoid saving token-bearing file URLs.</div>
+          </div>
+        </div>
+
         <div class="action-row">
           <button id="save-api-keys" class="primary" type="button">Save Keys</button>
           <p id="status-message" class="status" aria-live="polite"></p>
@@ -151,6 +173,7 @@
             <li>Pixabay API key</li>
             <li>Twitch client ID</li>
             <li>Twitch client secret</li>
+            <li>Telegram bot token</li>
           </ul>
         </div>
 

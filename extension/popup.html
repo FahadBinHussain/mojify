@@ -93,6 +93,7 @@
             <div class="media-tabs workspace-providers">
               <button class="media-tab-btn active" data-media-tab="twitch" type="button">Twitch</button>
               <button class="media-tab-btn" data-media-tab="discord" type="button">Discord</button>
+              <button class="media-tab-btn" data-media-tab="telegram" type="button">Telegram</button>
               <button class="media-tab-btn" data-media-tab="giphy" type="button">Giphy</button>
               <button class="media-tab-btn" data-media-tab="klipy" type="button">Klipy</button>
               <button class="media-tab-btn" data-media-tab="pixabay" type="button">Pixabay</button>
@@ -142,6 +143,35 @@
                   <div class="progress-fill" id="discord-import-progress-fill"></div>
                 </div>
                 <p class="discord-import-progress-note">Safe to close the popup. Progress will resume here when you reopen it.</p>
+              </div>
+            </div>
+
+            <div class="discord-import-panel telegram-import-panel hidden" id="telegram-import-panel">
+              <div class="discord-import-copy">
+                <span class="discord-import-kicker">Telegram Import</span>
+                <p>Paste a public Telegram sticker or custom emoji set link, then import supported static and video items.</p>
+              </div>
+              <div class="telegram-import-form">
+                <input
+                  id="telegram-sticker-set-input"
+                  type="text"
+                  placeholder="t.me/addstickers/UtyaDuck or UtyaDuck"
+                  spellcheck="false"
+                >
+                <button id="telegram-import-button" class="secondary-button" type="button">
+                  <i class="fas fa-paper-plane"></i>
+                  <span>Import Set</span>
+                </button>
+              </div>
+              <div class="discord-import-progress hidden" id="telegram-import-progress">
+                <div class="progress-info">
+                  <span id="telegram-import-progress-text">Importing Telegram stickers...</span>
+                  <span id="telegram-import-progress-count">0/0</span>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill" id="telegram-import-progress-fill"></div>
+                </div>
+                <p class="discord-import-progress-note">Animated TGS stickers are skipped until conversion support is added.</p>
               </div>
             </div>
           </div>

@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>A universal emote deck for the web.</strong><br>
-  Search, import, cache, and insert Twitch, 7TV, Discord, and reaction media from one browser extension.
+  Search, import, cache, and insert Twitch, 7TV, Discord, Telegram, and reaction media from one browser extension.
 </p>
 
 <p align="center">
@@ -33,6 +33,7 @@ It is designed around three ideas:
 - **Twitch and 7TV imports**: Add Twitch usernames or channel IDs, resolve them, and download their active 7TV emote sets.
 - **7TV set browsing**: View available emote sets for a channel and download alternate sets into Mojify.
 - **Discord server import**: Import custom emojis and stickers from the Discord server open in your browser.
+- **Telegram set import**: Import public Telegram sticker and custom emoji sets by `t.me/addstickers/...` link or short name.
 - **Reaction media tabs**: Search Giphy, Klipy, and Pixabay when API keys are configured.
 - **Smart minibar**: Type `:emote:` on supported pages and get quick suggestions near the composer.
 - **Recent and favorites**: Keep frequently used reactions one click away.
@@ -60,6 +61,7 @@ It is designed around three ideas:
 | --- | --- | --- |
 | Twitch + 7TV | Channel emotes and 7TV emote sets | Usernames require Twitch credentials; numeric IDs can be used directly. |
 | Discord Web | Server custom emojis and stickers | Import works from the active Discord server tab. |
+| Telegram | Public sticker and custom emoji sets | Requires a Telegram bot token; static image and WebM video stickers are imported, animated TGS stickers are skipped for now. |
 | Giphy | Search results | Requires a Giphy API key. |
 | Klipy | Search results | Requires a Klipy API key. |
 | Pixabay | Search results | Requires a Pixabay API key. |
@@ -74,6 +76,7 @@ not the same workflow or depth. `-` means it is not the point of that tool.
 | Twitch/7TV emote import into a personal library | ✅ | partial | partial | partial | - | - |
 | Twitch/YouTube/Kick chat rendering and channel emote management | - | ✅ | ✅ | ✅ | - | - |
 | Discord server emoji/sticker import | ✅ | - | - | - | ✅ | - |
+| Telegram sticker/custom emoji set import | ✅ | - | - | - | - | - |
 | Local-first cache in the browser profile | ✅ | partial | partial | partial | partial | partial |
 | Search, recents, favorites, and provider tabs | ✅ | ✅ | ✅ | ✅ | partial | ✅ |
 | Giphy/Klipy/Pixabay reaction search | ✅ | - | - | - | partial | ✅ |
@@ -126,6 +129,14 @@ For Discord imports:
 2. Navigate to the server you want to import.
 3. Open Mojify and switch to the Discord provider.
 4. Click `Import Open Server`.
+
+For Telegram imports:
+
+1. Open `Settings`, then `Open API Key Settings`.
+2. Add a Telegram bot token.
+3. Open the `Emotes` tab and switch to the Telegram provider.
+4. Paste a public set link like `t.me/addstickers/UtyaDuck` or the short name.
+5. Click `Import Set`.
 
 ## Repository Layout
 
