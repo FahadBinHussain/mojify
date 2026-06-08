@@ -61,7 +61,7 @@ It is designed around three ideas:
 | --- | --- | --- |
 | Twitch + 7TV | Channel emotes and 7TV emote sets | Usernames require Twitch credentials; numeric IDs can be used directly. |
 | Discord Web | Server custom emojis and stickers | Import works from the active Discord server tab. |
-| Telegram | Public sticker and custom emoji sets | Requires a Telegram bot token; static image and WebM video stickers import directly, while animated TGS stickers import as static previews when Telegram provides thumbnails. |
+| Telegram | Public sticker and custom emoji sets | Requires a Telegram bot token; static image and WebM video stickers import directly, and animated TGS stickers convert locally to WebM before import. |
 | Giphy | Search results | Requires a Giphy API key. |
 | Klipy | Search results | Requires a Klipy API key. |
 | Pixabay | Search results | Requires a Pixabay API key. |
@@ -145,9 +145,11 @@ Mojify/
 ├── extension/                 # Chrome MV3 extension
 │   ├── background.js          # Service worker, imports, downloads, insertion adapters
 │   ├── content.js             # Page integration and minibar behavior
+│   ├── offscreen.html         # Local renderer shell for TGS conversion
 │   ├── popup.html             # Main extension interface
 │   ├── popup.css              # Popup visual system
 │   ├── popup.js               # Popup state, search, import, and grid logic
+│   ├── tgs-converter.js       # Lottie/TGS to WebM conversion worker
 │   ├── options.*              # Provider key management
 │   ├── vendor/                # Small bundled browser-side libraries
 │   └── icons/                 # Extension icons
@@ -170,6 +172,7 @@ node --check extension/background.js
 node --check extension/content.js
 node --check extension/popup.js
 node --check extension/options.js
+node --check extension/tgs-converter.js
 ```
 
 For the companion web app:
