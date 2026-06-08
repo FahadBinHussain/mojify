@@ -357,6 +357,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let discordImportPollInterval = null;
   let telegramImportPollInterval = null;
   let telegramImportPollingInFlight = false;
+  let telegramImportLibraryRefreshTimer = null;
+  let telegramImportLibraryRefreshInFlight = false;
+  let lastTelegramImportRenderedCount = 0;
   let downloadCompletionHandled = false;
   let discordImportCompletionHandled = false;
   let telegramImportCompletionHandled = false;
@@ -4526,6 +4529,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (telegramImportProgressText) {
       telegramImportProgressText.textContent = statusText;
     }
+    scheduleTelegramImportLibraryRefresh(progressData);
   }
 
   function resetTelegramImportUi() {
@@ -4607,6 +4611,67 @@ document.addEventListener('DOMContentLoaded', () => {
       telegramImportPollInterval = null;
     }
     telegramImportPollingInFlight = false;
+    if (telegramImportLibraryRefreshTimer) {
+      clearTimeout(telegramImportLibraryRefreshTimer);
+      telegramImportLibraryRefreshTimer = null;
+    }
+  }
+
+  function getTelegramProgressImportedCount(progressData = {}) {
+    return Number(progressData.importedCount || 0) ||
+      Number(progressData.importedStickerCount || 0) +
+      Number(progressData.importedAnimatedCount || 0) +
+      Number(progressData.importedVideoCount || 0) +
+      Number(progressData.importedPreviewCount || 0);
+  }
+
+  function markTelegramLibraryDirty() {
+    emoteLibraryLoaded = false;
+    emoteGridDirty = true;
+    settingsPanelsDirty = true;
+  }
+
+  function scheduleTelegramImportLibraryRefresh(progressData = {}) {
+    const importedCount = getTelegramProgressImportedCount(progressData);
+    if (importedCount <= 0 || importedCount <= lastTelegramImportRenderedCount) {
+      return;
+    }
+
+    lastTelegramImportRenderedCount = importedCount;
+
+    if (activeMediaTab !== 'telegram' || !isTabActive('emotes')) {
+      markTelegramLibraryDirty();
+      return;
+    }
+
+    if (telegramImportLibraryRefreshTimer || telegramImportLibraryRefreshInFlight) {
+      return;
+    }
+
+    telegramImportLibraryRefreshTimer = setTimeout(async () => {
+      telegramImportLibraryRefreshTimer = null;
+      telegramImportLibraryRefreshInFlight = true;
+
+      try {
+        await loadEmotes({ renderGrid: false, refreshPanels: false });
+
+        if (progressData.channelId) {
+          activeChannelFilter = progressData.channelId;
+          renderChannelFilterBar();
+        }
+
+        if (activeMediaTab === 'telegram' && isTabActive('emotes')) {
+          filterAndDisplayEmotes(false);
+        } else {
+          emoteGridDirty = true;
+        }
+      } catch (error) {
+        console.warn('[Mojify] Failed to refresh Telegram import grid:', error);
+        markTelegramLibraryDirty();
+      } finally {
+        telegramImportLibraryRefreshInFlight = false;
+      }
+    }, 350);
   }
 
   async function finishTelegramImportFlow({
@@ -4622,6 +4687,7 @@ document.addEventListener('DOMContentLoaded', () => {
     telegramImportCompletionHandled = true;
     stopTelegramImportPolling();
     resetTelegramImportUi();
+    lastTelegramImportRenderedCount = 0;
 
     if (completed) {
       await ensureEmoteLibraryLoaded({ renderGrid: activeMediaTab === 'telegram', refreshPanels: true });
@@ -4932,6 +4998,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       try {
         telegramImportCompletionHandled = false;
+        lastTelegramImportRenderedCount = 0;
         if (!stickerSet) {
           throw new Error('Paste a Telegram sticker set link or short name first');
         }
