@@ -2330,6 +2330,7 @@ async function updateTelegramImportProgress(progress = {}) {
     statusText: progress.statusText || '',
     importedCount: Number(progress.importedCount || 0),
     importedStickerCount: Number(progress.importedStickerCount || 0),
+    importedAnimatedCount: Number(progress.importedAnimatedCount || 0),
     importedVideoCount: Number(progress.importedVideoCount || 0),
     skippedCount: Number(progress.skippedCount || 0),
     importedPreviewCount: Number(progress.importedPreviewCount || 0),
@@ -2563,58 +2564,75 @@ async function fetchTelegramBotApi(botToken, methodName, params = {}) {
   }
 }
 
-async function fetchTelegramStickerBlob(botToken, sticker = {}) {
-  let filePath = '';
-  let support = {
-    supported: false,
-    reason: sticker.is_animated ? 'animated' : 'unsupported'
+async function ensureTgsConverterOffscreenDocument() {
+  if (!chrome.offscreen?.createDocument) {
+    throw new Error('Chrome offscreen documents are required for animated TGS conversion');
+  }
+
+  try {
+    if (chrome.offscreen.hasDocument && await chrome.offscreen.hasDocument()) {
+      return;
+    }
+  } catch (error) {
+    // Older Chromium builds may not expose hasDocument; createDocument below will tell us.
+  }
+
+  try {
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['BLOBS'],
+      justification: 'Render Telegram TGS stickers locally and encode them as WebM for Mojify imports.'
+    });
+  } catch (error) {
+    const message = String(error?.message || error || '');
+    if (!/Only a single offscreen document|already exists/i.test(message)) {
+      throw error;
+    }
+  }
+}
+
+async function convertTelegramTgsBlobToWebm(tgsBlob, { label = 'Telegram sticker' } = {}) {
+  await ensureTgsConverterOffscreenDocument();
+
+  const tgsDataUrl = await blobToDataUrl(tgsBlob);
+  const response = await new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({
+      type: 'convertTelegramTgsToWebm',
+      tgsDataUrl,
+      label
+    }, (result) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(result);
+    });
+  });
+
+  if (!response?.success || !response.dataUrl) {
+    throw new Error(response?.error || 'Animated TGS conversion failed');
+  }
+
+  const convertedResponse = await fetch(response.dataUrl);
+  const convertedBlob = await convertedResponse.blob();
+  if (!(convertedBlob instanceof Blob) || convertedBlob.size === 0) {
+    throw new Error('Animated TGS conversion returned empty media');
+  }
+
+  return {
+    blob: convertedBlob.type ? convertedBlob : new Blob([await convertedBlob.arrayBuffer()], { type: 'video/webm' }),
+    mimeType: convertedBlob.type || response.mimeType || 'video/webm',
+    extension: 'webm',
+    width: response.width || 0,
+    height: response.height || 0,
+    durationMs: response.durationMs || 0,
+    frameRate: response.frameRate || 0,
+    size: response.size || convertedBlob.size
   };
+}
 
-  if (!sticker.is_animated) {
-    const fileInfo = await fetchTelegramBotApi(botToken, 'getFile', {
-      file_id: sticker.file_id
-    });
-    filePath = fileInfo?.file_path || '';
-    if (!filePath) {
-      throw new Error('Telegram did not return a downloadable file path');
-    }
-
-    support = isTelegramStickerSupported(sticker, filePath);
-  }
-
-  let usingThumbnail = false;
-  let downloadFilePath = filePath;
-  let mimeType = support.mimeType;
-  let extension = support.extension;
-
-  if (!support.supported) {
-    const thumbnail = getTelegramStickerThumbnail(sticker);
-    if (!thumbnail?.file_id) {
-      return {
-        skipped: true,
-        reason: support.reason,
-        filePath
-      };
-    }
-
-    const thumbnailInfo = await fetchTelegramBotApi(botToken, 'getFile', {
-      file_id: thumbnail.file_id
-    });
-    downloadFilePath = thumbnailInfo?.file_path || '';
-    if (!downloadFilePath) {
-      return {
-        skipped: true,
-        reason: support.reason,
-        filePath
-      };
-    }
-
-    usingThumbnail = true;
-    mimeType = getTelegramMimeType(downloadFilePath, {});
-    extension = getTelegramFileExtension(downloadFilePath) || (mimeType === 'image/jpeg' ? 'jpg' : 'webp');
-  }
-
-  const downloadUrl = `${TELEGRAM_BOT_API_ORIGIN}/file/bot${String(botToken || '').trim()}/${downloadFilePath}`;
+async function fetchTelegramFileBlob(botToken, filePath, mimeType = 'application/octet-stream') {
+  const downloadUrl = `${TELEGRAM_BOT_API_ORIGIN}/file/bot${String(botToken || '').trim()}/${filePath}`;
   let blob = await fetchBlobWithTimeout(downloadUrl, {}, TELEGRAM_IMPORT_TIMEOUT_MS);
   if (!(blob instanceof Blob) || blob.size === 0) {
     throw new Error('Telegram returned an empty sticker file');
@@ -2624,14 +2642,112 @@ async function fetchTelegramStickerBlob(botToken, sticker = {}) {
     blob = new Blob([await blob.arrayBuffer()], { type: mimeType });
   }
 
+  return blob;
+}
+
+async function fetchTelegramThumbnailFallback(botToken, sticker = {}, {
+  filePath = '',
+  reason = 'unsupported',
+  conversionError = ''
+} = {}) {
+  const thumbnail = getTelegramStickerThumbnail(sticker);
+  if (!thumbnail?.file_id) {
+    return {
+      skipped: true,
+      reason,
+      filePath,
+      conversionError
+    };
+  }
+
+  const thumbnailInfo = await fetchTelegramBotApi(botToken, 'getFile', {
+    file_id: thumbnail.file_id
+  });
+  const thumbnailFilePath = thumbnailInfo?.file_path || '';
+  if (!thumbnailFilePath) {
+    return {
+      skipped: true,
+      reason,
+      filePath,
+      conversionError
+    };
+  }
+
+  const mimeType = getTelegramMimeType(thumbnailFilePath, {});
+  const extension = getTelegramFileExtension(thumbnailFilePath) || (mimeType === 'image/jpeg' ? 'jpg' : 'webp');
+  const blob = await fetchTelegramFileBlob(botToken, thumbnailFilePath, mimeType);
+
   return {
     skipped: false,
     blob,
-    filePath: downloadFilePath,
+    filePath: thumbnailFilePath,
+    originalFilePath: filePath,
     extension,
     mimeType,
-    thumbnail: usingThumbnail
+    thumbnail: true,
+    conversionError
   };
+}
+
+async function fetchTelegramStickerBlob(botToken, sticker = {}) {
+  const fileInfo = await fetchTelegramBotApi(botToken, 'getFile', {
+    file_id: sticker.file_id
+  });
+  const filePath = fileInfo?.file_path || '';
+  if (!filePath) {
+    throw new Error('Telegram did not return a downloadable file path');
+  }
+
+  const support = isTelegramStickerSupported(sticker, filePath);
+  if (support.supported) {
+    return {
+      skipped: false,
+      blob: await fetchTelegramFileBlob(botToken, filePath, support.mimeType),
+      filePath,
+      extension: support.extension,
+      mimeType: support.mimeType
+    };
+  }
+
+  const originalMimeType = getTelegramMimeType(filePath, sticker);
+  const originalExtension = getTelegramFileExtension(filePath);
+  const isTgsSticker = support.reason === 'animated' || sticker.is_animated || originalExtension === 'tgs';
+
+  if (isTgsSticker) {
+    try {
+      const originalBlob = await fetchTelegramFileBlob(botToken, filePath, originalMimeType || 'application/x-tgsticker');
+      const converted = await convertTelegramTgsBlobToWebm(originalBlob, {
+        label: sticker.emoji ? `Telegram sticker ${sticker.emoji}` : 'Telegram animated sticker'
+      });
+
+      return {
+        skipped: false,
+        blob: converted.blob,
+        filePath,
+        extension: converted.extension || 'webm',
+        mimeType: converted.mimeType || 'video/webm',
+        converted: true,
+        convertedFrom: 'tgs',
+        width: converted.width,
+        height: converted.height,
+        durationMs: converted.durationMs,
+        frameRate: converted.frameRate,
+        size: converted.size
+      };
+    } catch (error) {
+      console.warn('[Telegram Import] TGS conversion failed; trying thumbnail preview:', error?.message || error);
+      return fetchTelegramThumbnailFallback(botToken, sticker, {
+        filePath,
+        reason: 'animated',
+        conversionError: error?.message || 'TGS conversion failed'
+      });
+    }
+  }
+
+  return fetchTelegramThumbnailFallback(botToken, sticker, {
+    filePath,
+    reason: support.reason || 'unsupported'
+  });
 }
 
 async function extractDiscordGuildFromTab(tabId) {
@@ -3249,6 +3365,7 @@ async function importTelegramStickerSet(stickerSetInput) {
   let channelId = `telegram:${setName}`;
   let importedCount = 0;
   let importedStickerCount = 0;
+  let importedAnimatedCount = 0;
   let importedVideoCount = 0;
   let importedPreviewCount = 0;
   let skippedCount = 0;
@@ -3336,14 +3453,17 @@ async function importTelegramStickerSet(stickerSetInput) {
           const key = buildUniqueTelegramStickerKey(stickerSet?.name || setName, index, reservedKeys);
           const url = getTelegramStoredReference(sticker);
           const extension = fileResult.extension || 'webp';
+          const isConverted = Boolean(fileResult.converted);
           const isVideo = fileResult.mimeType === 'video/webm';
-          const isPreview = Boolean(fileResult.thumbnail);
-          const filename = `${key.replace(/:/g, '')}${isPreview ? '_preview' : ''}.${extension}`;
-          const sourceLabel = isPreview
-            ? 'Telegram Animated Sticker Preview'
-            : isVideo
-              ? 'Telegram Video Sticker'
-              : 'Telegram Sticker';
+          const isPreview = Boolean(fileResult.thumbnail) && !isConverted;
+          const filename = `${key.replace(/:/g, '')}${isPreview ? '_preview' : isConverted ? '_animated' : ''}.${extension}`;
+          const sourceLabel = isConverted
+            ? 'Telegram Animated Sticker'
+            : isPreview
+              ? 'Telegram Animated Sticker Preview'
+              : isVideo
+                ? 'Telegram Video Sticker'
+                : 'Telegram Sticker';
 
           await emoteDB.storeEmote(key, url, fileResult.blob, {
             channel: setTitle,
@@ -3356,17 +3476,27 @@ async function importTelegramStickerSet(stickerSetInput) {
             telegramStickerFileUniqueId: sticker.file_unique_id || '',
             telegramStickerEmoji: sticker.emoji || '',
             telegramStickerType: stickerSet?.sticker_type || '',
-            telegramAssetType: isPreview ? 'animated-preview' : isVideo ? 'video-sticker' : 'sticker',
-            animated: Boolean(sticker.is_animated),
+            telegramAssetType: isConverted ? 'animated-sticker' : isPreview ? 'animated-preview' : isVideo ? 'video-sticker' : 'sticker',
+            telegramOriginalFilePath: fileResult.originalFilePath || fileResult.filePath || '',
+            telegramConvertedFrom: fileResult.convertedFrom || '',
+            telegramConversionDurationMs: Number(fileResult.durationMs || 0),
+            telegramConversionFrameRate: Number(fileResult.frameRate || 0),
+            telegramConversionWidth: Number(fileResult.width || 0),
+            telegramConversionHeight: Number(fileResult.height || 0),
+            telegramConversionError: fileResult.conversionError || '',
+            animated: Boolean(sticker.is_animated || isConverted),
             video: Boolean(sticker.is_video || isVideo),
             previewOnly: isPreview,
+            convertedFromTgs: isConverted,
             filename
           });
 
           importedEmotes[key] = url;
           globalEmoteMapping[key] = url;
           importedCount += 1;
-          if (isPreview) {
+          if (isConverted) {
+            importedAnimatedCount += 1;
+          } else if (isPreview) {
             importedPreviewCount += 1;
           } else if (isVideo) {
             importedVideoCount += 1;
@@ -3391,6 +3521,7 @@ async function importTelegramStickerSet(stickerSetInput) {
         statusText: `Importing Telegram stickers from ${setTitle}`,
         importedCount,
         importedStickerCount,
+        importedAnimatedCount,
         importedVideoCount,
         importedPreviewCount,
         skippedCount,
@@ -3401,7 +3532,7 @@ async function importTelegramStickerSet(stickerSetInput) {
 
     if (importedCount === 0) {
       const skipReason = skippedAnimatedCount > 0 && skippedAnimatedCount === skippedCount
-        ? 'This pack only has animated TGS stickers and Telegram did not provide static previews to import.'
+        ? 'This pack only has animated TGS stickers, but Mojify could not convert or preview them in this browser.'
         : 'No supported Telegram stickers were imported from this set.';
       throw new Error(skipReason);
     }
@@ -3418,6 +3549,7 @@ async function importTelegramStickerSet(stickerSetInput) {
       emotes: importedEmotes,
       mediaCounts: {
         stickers: importedStickerCount,
+        animatedStickers: importedAnimatedCount,
         videoStickers: importedVideoCount,
         animatedPreviews: importedPreviewCount,
         skipped: skippedCount,
@@ -3436,6 +3568,9 @@ async function importTelegramStickerSet(stickerSetInput) {
     const importedParts = [];
     if (importedStickerCount > 0) {
       importedParts.push(`${importedStickerCount} sticker${importedStickerCount === 1 ? '' : 's'}`);
+    }
+    if (importedAnimatedCount > 0) {
+      importedParts.push(`${importedAnimatedCount} animated sticker${importedAnimatedCount === 1 ? '' : 's'}`);
     }
     if (importedVideoCount > 0) {
       importedParts.push(`${importedVideoCount} video sticker${importedVideoCount === 1 ? '' : 's'}`);
@@ -3458,6 +3593,7 @@ async function importTelegramStickerSet(stickerSetInput) {
       setTitle,
       importedCount,
       importedStickerCount,
+      importedAnimatedCount,
       importedVideoCount,
       importedPreviewCount,
       skippedCount,
@@ -3474,6 +3610,7 @@ async function importTelegramStickerSet(stickerSetInput) {
       channelId,
       importedCount,
       importedStickerCount,
+      importedAnimatedCount,
       importedVideoCount,
       importedPreviewCount,
       skippedCount,
@@ -3490,6 +3627,7 @@ async function importTelegramStickerSet(stickerSetInput) {
       setTitle,
       importedCount,
       importedStickerCount,
+      importedAnimatedCount,
       importedVideoCount,
       importedPreviewCount,
       skippedCount,

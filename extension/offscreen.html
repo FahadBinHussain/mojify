@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Mojify TGS Converter</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+    }
+
+    #render-root {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 512px;
+      height: 512px;
+      overflow: hidden;
+      background: transparent;
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="render-root"></div>
+  <script src="vendor/lottie_canvas.min.js"></script>
+  <script src="tgs-converter.js"></script>
+</body>
+</html>
