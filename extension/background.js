@@ -113,7 +113,7 @@ async function fetchBlobWithTimeout(url, options = {}, timeoutMs = 15000) {
 const emoteDB = {
   db: null,
   dbName: 'MojifyEmotes',
-  version: 4,
+  version: 5,
 
   async init() {
     return new Promise((resolve, reject) => {
@@ -142,8 +142,8 @@ const emoteDB = {
           metadataStore.createIndex('timestamp', 'timestamp', { unique: false });
         }
 
-        if (!db.objectStoreNames.contains('emoteSources')) {
-          db.createObjectStore('emoteSources');
+        if (db.objectStoreNames.contains('emoteSources')) {
+          db.deleteObjectStore('emoteSources');
         }
       };
     });
@@ -204,36 +204,6 @@ const emoteDB = {
         console.error(`[IndexedDB] Failed to store metadata for ${key}:`, metadataRequest.error);
         reject(metadataRequest.error);
       };
-    });
-  },
-
-  async storeEmoteSource(key, blob) {
-    if (!this.db) await this.init();
-
-    if (!blob || !(blob instanceof Blob) || blob.size === 0) {
-      throw new Error(`Invalid source blob for emote ${key}`);
-    }
-
-    return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emoteSources'], 'readwrite');
-      const sourceStore = transaction.objectStore('emoteSources');
-      const request = sourceStore.put(blob, key);
-
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-  },
-
-  async getEmoteSource(key) {
-    if (!this.db) await this.init();
-
-    return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emoteSources'], 'readonly');
-      const sourceStore = transaction.objectStore('emoteSources');
-      const request = sourceStore.get(key);
-
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => reject(request.error);
     });
   },
 
@@ -378,17 +348,15 @@ const emoteDB = {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata', 'emoteSources'], 'readwrite');
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
       const blobsStore = transaction.objectStore('emoteBlobs');
       const metadataStore = transaction.objectStore('emoteMetadata');
-      const sourceStore = transaction.objectStore('emoteSources');
 
       let blobDeleted = false;
       let metadataDeleted = false;
-      let sourceDeleted = false;
 
       const checkComplete = () => {
-        if (blobDeleted && metadataDeleted && sourceDeleted) {
+        if (blobDeleted && metadataDeleted) {
           resolve();
         }
       };
@@ -414,16 +382,6 @@ const emoteDB = {
         metadataDeleted = true; // Continue even if metadata delete fails
         checkComplete();
       };
-
-      const sourceRequest = sourceStore.delete(key);
-      sourceRequest.onsuccess = () => {
-        sourceDeleted = true;
-        checkComplete();
-      };
-      sourceRequest.onerror = () => {
-        sourceDeleted = true;
-        checkComplete();
-      };
     });
   },
 
@@ -431,17 +389,15 @@ const emoteDB = {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata', 'emoteSources'], 'readwrite');
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
       const blobsStore = transaction.objectStore('emoteBlobs');
       const metadataStore = transaction.objectStore('emoteMetadata');
-      const sourceStore = transaction.objectStore('emoteSources');
 
       let blobsCleared = false;
       let metadataCleared = false;
-      let sourcesCleared = false;
 
       const checkComplete = () => {
-        if (blobsCleared && metadataCleared && sourcesCleared) {
+        if (blobsCleared && metadataCleared) {
           resolve();
         }
       };
@@ -465,16 +421,6 @@ const emoteDB = {
       };
       metadataRequest.onerror = () => {
         metadataCleared = true; // Continue even if clear fails
-        checkComplete();
-      };
-
-      const sourcesRequest = sourceStore.clear();
-      sourcesRequest.onsuccess = () => {
-        sourcesCleared = true;
-        checkComplete();
-      };
-      sourcesRequest.onerror = () => {
-        sourcesCleared = true;
         checkComplete();
       };
     });
@@ -2976,7 +2922,6 @@ async function fetchTelegramStickerBlob(botToken, sticker = {}) {
       return {
         skipped: false,
         blob: converted.blob,
-        originalBlob,
         filePath,
         extension: converted.extension || 'webm',
         mimeType: converted.mimeType || 'video/webm',
@@ -3762,16 +3707,6 @@ async function importTelegramStickerSet(stickerSetInput) {
               : isVideo
                 ? 'Telegram Video Sticker'
                 : 'Telegram Sticker';
-          let originalSourceStored = false;
-
-          if (fileResult.originalBlob) {
-            try {
-              await emoteDB.storeEmoteSource(key, fileResult.originalBlob);
-              originalSourceStored = true;
-            } catch (error) {
-              console.warn('[Telegram Import] Failed to store original Telegram source:', error?.message || error);
-            }
-          }
 
           await emoteDB.storeEmote(key, url, fileResult.blob, {
             channel: setTitle,
@@ -3797,7 +3732,6 @@ async function importTelegramStickerSet(stickerSetInput) {
             telegramConversionHeight: Number(fileResult.height || 0),
             telegramConversionLossless: Boolean(fileResult.lossless),
             telegramConversionError: fileResult.conversionError || fileResult.nativeConversionError || '',
-            telegramOriginalSourceStored: originalSourceStored,
             animated: Boolean(sticker.is_animated || isConverted),
             video: Boolean(sticker.is_video || isVideo),
             previewOnly: isPreview,
