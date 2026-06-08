@@ -2606,33 +2606,6 @@ async function fetchTelegramBotApi(botToken, methodName, params = {}) {
   }
 }
 
-async function ensureTgsConverterOffscreenDocument() {
-  if (!chrome.offscreen?.createDocument) {
-    throw new Error('Chrome offscreen documents are required for animated TGS conversion');
-  }
-
-  try {
-    if (chrome.offscreen.hasDocument && await chrome.offscreen.hasDocument()) {
-      return;
-    }
-  } catch (error) {
-    // Older Chromium builds may not expose hasDocument; createDocument below will tell us.
-  }
-
-  try {
-    await chrome.offscreen.createDocument({
-      url: 'offscreen.html',
-      reasons: ['BLOBS'],
-      justification: 'Render Telegram TGS stickers locally and encode them as WebM for Mojify imports.'
-    });
-  } catch (error) {
-    const message = String(error?.message || error || '');
-    if (!/Only a single offscreen document|already exists/i.test(message)) {
-      throw error;
-    }
-  }
-}
-
 function convertTelegramTgsDataUrlWithNativeHost(tgsDataUrl, { label = 'Telegram sticker' } = {}) {
   return new Promise((resolve, reject) => {
     if (!chrome.runtime?.connectNative) {
@@ -2772,62 +2745,9 @@ function convertTelegramTgsDataUrlWithNativeHost(tgsDataUrl, { label = 'Telegram
   });
 }
 
-async function convertTelegramTgsDataUrlWithBrowser(tgsDataUrl, { label = 'Telegram sticker' } = {}) {
-  await ensureTgsConverterOffscreenDocument();
-
-  const response = await new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage({
-      type: 'convertTelegramTgsToWebm',
-      tgsDataUrl,
-      label
-    }, (result) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
-      }
-      resolve(result);
-    });
-  });
-
-  if (!response?.success || !response.dataUrl) {
-    throw new Error(response?.error || 'Animated TGS conversion failed');
-  }
-
-  const convertedResponse = await fetch(response.dataUrl);
-  const convertedBlob = await convertedResponse.blob();
-  if (!(convertedBlob instanceof Blob) || convertedBlob.size === 0) {
-    throw new Error('Animated TGS conversion returned empty media');
-  }
-
-  return {
-    blob: convertedBlob.type ? convertedBlob : new Blob([await convertedBlob.arrayBuffer()], { type: 'video/webm' }),
-    mimeType: convertedBlob.type || response.mimeType || 'video/webm',
-    extension: 'webm',
-    width: response.width || 0,
-    height: response.height || 0,
-    durationMs: response.durationMs || 0,
-    frameRate: response.frameRate || 0,
-    size: response.size || convertedBlob.size,
-    renderer: 'browser-lottie-mediarecorder',
-    encoder: response.mimeType || 'MediaRecorder WebM',
-    lossless: false,
-    conversionMethod: 'browser-mediarecorder'
-  };
-}
-
 async function convertTelegramTgsBlobToWebm(tgsBlob, { label = 'Telegram sticker' } = {}) {
   const tgsDataUrl = await blobToDataUrl(tgsBlob);
-
-  try {
-    return await convertTelegramTgsDataUrlWithNativeHost(tgsDataUrl, { label });
-  } catch (error) {
-    console.warn('[Telegram Import] Native TGS conversion unavailable; using browser fallback:', error?.message || error);
-    const browserResult = await convertTelegramTgsDataUrlWithBrowser(tgsDataUrl, { label });
-    return {
-      ...browserResult,
-      nativeConversionError: error?.message || 'Native TGS conversion failed'
-    };
-  }
+  return convertTelegramTgsDataUrlWithNativeHost(tgsDataUrl, { label });
 }
 
 async function fetchTelegramFileBlob(botToken, filePath, mimeType = 'application/octet-stream') {
@@ -2936,16 +2856,16 @@ async function fetchTelegramStickerBlob(botToken, sticker = {}) {
         renderer: converted.renderer || '',
         encoder: converted.encoder || '',
         lossless: Boolean(converted.lossless),
-        conversionMethod: converted.conversionMethod || '',
-        nativeConversionError: converted.nativeConversionError || ''
+        conversionMethod: converted.conversionMethod || ''
       };
     } catch (error) {
-      console.warn('[Telegram Import] TGS conversion failed; trying thumbnail preview:', error?.message || error);
-      return fetchTelegramThumbnailFallback(botToken, sticker, {
+      console.warn('[Telegram Import] Native TGS conversion failed; skipping animated sticker:', error?.message || error);
+      return {
+        skipped: true,
         filePath,
         reason: 'animated',
-        conversionError: error?.message || 'TGS conversion failed'
-      });
+        conversionError: error?.message || 'Native TGS conversion failed'
+      };
     }
   }
 
@@ -3731,7 +3651,7 @@ async function importTelegramStickerSet(stickerSetInput) {
             telegramConversionWidth: Number(fileResult.width || 0),
             telegramConversionHeight: Number(fileResult.height || 0),
             telegramConversionLossless: Boolean(fileResult.lossless),
-            telegramConversionError: fileResult.conversionError || fileResult.nativeConversionError || '',
+            telegramConversionError: fileResult.conversionError || '',
             animated: Boolean(sticker.is_animated || isConverted),
             video: Boolean(sticker.is_video || isVideo),
             previewOnly: isPreview,
@@ -3796,7 +3716,7 @@ async function importTelegramStickerSet(stickerSetInput) {
 
     if (importedCount === 0) {
       const skipReason = skippedAnimatedCount > 0 && skippedAnimatedCount === skippedCount
-        ? 'This pack only has animated TGS stickers, but Mojify could not convert or preview them in this browser.'
+        ? 'This pack only has animated TGS stickers, but Mojify could not convert them with the native helper.'
         : 'No supported Telegram stickers were imported from this set.';
       throw new Error(skipReason);
     }

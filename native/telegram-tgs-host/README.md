@@ -7,7 +7,8 @@ The extension tries this host first. When it is installed, animated Telegram
 stickers are rendered frame-by-frame at the source animation frame rate, encoded
 with ffmpeg/libvpx-vp9 in lossless WebM mode, then returned to the extension in
 Native Messaging chunks. If the host is not installed or a conversion fails,
-Mojify falls back to the browser offscreen converter.
+Mojify skips animated TGS stickers so lower-quality browser conversions do not
+mix into the library.
 
 ## Requirements
 
