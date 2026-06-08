@@ -61,7 +61,7 @@ It is designed around three ideas:
 | --- | --- | --- |
 | Twitch + 7TV | Channel emotes and 7TV emote sets | Usernames require Twitch credentials; numeric IDs can be used directly. |
 | Discord Web | Server custom emojis and stickers | Import works from the active Discord server tab. |
-| Telegram | Public sticker and custom emoji sets | Requires a Telegram bot token; static image and WebM video stickers are imported, animated TGS stickers are skipped for now. |
+| Telegram | Public sticker and custom emoji sets | Requires a Telegram bot token; static image and WebM video stickers import directly, while animated TGS stickers import as static previews when Telegram provides thumbnails. |
 | Giphy | Search results | Requires a Giphy API key. |
 | Klipy | Search results | Requires a Klipy API key. |
 | Pixabay | Search results | Requires a Pixabay API key. |
