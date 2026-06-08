@@ -3010,6 +3010,43 @@ async function fetchTelegramStickerBlob(botToken, sticker = {}) {
   });
 }
 
+async function publishTelegramImportLibrarySnapshot({
+  channelsById,
+  channelId,
+  setTitle,
+  importedEmotes,
+  globalEmoteMapping,
+  importedStickerCount = 0,
+  importedAnimatedCount = 0,
+  importedVideoCount = 0,
+  importedPreviewCount = 0,
+  skippedCount = 0,
+  skippedAnimatedCount = 0,
+  importInProgress = true
+} = {}) {
+  channelsById.set(channelId, {
+    id: channelId,
+    username: setTitle,
+    emotes: { ...importedEmotes },
+    mediaCounts: {
+      stickers: importedStickerCount,
+      animatedStickers: importedAnimatedCount,
+      videoStickers: importedVideoCount,
+      animatedPreviews: importedPreviewCount,
+      skipped: skippedCount,
+      skippedAnimated: skippedAnimatedCount
+    },
+    sourceType: 'telegram',
+    importInProgress,
+    updatedAt: Date.now()
+  });
+
+  await chrome.storage.local.set({
+    emoteMapping: { ...globalEmoteMapping },
+    channels: Array.from(channelsById.values())
+  });
+}
+
 async function extractDiscordGuildFromTab(tabId) {
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
@@ -3668,6 +3705,7 @@ async function importTelegramStickerSet(stickerSetInput) {
       total: stickers.length,
       setName,
       setTitle,
+      channelId,
       statusText: `Found ${stickers.length} Telegram item${stickers.length === 1 ? '' : 's'} in ${setTitle}`
     });
 
@@ -3779,6 +3817,21 @@ async function importTelegramStickerSet(stickerSetInput) {
           } else {
             importedStickerCount += 1;
           }
+
+          await publishTelegramImportLibrarySnapshot({
+            channelsById,
+            channelId,
+            setTitle,
+            importedEmotes,
+            globalEmoteMapping,
+            importedStickerCount,
+            importedAnimatedCount,
+            importedVideoCount,
+            importedPreviewCount,
+            skippedCount,
+            skippedAnimatedCount,
+            importInProgress: true
+          });
         }
       } catch (error) {
         console.warn('[Telegram Import] Skipping sticker:', itemLabel, error?.message || error);
@@ -3802,7 +3855,8 @@ async function importTelegramStickerSet(stickerSetInput) {
         importedPreviewCount,
         skippedCount,
         skippedAnimatedCount,
-        skippedUnsupportedCount
+        skippedUnsupportedCount,
+        channelId
       });
     }
 
@@ -3819,24 +3873,19 @@ async function importTelegramStickerSet(stickerSetInput) {
       await emoteDB.deleteEmote(oldKey);
     }
 
-    channelsById.set(channelId, {
-      id: channelId,
-      username: setTitle,
-      emotes: importedEmotes,
-      mediaCounts: {
-        stickers: importedStickerCount,
-        animatedStickers: importedAnimatedCount,
-        videoStickers: importedVideoCount,
-        animatedPreviews: importedPreviewCount,
-        skipped: skippedCount,
-        skippedAnimated: skippedAnimatedCount
-      },
-      sourceType: 'telegram'
-    });
-
-    await chrome.storage.local.set({
-      emoteMapping: globalEmoteMapping,
-      channels: Array.from(channelsById.values())
+    await publishTelegramImportLibrarySnapshot({
+      channelsById,
+      channelId,
+      setTitle,
+      importedEmotes,
+      globalEmoteMapping,
+      importedStickerCount,
+      importedAnimatedCount,
+      importedVideoCount,
+      importedPreviewCount,
+      skippedCount,
+      skippedAnimatedCount,
+      importInProgress: false
     });
 
     telegramImportState.isImporting = false;
