@@ -6,6 +6,8 @@ const SEVEN_TV_GQL_URL = `${SEVEN_TV_API_ORIGIN}/v4/gql`;
 const SEVEN_TV_RESOLVE_TIMEOUT_MS = 45000;
 const TELEGRAM_BOT_API_ORIGIN = 'https://api.telegram.org';
 const TELEGRAM_IMPORT_TIMEOUT_MS = 45000;
+const TELEGRAM_TGS_NATIVE_HOST = 'com.mojify.tgs_host';
+const TELEGRAM_TGS_NATIVE_TIMEOUT_MS = 180000;
 const SEVEN_TV_USER_EMOTE_SETS_QUERY = `
   query UserEmoteSets($id: Id!) {
     users {
@@ -111,7 +113,7 @@ async function fetchBlobWithTimeout(url, options = {}, timeoutMs = 15000) {
 const emoteDB = {
   db: null,
   dbName: 'MojifyEmotes',
-  version: 3,
+  version: 4,
 
   async init() {
     return new Promise((resolve, reject) => {
@@ -138,6 +140,10 @@ const emoteDB = {
           metadataStore.createIndex('channel', 'channel', { unique: false });
           metadataStore.createIndex('url', 'url', { unique: false });
           metadataStore.createIndex('timestamp', 'timestamp', { unique: false });
+        }
+
+        if (!db.objectStoreNames.contains('emoteSources')) {
+          db.createObjectStore('emoteSources');
         }
       };
     });
@@ -198,6 +204,36 @@ const emoteDB = {
         console.error(`[IndexedDB] Failed to store metadata for ${key}:`, metadataRequest.error);
         reject(metadataRequest.error);
       };
+    });
+  },
+
+  async storeEmoteSource(key, blob) {
+    if (!this.db) await this.init();
+
+    if (!blob || !(blob instanceof Blob) || blob.size === 0) {
+      throw new Error(`Invalid source blob for emote ${key}`);
+    }
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emoteSources'], 'readwrite');
+      const sourceStore = transaction.objectStore('emoteSources');
+      const request = sourceStore.put(blob, key);
+
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  async getEmoteSource(key) {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emoteSources'], 'readonly');
+      const sourceStore = transaction.objectStore('emoteSources');
+      const request = sourceStore.get(key);
+
+      request.onsuccess = () => resolve(request.result || null);
+      request.onerror = () => reject(request.error);
     });
   },
 
@@ -342,15 +378,17 @@ const emoteDB = {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata', 'emoteSources'], 'readwrite');
       const blobsStore = transaction.objectStore('emoteBlobs');
       const metadataStore = transaction.objectStore('emoteMetadata');
+      const sourceStore = transaction.objectStore('emoteSources');
 
       let blobDeleted = false;
       let metadataDeleted = false;
+      let sourceDeleted = false;
 
       const checkComplete = () => {
-        if (blobDeleted && metadataDeleted) {
+        if (blobDeleted && metadataDeleted && sourceDeleted) {
           resolve();
         }
       };
@@ -376,6 +414,16 @@ const emoteDB = {
         metadataDeleted = true; // Continue even if metadata delete fails
         checkComplete();
       };
+
+      const sourceRequest = sourceStore.delete(key);
+      sourceRequest.onsuccess = () => {
+        sourceDeleted = true;
+        checkComplete();
+      };
+      sourceRequest.onerror = () => {
+        sourceDeleted = true;
+        checkComplete();
+      };
     });
   },
 
@@ -383,15 +431,17 @@ const emoteDB = {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata', 'emoteSources'], 'readwrite');
       const blobsStore = transaction.objectStore('emoteBlobs');
       const metadataStore = transaction.objectStore('emoteMetadata');
+      const sourceStore = transaction.objectStore('emoteSources');
 
       let blobsCleared = false;
       let metadataCleared = false;
+      let sourcesCleared = false;
 
       const checkComplete = () => {
-        if (blobsCleared && metadataCleared) {
+        if (blobsCleared && metadataCleared && sourcesCleared) {
           resolve();
         }
       };
@@ -415,6 +465,16 @@ const emoteDB = {
       };
       metadataRequest.onerror = () => {
         metadataCleared = true; // Continue even if clear fails
+        checkComplete();
+      };
+
+      const sourcesRequest = sourceStore.clear();
+      sourcesRequest.onsuccess = () => {
+        sourcesCleared = true;
+        checkComplete();
+      };
+      sourcesRequest.onerror = () => {
+        sourcesCleared = true;
         checkComplete();
       };
     });
@@ -2591,10 +2651,148 @@ async function ensureTgsConverterOffscreenDocument() {
   }
 }
 
-async function convertTelegramTgsBlobToWebm(tgsBlob, { label = 'Telegram sticker' } = {}) {
+function convertTelegramTgsDataUrlWithNativeHost(tgsDataUrl, { label = 'Telegram sticker' } = {}) {
+  return new Promise((resolve, reject) => {
+    if (!chrome.runtime?.connectNative) {
+      reject(new Error('Native Messaging is not available in this browser'));
+      return;
+    }
+
+    const requestId = `telegram-tgs-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const chunks = [];
+    let expectedChunks = null;
+    let receivedChunkCount = 0;
+    let completeMessage = null;
+    let settled = false;
+    let port = null;
+
+    const timeoutId = setTimeout(() => {
+      fail(new Error('Native TGS conversion timed out'));
+    }, TELEGRAM_TGS_NATIVE_TIMEOUT_MS);
+
+    function cleanup() {
+      clearTimeout(timeoutId);
+      if (port) {
+        try {
+          port.disconnect();
+        } catch (error) {
+          // Best-effort cleanup.
+        }
+      }
+    }
+
+    function fail(error) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    }
+
+    async function maybeFinish() {
+      if (settled || !completeMessage || expectedChunks === null || receivedChunkCount !== expectedChunks) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+
+      try {
+        const base64Payload = chunks.join('');
+        const response = await fetch(`data:${completeMessage.mimeType || 'video/webm'};base64,${base64Payload}`);
+        const blob = await response.blob();
+
+        if (!(blob instanceof Blob) || blob.size === 0) {
+          throw new Error('Native TGS conversion returned empty media');
+        }
+
+        resolve({
+          blob: blob.type ? blob : new Blob([await blob.arrayBuffer()], { type: 'video/webm' }),
+          mimeType: blob.type || completeMessage.mimeType || 'video/webm',
+          extension: 'webm',
+          width: Number(completeMessage.width || 0),
+          height: Number(completeMessage.height || 0),
+          durationMs: Number(completeMessage.durationMs || 0),
+          frameRate: Number(completeMessage.frameRate || 0),
+          frameCount: Number(completeMessage.frameCount || 0),
+          size: Number(completeMessage.size || blob.size),
+          renderer: completeMessage.renderer || '',
+          encoder: completeMessage.encoder || '',
+          lossless: Boolean(completeMessage.lossless),
+          conversionMethod: 'native-lossless'
+        });
+      } catch (error) {
+        reject(error);
+      }
+    }
+
+    try {
+      port = chrome.runtime.connectNative(TELEGRAM_TGS_NATIVE_HOST);
+    } catch (error) {
+      fail(error);
+      return;
+    }
+
+    port.onMessage.addListener((message) => {
+      if (!message || message.id !== requestId) {
+        return;
+      }
+
+      if (message.type === 'conversionError' || message.success === false) {
+        fail(new Error(message.error || 'Native TGS conversion failed'));
+        return;
+      }
+
+      if (message.type === 'conversionChunk') {
+        const seq = Number(message.seq);
+        const total = Number(message.total);
+        if (!Number.isInteger(seq) || seq < 0 || !Number.isInteger(total) || total < 1) {
+          fail(new Error('Native TGS conversion returned an invalid chunk'));
+          return;
+        }
+
+        if (expectedChunks === null) {
+          expectedChunks = total;
+        } else if (expectedChunks !== total) {
+          fail(new Error('Native TGS conversion returned mismatched chunks'));
+          return;
+        }
+
+        if (typeof chunks[seq] !== 'string') {
+          receivedChunkCount += 1;
+        }
+        chunks[seq] = String(message.data || '');
+        maybeFinish();
+        return;
+      }
+
+      if (message.type === 'conversionComplete') {
+        completeMessage = message;
+        maybeFinish();
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      if (settled) return;
+      const errorMessage = chrome.runtime.lastError?.message || 'Native TGS helper disconnected';
+      fail(new Error(errorMessage));
+    });
+
+    try {
+      port.postMessage({
+        id: requestId,
+        type: 'convertTelegramTgsToWebm',
+        tgsDataUrl,
+        label
+      });
+    } catch (error) {
+      fail(error);
+    }
+  });
+}
+
+async function convertTelegramTgsDataUrlWithBrowser(tgsDataUrl, { label = 'Telegram sticker' } = {}) {
   await ensureTgsConverterOffscreenDocument();
 
-  const tgsDataUrl = await blobToDataUrl(tgsBlob);
   const response = await new Promise((resolve, reject) => {
     chrome.runtime.sendMessage({
       type: 'convertTelegramTgsToWebm',
@@ -2627,8 +2825,27 @@ async function convertTelegramTgsBlobToWebm(tgsBlob, { label = 'Telegram sticker
     height: response.height || 0,
     durationMs: response.durationMs || 0,
     frameRate: response.frameRate || 0,
-    size: response.size || convertedBlob.size
+    size: response.size || convertedBlob.size,
+    renderer: 'browser-lottie-mediarecorder',
+    encoder: response.mimeType || 'MediaRecorder WebM',
+    lossless: false,
+    conversionMethod: 'browser-mediarecorder'
   };
+}
+
+async function convertTelegramTgsBlobToWebm(tgsBlob, { label = 'Telegram sticker' } = {}) {
+  const tgsDataUrl = await blobToDataUrl(tgsBlob);
+
+  try {
+    return await convertTelegramTgsDataUrlWithNativeHost(tgsDataUrl, { label });
+  } catch (error) {
+    console.warn('[Telegram Import] Native TGS conversion unavailable; using browser fallback:', error?.message || error);
+    const browserResult = await convertTelegramTgsDataUrlWithBrowser(tgsDataUrl, { label });
+    return {
+      ...browserResult,
+      nativeConversionError: error?.message || 'Native TGS conversion failed'
+    };
+  }
 }
 
 async function fetchTelegramFileBlob(botToken, filePath, mimeType = 'application/octet-stream') {
@@ -2723,6 +2940,7 @@ async function fetchTelegramStickerBlob(botToken, sticker = {}) {
       return {
         skipped: false,
         blob: converted.blob,
+        originalBlob,
         filePath,
         extension: converted.extension || 'webm',
         mimeType: converted.mimeType || 'video/webm',
@@ -2732,7 +2950,13 @@ async function fetchTelegramStickerBlob(botToken, sticker = {}) {
         height: converted.height,
         durationMs: converted.durationMs,
         frameRate: converted.frameRate,
-        size: converted.size
+        frameCount: converted.frameCount,
+        size: converted.size,
+        renderer: converted.renderer || '',
+        encoder: converted.encoder || '',
+        lossless: Boolean(converted.lossless),
+        conversionMethod: converted.conversionMethod || '',
+        nativeConversionError: converted.nativeConversionError || ''
       };
     } catch (error) {
       console.warn('[Telegram Import] TGS conversion failed; trying thumbnail preview:', error?.message || error);
@@ -3464,6 +3688,16 @@ async function importTelegramStickerSet(stickerSetInput) {
               : isVideo
                 ? 'Telegram Video Sticker'
                 : 'Telegram Sticker';
+          let originalSourceStored = false;
+
+          if (fileResult.originalBlob) {
+            try {
+              await emoteDB.storeEmoteSource(key, fileResult.originalBlob);
+              originalSourceStored = true;
+            } catch (error) {
+              console.warn('[Telegram Import] Failed to store original Telegram source:', error?.message || error);
+            }
+          }
 
           await emoteDB.storeEmote(key, url, fileResult.blob, {
             channel: setTitle,
@@ -3479,11 +3713,17 @@ async function importTelegramStickerSet(stickerSetInput) {
             telegramAssetType: isConverted ? 'animated-sticker' : isPreview ? 'animated-preview' : isVideo ? 'video-sticker' : 'sticker',
             telegramOriginalFilePath: fileResult.originalFilePath || fileResult.filePath || '',
             telegramConvertedFrom: fileResult.convertedFrom || '',
+            telegramConversionMethod: fileResult.conversionMethod || '',
+            telegramConversionRenderer: fileResult.renderer || '',
+            telegramConversionEncoder: fileResult.encoder || '',
             telegramConversionDurationMs: Number(fileResult.durationMs || 0),
             telegramConversionFrameRate: Number(fileResult.frameRate || 0),
+            telegramConversionFrameCount: Number(fileResult.frameCount || 0),
             telegramConversionWidth: Number(fileResult.width || 0),
             telegramConversionHeight: Number(fileResult.height || 0),
-            telegramConversionError: fileResult.conversionError || '',
+            telegramConversionLossless: Boolean(fileResult.lossless),
+            telegramConversionError: fileResult.conversionError || fileResult.nativeConversionError || '',
+            telegramOriginalSourceStored: originalSourceStored,
             animated: Boolean(sticker.is_animated || isConverted),
             video: Boolean(sticker.is_video || isVideo),
             previewOnly: isPreview,

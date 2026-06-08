@@ -3,7 +3,7 @@
 const emoteDB = {
   db: null,
   dbName: 'MojifyEmotes',
-  version: 3,
+  version: 4,
 
   async init() {
     return new Promise((resolve, reject) => {
@@ -30,6 +30,10 @@ const emoteDB = {
           metadataStore.createIndex('channel', 'channel', { unique: false });
           metadataStore.createIndex('url', 'url', { unique: false });
           metadataStore.createIndex('timestamp', 'timestamp', { unique: false });
+        }
+
+        if (!db.objectStoreNames.contains('emoteSources')) {
+          db.createObjectStore('emoteSources');
         }
       };
     });
@@ -221,15 +225,17 @@ const emoteDB = {
     if (!this.db) await this.init();
 
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata', 'emoteSources'], 'readwrite');
       const blobsStore = transaction.objectStore('emoteBlobs');
       const metadataStore = transaction.objectStore('emoteMetadata');
+      const sourceStore = transaction.objectStore('emoteSources');
 
       let blobsCleared = false;
       let metadataCleared = false;
+      let sourcesCleared = false;
 
       const checkComplete = () => {
-        if (blobsCleared && metadataCleared) {
+        if (blobsCleared && metadataCleared && sourcesCleared) {
           resolve();
         }
       };
@@ -253,6 +259,16 @@ const emoteDB = {
       };
       metadataRequest.onerror = () => {
         metadataCleared = true; // Continue even if clear fails
+        checkComplete();
+      };
+
+      const sourcesRequest = sourceStore.clear();
+      sourcesRequest.onsuccess = () => {
+        sourcesCleared = true;
+        checkComplete();
+      };
+      sourcesRequest.onerror = () => {
+        sourcesCleared = true;
         checkComplete();
       };
     });

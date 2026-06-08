@@ -61,7 +61,7 @@ It is designed around three ideas:
 | --- | --- | --- |
 | Twitch + 7TV | Channel emotes and 7TV emote sets | Usernames require Twitch credentials; numeric IDs can be used directly. |
 | Discord Web | Server custom emojis and stickers | Import works from the active Discord server tab. |
-| Telegram | Public sticker and custom emoji sets | Requires a Telegram bot token; static image and WebM video stickers import directly, and animated TGS stickers convert locally to WebM before import. |
+| Telegram | Public sticker and custom emoji sets | Requires a Telegram bot token; static image and WebM video stickers import directly, and animated TGS stickers use the optional native lossless helper when installed, with a browser fallback. |
 | Giphy | Search results | Requires a Giphy API key. |
 | Klipy | Search results | Requires a Klipy API key. |
 | Pixabay | Search results | Requires a Pixabay API key. |
@@ -138,6 +138,37 @@ For Telegram imports:
 4. Paste a public set link like `t.me/addstickers/UtyaDuck` or the short name.
 5. Click `Import Set`.
 
+### Optional Native TGS Helper
+
+Animated Telegram `.tgs` stickers are Lottie/vector files. Mojify stores the
+original `.tgs` source locally, then converts a WebM derivative for insertion.
+
+For the best local output, install the Native Messaging helper. It renders the
+animation frame-by-frame at the source frame rate in a local Chromium renderer
+and encodes those frames with ffmpeg/libvpx-vp9 lossless mode. If the helper is
+not installed, Mojify falls back to the browser offscreen converter.
+
+Requirements on Windows:
+
+```powershell
+scoop install nodejs ffmpeg
+```
+
+Install the helper for Chrome and Edge:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File native\telegram-tgs-host\install-native-host.ps1 -Browser Both
+```
+
+Verify the helper:
+
+```powershell
+node native\telegram-tgs-host\mojify-native-host.js --self-test
+```
+
+Reload the unpacked extension after installing because native messaging is a
+Chrome extension manifest permission.
+
 ## Repository Layout
 
 ```text
@@ -153,6 +184,8 @@ Mojify/
 │   ├── options.*              # Provider key management
 │   ├── vendor/                # Small bundled browser-side libraries
 │   └── icons/                 # Extension icons
+├── native/
+│   └── telegram-tgs-host/     # Optional Native Messaging helper for lossless TGS conversion
 ├── web/                       # Companion Twitch lookup web app
 ├── desktop/                   # Desktop experiments and Tauri prototype
 ├── .github/                   # Release workflow and community templates
@@ -173,6 +206,8 @@ node --check extension/content.js
 node --check extension/popup.js
 node --check extension/options.js
 node --check extension/tgs-converter.js
+node --check native/telegram-tgs-host/mojify-native-host.js
+node native/telegram-tgs-host/mojify-native-host.js --self-test
 ```
 
 For the companion web app:

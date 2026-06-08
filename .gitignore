@@ -11,3 +11,5 @@ extension/mojify.pem
 dist/
 .tmp_vendor/
 *.tgz
+native/telegram-tgs-host/com.mojify.tgs_host.json
+native/telegram-tgs-host/mojify-native-host.exe
