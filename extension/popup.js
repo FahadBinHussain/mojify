@@ -356,6 +356,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let progressPollInterval = null;
   let discordImportPollInterval = null;
   let telegramImportPollInterval = null;
+  let telegramImportPollingInFlight = false;
   let downloadCompletionHandled = false;
   let discordImportCompletionHandled = false;
   let telegramImportCompletionHandled = false;
@@ -4605,6 +4606,7 @@ document.addEventListener('DOMContentLoaded', () => {
       clearInterval(telegramImportPollInterval);
       telegramImportPollInterval = null;
     }
+    telegramImportPollingInFlight = false;
   }
 
   async function finishTelegramImportFlow({
@@ -4639,34 +4641,92 @@ document.addEventListener('DOMContentLoaded', () => {
     chrome.storage.local.remove(['telegramImportProgress']);
   }
 
-  function checkTelegramImportStatus() {
-    chrome.storage.local.get(['telegramImportInProgress', 'telegramImportProgress'], (result) => {
-      const importInProgress = result.telegramImportInProgress;
-      const importProgressData = result.telegramImportProgress;
+  function requestTelegramImportStatus() {
+    return new Promise((resolve, reject) => {
+      chrome.runtime.sendMessage({ action: 'getTelegramImportStatus' }, (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
 
-      if (importInProgress && importProgressData) {
-        applyTelegramImportProgressState(importProgressData);
-        startTelegramImportPolling();
-        return;
-      }
+        resolve(response || { success: false, error: 'No Telegram import status returned' });
+      });
+    });
+  }
 
-      if (importProgressData?.completed) {
-        finishTelegramImportFlow({
-          completed: true,
-          channelId: importProgressData.channelId || 'all',
-          toastMessage: createTelegramImportToast(importProgressData)
-        });
-        return;
-      }
+  function applyTelegramImportStorageStatus(result = {}) {
+    const importInProgress = result.telegramImportInProgress;
+    const importProgressData = result.telegramImportProgress;
 
-      if (importProgressData?.error) {
-        finishTelegramImportFlow({ error: importProgressData.error });
-        return;
-      }
+    if (importInProgress && importProgressData) {
+      applyTelegramImportProgressState(importProgressData);
+      startTelegramImportPolling();
+      return;
+    }
 
+    if (importProgressData?.completed) {
+      finishTelegramImportFlow({
+        completed: true,
+        channelId: importProgressData.channelId || 'all',
+        toastMessage: createTelegramImportToast(importProgressData)
+      });
+      return;
+    }
+
+    if (importProgressData?.error) {
+      finishTelegramImportFlow({ error: importProgressData.error });
+      return;
+    }
+
+    stopTelegramImportPolling();
+    resetTelegramImportUi();
+  }
+
+  function applyTelegramImportStatus(status = {}) {
+    if (!status.success) {
+      throw new Error(status.error || 'Telegram import status check failed');
+    }
+
+    const progressData = status.progress || {};
+
+    if (status.stale) {
       stopTelegramImportPolling();
       resetTelegramImportUi();
-    });
+      showToast('Cleared stale Telegram import state. Try Import Set again.', 'success');
+      return;
+    }
+
+    if (status.inProgress && progressData) {
+      applyTelegramImportProgressState(progressData);
+      startTelegramImportPolling();
+      return;
+    }
+
+    if (progressData.completed) {
+      finishTelegramImportFlow({
+        completed: true,
+        channelId: progressData.channelId || 'all',
+        toastMessage: createTelegramImportToast(progressData)
+      });
+      return;
+    }
+
+    if (progressData.error) {
+      finishTelegramImportFlow({ error: progressData.error });
+      return;
+    }
+
+    stopTelegramImportPolling();
+    resetTelegramImportUi();
+  }
+
+  async function checkTelegramImportStatus() {
+    try {
+      applyTelegramImportStatus(await requestTelegramImportStatus());
+    } catch (error) {
+      console.warn('[Mojify] Telegram status check fell back to storage:', error?.message || error);
+      chrome.storage.local.get(['telegramImportInProgress', 'telegramImportProgress'], applyTelegramImportStorageStatus);
+    }
   }
 
   function startTelegramImportPolling() {
@@ -4674,29 +4734,21 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    telegramImportPollInterval = setInterval(() => {
-      chrome.storage.local.get(['telegramImportInProgress', 'telegramImportProgress'], (result) => {
-        if (result.telegramImportInProgress && result.telegramImportProgress) {
-          applyTelegramImportProgressState(result.telegramImportProgress);
-          return;
-        }
+    telegramImportPollInterval = setInterval(async () => {
+      if (telegramImportPollingInFlight) {
+        return;
+      }
 
-        if (result.telegramImportProgress?.completed) {
-          finishTelegramImportFlow({
-            completed: true,
-            channelId: result.telegramImportProgress.channelId || 'all',
-            toastMessage: createTelegramImportToast(result.telegramImportProgress)
-          });
-          return;
-        }
+      telegramImportPollingInFlight = true;
 
-        if (result.telegramImportProgress?.error) {
-          finishTelegramImportFlow({ error: result.telegramImportProgress.error });
-          return;
-        }
-
-        stopTelegramImportPolling();
-      });
+      try {
+        applyTelegramImportStatus(await requestTelegramImportStatus());
+      } catch (error) {
+        console.warn('[Mojify] Telegram polling status check failed:', error?.message || error);
+        chrome.storage.local.get(['telegramImportInProgress', 'telegramImportProgress'], applyTelegramImportStorageStatus);
+      } finally {
+        telegramImportPollingInFlight = false;
+      }
     }, 1000);
   }
 

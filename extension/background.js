@@ -748,7 +748,9 @@ async function resetDiscordImportState() {
   }
 }
 
-async function resetTelegramImportState() {
+async function resetTelegramImportState(options = {}) {
+  const stale = Boolean(options.stale);
+
   telegramImportState = {
     isImporting: false,
     current: 0,
@@ -765,12 +767,44 @@ async function resetTelegramImportState() {
         current: 0,
         total: 0,
         completed: false,
-        reset: true
+        reset: true,
+        stale,
+        resetAt: Date.now()
       }
     });
   } catch (error) {
     console.error('[Service Worker] Error resetting Telegram import state:', error);
   }
+}
+
+async function getTelegramImportStatus() {
+  const result = await chrome.storage.local.get(['telegramImportInProgress', 'telegramImportProgress']);
+  const storageInProgress = Boolean(result.telegramImportInProgress);
+  const progress = result.telegramImportProgress || null;
+
+  if (storageInProgress && !telegramImportState.isImporting) {
+    await resetTelegramImportState({ stale: true });
+    return {
+      success: true,
+      inProgress: false,
+      active: false,
+      stale: true,
+      progress: {
+        ...(progress || {}),
+        reset: true,
+        stale: true,
+        resetAt: Date.now()
+      }
+    };
+  }
+
+  return {
+    success: true,
+    inProgress: Boolean(storageInProgress || telegramImportState.isImporting),
+    active: Boolean(telegramImportState.isImporting),
+    stale: false,
+    progress
+  };
 }
 
 async function publishDownloadProgress(progress = {}) {
@@ -2399,7 +2433,9 @@ async function updateTelegramImportProgress(progress = {}) {
     completed: Boolean(progress.completed),
     error: progress.error || '',
     channelId: progress.channelId || '',
-    toastMessage: progress.toastMessage || ''
+    toastMessage: progress.toastMessage || '',
+    startedAt: progress.startedAt || telegramImportState.startedAt || null,
+    updatedAt: Date.now()
   };
 
   await chrome.storage.local.set({
@@ -4265,6 +4301,20 @@ function handleRuntimeMessage(request, sender, sendResponse) {
   if (request.action === 'importTelegramStickerSet') {
     importTelegramStickerSet(request.stickerSet)
       .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'getTelegramImportStatus') {
+    getTelegramImportStatus()
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'resetTelegramImportState') {
+    resetTelegramImportState()
+      .then(() => sendResponse({ success: true }))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
