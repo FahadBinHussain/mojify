@@ -140,8 +140,9 @@ For Telegram imports:
 
 ### Optional Native TGS Helper
 
-Animated Telegram `.tgs` stickers are Lottie/vector files. Mojify stores the
-original `.tgs` source locally, then converts a WebM derivative for insertion.
+Animated Telegram `.tgs` stickers are Lottie/vector files. Mojify downloads the
+source long enough to convert it, then stores only the WebM result used for
+insertion.
 
 For the best local output, install the Native Messaging helper. It renders the
 animation frame-by-frame at the source frame rate in a local Chromium renderer
