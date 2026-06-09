@@ -316,6 +316,9 @@ document.addEventListener('DOMContentLoaded', () => {
   const recentLoadMore = document.getElementById('recent-load-more');
   const recentLoadMoreBtn = document.getElementById('recent-load-more-btn');
   const sendEmoteNameToggle = document.getElementById('send-emote-name-toggle');
+  const copySourceBackupButton = document.getElementById('copy-source-backup');
+  const pasteSourceBackupButton = document.getElementById('paste-source-backup');
+  const sourceBackupText = document.getElementById('source-backup-text');
 
   // Constants
   const ITEMS_PER_PAGE = 30;
@@ -323,6 +326,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const RECENT_ITEMS_INITIAL_RENDER = 48;
   const RECENT_ITEMS_PAGE_SIZE = 48;
   const SEND_EMOTE_NAME_SETTING_KEY = 'sendEmoteNameWithMedia';
+  const SOURCE_BACKUP_TYPE = 'mojify-source-backup';
+  const SOURCE_BACKUP_VERSION = 1;
 
   // State variables
   let allEmotes = {};
@@ -4917,6 +4922,7 @@ document.addEventListener('DOMContentLoaded', () => {
   runPopupTask('api keys page button', initApiKeysPageButton);
   init();
   runPopupTask('backup restore', initBackupRestore);
+  runPopupTask('source backup restore', initSourceBackupRestore);
   // Backup and Restore functionality
   function initBackupRestore() {
     const createBackupBtn = document.getElementById('create-backup');
@@ -4928,6 +4934,611 @@ document.addEventListener('DOMContentLoaded', () => {
     createBackupBtn.addEventListener('click', createBackup);
     restoreBackupBtn.addEventListener('click', () => restoreFileInput.click());
     restoreFileInput.addEventListener('change', handleRestoreFile);
+  }
+
+  function initSourceBackupRestore() {
+    if (!copySourceBackupButton || !pasteSourceBackupButton || !sourceBackupText) return;
+
+    copySourceBackupButton.addEventListener('click', async () => {
+      const originalHtml = copySourceBackupButton.innerHTML;
+      try {
+        copySourceBackupButton.disabled = true;
+        copySourceBackupButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Copying...</span>';
+        await copyCurrentSourcesToClipboard();
+      } catch (error) {
+        console.error('[Mojify] Source copy failed:', error);
+        showToast(error.message || 'Could not copy sources', 'error');
+      } finally {
+        copySourceBackupButton.disabled = false;
+        copySourceBackupButton.innerHTML = originalHtml;
+      }
+    });
+
+    pasteSourceBackupButton.addEventListener('click', async () => {
+      const originalHtml = pasteSourceBackupButton.innerHTML;
+      try {
+        pasteSourceBackupButton.disabled = true;
+        pasteSourceBackupButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Restoring...</span>';
+        await restoreSourcesFromPaste();
+      } catch (error) {
+        console.error('[Mojify] Source restore failed:', error);
+        showToast(error.message || 'Could not restore sources', 'error');
+      } finally {
+        pasteSourceBackupButton.disabled = false;
+        pasteSourceBackupButton.innerHTML = originalHtml;
+      }
+    });
+  }
+
+  async function copyCurrentSourcesToClipboard() {
+    const payload = await buildSourceBackupPayload();
+    const text = JSON.stringify(payload, null, 2);
+    sourceBackupText.value = text;
+    await writeTextToClipboard(text);
+
+    const count = payload.sources.length;
+    showToast(`Copied ${count} source${count === 1 ? '' : 's'} to clipboard`, count > 0 ? 'success' : 'info');
+  }
+
+  async function restoreSourcesFromPaste() {
+    let text = sourceBackupText.value.trim();
+
+    if (!text) {
+      text = await readTextFromClipboard();
+      if (text) {
+        sourceBackupText.value = text;
+      }
+    }
+
+    if (!text) {
+      throw new Error('Paste source JSON or links first');
+    }
+
+    const parsed = parseSourceBackupText(text);
+    const restoreSources = collectRestoreSources(parsed);
+    const totalSources = restoreSources.twitchChannels.length +
+      restoreSources.sevenTvSets.length +
+      restoreSources.telegramSets.length +
+      restoreSources.discordServers.length;
+
+    if (totalSources === 0) {
+      throw new Error('No Mojify source links or channel IDs found');
+    }
+
+    const result = await applySourceBackupSources(restoreSources);
+    const parts = [];
+
+    if (result.twitchChannels > 0) {
+      parts.push(`${result.twitchChannels} Twitch channel${result.twitchChannels === 1 ? '' : 's'}`);
+    }
+    if (result.sevenTvSets > 0) {
+      parts.push(`${result.sevenTvSets} 7TV set${result.sevenTvSets === 1 ? '' : 's'}`);
+    }
+    if (result.telegramSets > 0) {
+      parts.push(`${result.telegramSets} Telegram pack${result.telegramSets === 1 ? '' : 's'}`);
+    }
+    if (result.discordServers > 0) {
+      parts.push(`${result.discordServers} Discord server link${result.discordServers === 1 ? '' : 's'}`);
+    }
+
+    await ensureEmoteLibraryLoaded({ renderGrid: false, refreshPanels: true });
+    await loadEmotes({ renderGrid: isLocalLibraryTab(activeMediaTab), refreshPanels: true });
+    updateChannelManagement();
+    updateStorageInfo();
+
+    if (result.errors.length > 0) {
+      showToast(`Restored ${parts.join(', ') || 'sources'}; ${result.errors.length} need attention`, 'error');
+      return;
+    }
+
+    showToast(`Restored ${parts.join(', ')}`, 'success');
+  }
+
+  async function writeTextToClipboard(text) {
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return;
+      } catch (error) {
+        console.warn('[Mojify] navigator.clipboard.writeText failed, using fallback:', error);
+      }
+    }
+
+    const temp = document.createElement('textarea');
+    temp.value = text;
+    temp.setAttribute('readonly', '');
+    temp.style.position = 'fixed';
+    temp.style.left = '-9999px';
+    temp.style.top = '0';
+    document.body.appendChild(temp);
+    temp.focus();
+    temp.select();
+    const copied = document.execCommand('copy');
+    temp.remove();
+
+    if (!copied) {
+      throw new Error('Clipboard copy failed');
+    }
+  }
+
+  async function readTextFromClipboard() {
+    if (!navigator.clipboard?.readText) {
+      return '';
+    }
+
+    try {
+      return await navigator.clipboard.readText();
+    } catch (error) {
+      console.warn('[Mojify] Clipboard read failed:', error);
+      return '';
+    }
+  }
+
+  function createSourceMap() {
+    const sourcesByKey = new Map();
+
+    return {
+      add(source) {
+        const normalized = normalizeBackupSource(source);
+        const key = getBackupSourceKey(normalized);
+        if (!key) return;
+
+        const existing = sourcesByKey.get(key) || {};
+        sourcesByKey.set(key, {
+          ...existing,
+          ...Object.fromEntries(
+            Object.entries(normalized).filter(([, value]) => value !== undefined && value !== null && value !== '')
+          )
+        });
+      },
+      values() {
+        return Array.from(sourcesByKey.values());
+      }
+    };
+  }
+
+  function getBackupSourceKey(source) {
+    const site = String(source?.site || '').toLowerCase();
+
+    if (site === 'telegram') {
+      return source.setName ? `telegram:${source.setName.toLowerCase()}` : '';
+    }
+
+    if (site === '7tv') {
+      return source.setId ? `7tv:${source.setId.toLowerCase()}` : '';
+    }
+
+    if (site === 'discord') {
+      return source.serverId ? `discord:${source.serverId}` : '';
+    }
+
+    if (site === 'twitch') {
+      const id = source.id || source.channelId || source.username;
+      return id ? `twitch:${String(id).toLowerCase()}` : '';
+    }
+
+    return '';
+  }
+
+  function normalizeBackupSource(source) {
+    if (!source || typeof source !== 'object') return {};
+
+    const site = String(source.site || source.provider || source.source || '').toLowerCase();
+    const type = String(source.type || '').toLowerCase();
+
+    if (site === 'telegram' || type.includes('telegram') || source.telegramStickerSetName) {
+      const setName = cleanTelegramSetName(source.setName || source.telegramStickerSetName || source.name || source.id || source.link);
+      return {
+        site: 'telegram',
+        type: 'sticker-set',
+        setName,
+        title: source.title || source.telegramStickerSetTitle || source.username || source.name || setName,
+        link: source.link || (setName ? `https://t.me/addstickers/${setName}` : '')
+      };
+    }
+
+    if (site === '7tv' || type === '7tv-set' || type === 'emote-set' || source.setId || source.emoteSetId) {
+      const setId = cleanString(source.setId || source.emoteSetId || source.id);
+      return {
+        site: '7tv',
+        type: 'emote-set',
+        setId,
+        setName: cleanString(source.setName || source.emoteSetName || source.name),
+        channelId: cleanString(source.channelId || source.parentChannelId || source.platformChannelId),
+        username: cleanString(source.username || source.baseUsername),
+        sevenTvUserId: cleanString(source.sevenTvUserId),
+        activeSetId: cleanString(source.activeSetId),
+        link: setId ? `https://7tv.app/emote-sets/${setId}` : ''
+      };
+    }
+
+    if (site === 'discord' || type.includes('discord') || source.discordGuildId || source.serverId || source.guildId) {
+      const serverId = cleanString(source.serverId || source.discordGuildId || source.guildId || source.id);
+      return {
+        site: 'discord',
+        type: 'server',
+        serverId,
+        serverName: cleanString(source.serverName || source.discordGuildName || source.guildName || source.username || source.name),
+        link: source.link || source.discordGuildLink || (serverId ? `https://discord.com/channels/${serverId}` : '')
+      };
+    }
+
+    const id = cleanString(source.id || source.channelId || source.platformChannelId || source.username || source.name);
+    return {
+      site: 'twitch',
+      type: 'channel',
+      id,
+      username: cleanString(source.username || source.baseUsername || source.name),
+      link: source.link || (source.username ? `https://www.twitch.tv/${source.username}` : '')
+    };
+  }
+
+  async function buildSourceBackupPayload() {
+    const stored = await new Promise((resolve) => {
+      chrome.storage.local.get(['channelIds', 'channels', 'mojifySourceBackupDiscordServers'], resolve);
+    });
+    const sourceMap = createSourceMap();
+
+    dedupeChannelIds(stored.channelIds || []).forEach((channelId) => {
+      sourceMap.add({
+        site: 'twitch',
+        type: 'channel',
+        id: channelId
+      });
+    });
+
+    dedupeChannelsById(stored.channels || []).forEach((channel) => {
+      const sourceType = getChannelSourceType(channel);
+
+      if (sourceType === 'telegram') {
+        const setName = cleanTelegramSetName(
+          channel.telegramStickerSetName ||
+          String(channel.id || '').replace(/^telegram:/i, '')
+        );
+        sourceMap.add({
+          site: 'telegram',
+          type: 'sticker-set',
+          setName,
+          title: channel.telegramStickerSetTitle || channel.username || setName,
+          link: channel.telegramStickerSetLink || (setName ? `https://t.me/addstickers/${setName}` : '')
+        });
+        return;
+      }
+
+      if (sourceType === 'discord') {
+        const serverId = cleanString(channel.discordGuildId || channel.guildId || channel.id);
+        sourceMap.add({
+          site: 'discord',
+          type: 'server',
+          serverId,
+          serverName: channel.discordGuildName || channel.guildName || channel.username || serverId,
+          link: channel.discordGuildLink || (serverId ? `https://discord.com/channels/${serverId}` : '')
+        });
+        return;
+      }
+
+      if (sourceType !== 'twitch') return;
+
+      if (is7TVSetChannel(channel)) {
+        const setId = cleanString(channel.emoteSetId || String(channel.id || '').replace(/^7tv-set:/i, ''));
+        sourceMap.add({
+          site: '7tv',
+          type: 'emote-set',
+          setId,
+          setName: channel.emoteSetName || channel.username || setId,
+          channelId: channel.parentChannelId || channel.platformChannelId || '',
+          username: channel.baseUsername || channel.username || '',
+          sevenTvUserId: channel.sevenTvUserId || '',
+          activeSetId: channel.activeSetId || '',
+          link: setId ? `https://7tv.app/emote-sets/${setId}` : ''
+        });
+        return;
+      }
+
+      sourceMap.add({
+        site: 'twitch',
+        type: 'channel',
+        id: channel.platformChannelId || channel.id,
+        username: channel.baseUsername || channel.username || '',
+        link: channel.baseUsername || channel.username
+          ? `https://www.twitch.tv/${channel.baseUsername || channel.username}`
+          : ''
+      });
+    });
+
+    (stored.mojifySourceBackupDiscordServers || []).forEach((server) => {
+      sourceMap.add({
+        site: 'discord',
+        type: 'server',
+        serverId: server.serverId || server.id,
+        serverName: server.serverName || server.name,
+        link: server.link
+      });
+    });
+
+    const sources = sourceMap.values();
+    const links = sources
+      .map((source) => source.link || source.id || source.serverId || source.setName || source.setId)
+      .filter(Boolean);
+
+    return {
+      type: SOURCE_BACKUP_TYPE,
+      version: SOURCE_BACKUP_VERSION,
+      app: 'Mojify',
+      exportedAt: new Date().toISOString(),
+      sources,
+      links
+    };
+  }
+
+  function parseSourceBackupText(text) {
+    const trimmed = String(text || '').trim();
+
+    try {
+      return JSON.parse(trimmed);
+    } catch (error) {
+      return {
+        type: SOURCE_BACKUP_TYPE,
+        version: SOURCE_BACKUP_VERSION,
+        sources: trimmed
+          .split(/\r?\n/)
+          .map((line) => parseSourceBackupLine(line))
+          .filter(Boolean)
+      };
+    }
+  }
+
+  function parseSourceBackupLine(line) {
+    const value = cleanString(line)
+      .replace(/^[\-*]\s+/, '')
+      .replace(/^[`"']+|[`"',]+$/g, '')
+      .trim();
+
+    if (!value || value.startsWith('#')) return null;
+
+    const telegramMatch = value.match(/(?:https?:\/\/)?(?:t\.me|telegram\.me)\/add(?:stickers|emoji)\/([A-Za-z][A-Za-z0-9_]{0,63})/i) ||
+      value.match(/^telegram:([A-Za-z][A-Za-z0-9_]{0,63})$/i);
+    if (telegramMatch) {
+      return {
+        site: 'telegram',
+        type: 'sticker-set',
+        setName: telegramMatch[1],
+        link: `https://t.me/addstickers/${telegramMatch[1]}`
+      };
+    }
+
+    const sevenTvMatch = value.match(/(?:https?:\/\/)?(?:www\.)?7tv\.app\/emote-sets\/([A-Za-z0-9]+)/i) ||
+      value.match(/^7tv-set:([A-Za-z0-9]+)$/i);
+    if (sevenTvMatch) {
+      return {
+        site: '7tv',
+        type: 'emote-set',
+        setId: sevenTvMatch[1],
+        link: `https://7tv.app/emote-sets/${sevenTvMatch[1]}`
+      };
+    }
+
+    const discordMatch = value.match(/(?:https?:\/\/)?(?:canary\.|ptb\.)?discord(?:app)?\.com\/channels\/([^/\s]+)/i) ||
+      value.match(/^discord:([^/\s]+)$/i);
+    if (discordMatch) {
+      const serverId = discordMatch[1];
+      return {
+        site: 'discord',
+        type: 'server',
+        serverId,
+        link: `https://discord.com/channels/${serverId}`
+      };
+    }
+
+    const twitchMatch = value.match(/(?:https?:\/\/)?(?:www\.)?twitch\.tv\/([A-Za-z0-9_]{1,25})/i) ||
+      value.match(/^twitch:([A-Za-z0-9_]{1,25}|\d+)$/i);
+
+    return {
+      site: 'twitch',
+      type: 'channel',
+      id: twitchMatch ? twitchMatch[1] : value
+    };
+  }
+
+  function collectRestoreSources(payload) {
+    const sourceMap = createSourceMap();
+    const entries = [];
+
+    if (Array.isArray(payload)) {
+      entries.push(...payload);
+    } else if (payload?.sources) {
+      if (Array.isArray(payload.sources)) {
+        entries.push(...payload.sources);
+      } else if (typeof payload.sources === 'object') {
+        Object.entries(payload.sources).forEach(([site, value]) => {
+          const list = Array.isArray(value) ? value : [value];
+          list.forEach((entry) => {
+            if (typeof entry === 'object') {
+              entries.push({ site, ...entry });
+              return;
+            }
+
+            if (site === 'telegram') {
+              entries.push({ site, type: 'sticker-set', setName: entry });
+            } else if (site === '7tv') {
+              entries.push({ site, type: 'emote-set', setId: entry });
+            } else if (site === 'discord') {
+              entries.push({ site, type: 'server', serverId: entry });
+            } else {
+              entries.push(entry);
+            }
+          });
+        });
+      }
+    }
+
+    if (Array.isArray(payload?.links)) {
+      entries.push(...payload.links);
+    }
+
+    entries.forEach((entry) => {
+      sourceMap.add(typeof entry === 'string' ? parseSourceBackupLine(entry) : entry);
+    });
+
+    const restoreSources = {
+      twitchChannels: [],
+      sevenTvSets: [],
+      telegramSets: [],
+      discordServers: []
+    };
+
+    sourceMap.values().forEach((source) => {
+      if (source.site === 'telegram' && source.setName) {
+        restoreSources.telegramSets.push(source);
+      } else if (source.site === '7tv' && source.setId) {
+        restoreSources.sevenTvSets.push(source);
+      } else if (source.site === 'discord' && source.serverId) {
+        restoreSources.discordServers.push(source);
+      } else if (source.site === 'twitch' && (source.id || source.username)) {
+        restoreSources.twitchChannels.push(source);
+      }
+    });
+
+    return restoreSources;
+  }
+
+  async function applySourceBackupSources(restoreSources) {
+    const result = {
+      twitchChannels: 0,
+      sevenTvSets: 0,
+      telegramSets: 0,
+      discordServers: 0,
+      errors: []
+    };
+
+    const stored = await new Promise((resolve) => {
+      chrome.storage.local.get(['channelIds', 'mojifySourceBackupDiscordServers'], resolve);
+    });
+
+    const rawTwitchIds = dedupeChannelIds(
+      restoreSources.twitchChannels
+        .map((source) => source.id || source.channelId || source.username)
+        .filter(Boolean)
+    );
+    let resolvedTwitchIds = [];
+
+    if (rawTwitchIds.length > 0) {
+      try {
+        resolvedTwitchIds = await resolveTwitchIdentifiers(rawTwitchIds);
+      } catch (error) {
+        resolvedTwitchIds = rawTwitchIds.filter((value) => /^\d+$/.test(value));
+        result.errors.push(error.message || 'Some Twitch usernames could not be resolved');
+      }
+    }
+
+    const mergedChannelIds = dedupeChannelIds([...(stored.channelIds || []), ...resolvedTwitchIds]);
+    const storedDiscordServers = mergeDiscordSourceLinks(
+      stored.mojifySourceBackupDiscordServers || [],
+      restoreSources.discordServers
+    );
+
+    await new Promise((resolve) => {
+      chrome.storage.local.set({
+        channelIds: mergedChannelIds,
+        mojifySourceBackupDiscordServers: storedDiscordServers
+      }, resolve);
+    });
+
+    if (channelIdsInput) {
+      channelIdsInput.value = mergedChannelIds.join('\n');
+    }
+
+    result.twitchChannels = resolvedTwitchIds.length;
+    result.discordServers = restoreSources.discordServers.length;
+
+    const downloadSources = [
+      ...resolvedTwitchIds.map((channelId) => ({
+        type: 'twitch-channel',
+        channelId
+      })),
+      ...restoreSources.sevenTvSets.map((source) => ({
+        type: '7tv-set',
+        channelId: source.channelId || '',
+        setId: source.setId,
+        setName: source.setName || '',
+        username: source.username || '',
+        sevenTvUserId: source.sevenTvUserId || '',
+        activeSetId: source.activeSetId || ''
+      }))
+    ];
+
+    if (downloadSources.length > 0) {
+      try {
+        downloadCompletionHandled = false;
+        setDownloadUiActive(`Restoring ${downloadSources.length} source${downloadSources.length === 1 ? '' : 's'}...`);
+        startProgressPolling();
+        const response = await sendBackgroundMessage({
+          action: 'downloadEmotes',
+          options: { sources: downloadSources }
+        });
+
+        if (!response?.success) {
+          throw new Error(response?.error || '7TV restore failed');
+        }
+
+        result.sevenTvSets = restoreSources.sevenTvSets.length;
+      } catch (error) {
+        stopProgressPolling();
+        resetDownloadUi();
+        result.errors.push(error.message || '7TV restore failed');
+      }
+    }
+
+    for (const source of restoreSources.telegramSets) {
+      try {
+        const stickerSet = source.link || source.setName;
+        setTelegramImportUiActive(`Restoring ${source.title || source.setName}...`);
+        startTelegramImportPolling();
+        const response = await sendBackgroundMessage({
+          action: 'importTelegramStickerSet',
+          stickerSet
+        });
+
+        if (!response?.success) {
+          throw new Error(response?.error || `Telegram restore failed for ${source.setName}`);
+        }
+
+        result.telegramSets += 1;
+      } catch (error) {
+        stopTelegramImportPolling();
+        resetTelegramImportUi();
+        result.errors.push(error.message || `Telegram restore failed for ${source.setName}`);
+      }
+    }
+
+    return result;
+  }
+
+  function mergeDiscordSourceLinks(existingServers, restoredServers) {
+    const byId = new Map();
+
+    [...(existingServers || []), ...(restoredServers || [])].forEach((server) => {
+      const serverId = cleanString(server.serverId || server.discordGuildId || server.id);
+      if (!serverId) return;
+      byId.set(serverId, {
+        serverId,
+        serverName: cleanString(server.serverName || server.discordGuildName || server.name),
+        link: server.link || `https://discord.com/channels/${serverId}`
+      });
+    });
+
+    return Array.from(byId.values());
+  }
+
+  function cleanString(value) {
+    return String(value || '').trim();
+  }
+
+  function cleanTelegramSetName(value) {
+    const text = cleanString(value);
+    const linkMatch = text.match(/(?:https?:\/\/)?(?:t\.me|telegram\.me)\/add(?:stickers|emoji)\/([A-Za-z][A-Za-z0-9_]{0,63})/i);
+    if (linkMatch) return linkMatch[1];
+    return text.replace(/^telegram:/i, '');
   }
 
   function initDiscordImportButton() {
