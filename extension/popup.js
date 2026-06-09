@@ -3345,53 +3345,24 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Download/refresh emotes
-  downloadButton.addEventListener('click', () => {
-    chrome.storage.local.get(['downloadInProgress', 'channelIds'], (result) => {
-      if (result.downloadInProgress) {
+  downloadButton.addEventListener('click', async () => {
+    try {
+      const { downloadInProgress } = await new Promise((resolve) => {
+        chrome.storage.local.get(['downloadInProgress'], resolve);
+      });
+
+      if (downloadInProgress) {
         showToast('Download already in progress', 'error');
         return;
       }
 
-      if (!result.channelIds || result.channelIds.length === 0) {
-        showToast('No channel IDs configured', 'error');
-        document.querySelector('.tab-btn[data-tab="settings"]').click();
-        return;
-      }
-
-      downloadCompletionHandled = false;
-      setDownloadUiActive('Starting download...');
-      startProgressPolling();
-
-      chrome.runtime.sendMessage({ action: 'downloadEmotes' }, (response) => {
-        if (!response) {
-          return;
-        }
-
-        if (!response.success) {
-          finishDownloadFlow({ error: response.error || 'Unknown error' });
-          return;
-        }
-
-        if (response.inProgress || response.message === 'Download already in progress') {
-          checkDownloadStatus();
-          startProgressPolling();
-          return;
-        }
-
-        if (response.skipped || response.message === 'All emotes up to date') {
-          finishDownloadFlow({
-            completed: true,
-            toastMessage: response.message === 'All emotes up to date'
-              ? 'All emotes are up to date - no new downloads needed'
-              : response.message
-          });
-          return;
-        }
-
-        searchInput.value = '';
-        searchTerm = '';
-      });
-    });
+      await refreshAllSavedSources();
+      searchInput.value = '';
+      searchTerm = '';
+    } catch (error) {
+      console.error('[Mojify] Refresh all failed:', error);
+      finishDownloadFlow({ error: error.message || 'Refresh failed' });
+    }
   });
 
   // Button press effect for all buttons
@@ -3996,9 +3967,186 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  async function refreshAllSavedSources() {
+    const payload = await buildSourceBackupPayload();
+    const restoreSources = collectRestoreSources(payload);
+    const autoRefreshCount = restoreSources.twitchChannels.length +
+      restoreSources.sevenTvSets.length +
+      restoreSources.telegramSets.length;
+
+    if (autoRefreshCount === 0) {
+      if (restoreSources.discordServers.length > 0) {
+        showToast('Discord needs an open server tab. Use Refresh on that server row.', 'info');
+        return;
+      }
+
+      showToast('No saved sources to refresh yet', 'error');
+      document.querySelector('.tab-btn[data-tab="settings"]')?.click();
+      return;
+    }
+
+    const result = await applySourceBackupSources(restoreSources, { verb: 'Refreshing' });
+    await refreshLocalLibraryAfterSourceUpdate();
+
+    const parts = [];
+    if (result.twitchChannels > 0) {
+      parts.push(`${result.twitchChannels} Twitch channel${result.twitchChannels === 1 ? '' : 's'}`);
+    }
+    if (result.sevenTvSets > 0) {
+      parts.push(`${result.sevenTvSets} 7TV set${result.sevenTvSets === 1 ? '' : 's'}`);
+    }
+    if (result.telegramSets > 0) {
+      parts.push(`${result.telegramSets} Telegram pack${result.telegramSets === 1 ? '' : 's'}`);
+    }
+
+    const discordNote = restoreSources.discordServers.length > 0
+      ? `; ${restoreSources.discordServers.length} Discord server${restoreSources.discordServers.length === 1 ? '' : 's'} need open-tab refresh`
+      : '';
+
+    if (result.errors.length > 0) {
+      showToast(`Refreshed ${parts.join(', ') || 'sources'}${discordNote}; ${result.errors.length} failed`, 'error');
+      return;
+    }
+
+    showToast(`Refreshed ${parts.join(', ')}${discordNote}`, discordNote ? 'info' : 'success');
+  }
+
+  async function refreshChannelSource(channel, button) {
+    if (!channel) return;
+
+    const originalHtml = button?.innerHTML || '';
+    const source = getRefreshSourceForChannel(channel);
+    const label = getChannelDisplayName(channel);
+
+    try {
+      if (!source) {
+        throw new Error('This source cannot be refreshed automatically');
+      }
+
+      if (button) {
+        button.disabled = true;
+        button.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Refreshing</span>';
+      }
+
+      if (source.site === 'discord') {
+        await refreshDiscordChannelSource(channel);
+      } else {
+        const result = await applySourceBackupSources(collectRestoreSources({ sources: [source] }), { verb: 'Refreshing' });
+        if (result.errors.length > 0) {
+          throw new Error(result.errors[0]);
+        }
+      }
+
+      await refreshLocalLibraryAfterSourceUpdate();
+      showToast(`Refreshed ${label}`, 'success');
+    } catch (error) {
+      console.error('[Mojify] Source refresh failed:', error);
+      showToast(error.message || `Could not refresh ${label}`, 'error');
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.innerHTML = originalHtml;
+      }
+    }
+  }
+
+  async function refreshDiscordChannelSource(channel) {
+    const serverId = cleanString(channel.discordGuildId || channel.guildId || channel.id);
+    const serverName = channel.discordGuildName || channel.guildName || channel.username || serverId || 'Discord server';
+
+    const tabs = await new Promise((resolve) => {
+      chrome.tabs.query({ active: true, currentWindow: true }, resolve);
+    });
+    const activeTab = tabs[0];
+    const activeGuildMatch = String(activeTab?.url || '').match(/discord(?:app)?\.com\/channels\/([^/]+)/i);
+
+    if (!activeTab?.id || !activeGuildMatch || activeGuildMatch[1] !== serverId) {
+      throw new Error(`Open ${serverName} in Discord first, then refresh this row`);
+    }
+
+    discordImportCompletionHandled = false;
+    setDiscordImportUiActive(`Refreshing Discord media from ${serverName}...`);
+    startDiscordImportPolling();
+
+    const response = await sendBackgroundMessage({
+      action: 'importDiscordServerEmojis',
+      tabId: activeTab.id
+    });
+
+    if (!response?.success) {
+      throw new Error(response?.error || `Discord refresh failed for ${serverName}`);
+    }
+  }
+
+  async function refreshLocalLibraryAfterSourceUpdate() {
+    channelEmoteSetCache.clear();
+    await ensureEmoteLibraryLoaded({ renderGrid: false, refreshPanels: true });
+    await loadEmotes({ renderGrid: isLocalLibraryTab(activeMediaTab), refreshPanels: true });
+    updateChannelManagement();
+    updateStorageInfo();
+  }
+
+  function getRefreshSourceForChannel(channel) {
+    const sourceType = getChannelSourceType(channel);
+
+    if (sourceType === 'telegram') {
+      const setName = cleanTelegramSetName(
+        channel.telegramStickerSetName ||
+        String(channel.id || '').replace(/^telegram:/i, '')
+      );
+      return {
+        site: 'telegram',
+        type: 'sticker-set',
+        setName,
+        title: channel.telegramStickerSetTitle || channel.username || setName,
+        link: channel.telegramStickerSetLink || (setName ? `https://t.me/addstickers/${setName}` : '')
+      };
+    }
+
+    if (sourceType === 'discord') {
+      const serverId = cleanString(channel.discordGuildId || channel.guildId || channel.id);
+      return {
+        site: 'discord',
+        type: 'server',
+        serverId,
+        serverName: channel.discordGuildName || channel.guildName || channel.username || serverId,
+        link: channel.discordGuildLink || (serverId ? `https://discord.com/channels/${serverId}` : '')
+      };
+    }
+
+    if (sourceType === 'twitch' && is7TVSetChannel(channel)) {
+      const setId = cleanString(channel.emoteSetId || String(channel.id || '').replace(/^7tv-set:/i, ''));
+      return {
+        site: '7tv',
+        type: 'emote-set',
+        setId,
+        setName: channel.emoteSetName || channel.username || setId,
+        channelId: channel.parentChannelId || channel.platformChannelId || '',
+        username: channel.baseUsername || channel.username || '',
+        sevenTvUserId: channel.sevenTvUserId || '',
+        activeSetId: channel.activeSetId || '',
+        link: setId ? `https://7tv.app/emote-sets/${setId}` : ''
+      };
+    }
+
+    if (sourceType === 'twitch') {
+      return {
+        site: 'twitch',
+        type: 'channel',
+        id: channel.platformChannelId || channel.id,
+        username: channel.baseUsername || channel.username || '',
+        link: channel.baseUsername || channel.username
+          ? `https://www.twitch.tv/${channel.baseUsername || channel.username}`
+          : ''
+      };
+    }
+
+    return null;
+  }
+
   function updateChannelManagement() {
     const renderToken = ++channelManagementRenderToken;
-    const managedChannels = dedupeChannelsById(channels || []).filter((channel) => !is7TVSetChannel(channel));
+    const managedChannels = dedupeChannelsById(channels || []);
     if (renderToken !== channelManagementRenderToken) return;
 
     if (managedChannels.length > 0) {
@@ -4017,7 +4165,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const emoteCount = emoteCountByChannel[channelKey] ??
           (channel.emotes ? Object.keys(channel.emotes).length : 0);
         const isSetChannel = is7TVSetChannel(channel);
-        const canBrowseSets = getChannelSourceType(channel) === 'twitch' && !isSetChannel;
+        const sourceType = getChannelSourceType(channel);
+        const sourceLabel = sourceType === 'telegram' ? 'Telegram' : sourceType === 'discord' ? 'Discord' : isSetChannel ? '7TV Set' : 'Twitch';
+        const itemUnit = sourceType === 'twitch' ? 'emotes' : 'items';
+        const canBrowseSets = sourceType === 'twitch' && !isSetChannel;
         const setsKey = getChannelSetsLookupKey(channel);
         const isExpanded = Boolean(setsKey && expandedChannelSetsKey === setsKey);
 
@@ -4028,13 +4179,16 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="channel-info">
               <div class="channel-name">
                 ${escapeHtml(getChannelDisplayName(channel))}
-                ${isSetChannel ? '<span class="channel-type-pill">Set</span>' : ''}
+                <span class="channel-type-pill">${escapeHtml(sourceLabel)}</span>
               </div>
               <div class="channel-stats">
-                ${emoteCount} emotes
+                ${emoteCount} ${itemUnit}
               </div>
             </div>
             <div class="channel-actions">
+              <button class="refresh-channel-btn" type="button" data-channel-id="${escapeHtml(channel.id)}">
+                <i class="fas fa-sync-alt"></i> Refresh
+              </button>
               ${canBrowseSets ? `
                 <button class="view-channel-sets-btn" type="button" data-channel-id="${escapeHtml(channel.id)}">
                   <i class="fas fa-layer-group"></i> Browse Sets
@@ -4045,7 +4199,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </button>
             </div>
           </div>
-          ${channel.emoteSetName ? `
+          ${channel.emoteSetName && !isSetChannel ? `
             <div class="channel-active-set">
               <span>Active set</span>
               <strong>${escapeHtml(channel.emoteSetName)}</strong>
@@ -4068,6 +4222,14 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', (e) => {
           const channelId = e.target.closest('.delete-channel-btn').dataset.channelId;
           deleteChannel(channelId);
+        });
+      });
+
+      channelList.querySelectorAll('.refresh-channel-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          const channelId = e.target.closest('.refresh-channel-btn').dataset.channelId;
+          const channel = managedChannels.find((candidate) => normalizeChannelIdentifier(candidate.id) === normalizeChannelIdentifier(channelId));
+          refreshChannelSource(channel, e.target.closest('.refresh-channel-btn'));
         });
       });
 
@@ -5402,7 +5564,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return restoreSources;
   }
 
-  async function applySourceBackupSources(restoreSources) {
+  async function applySourceBackupSources(restoreSources, { verb = 'Restoring' } = {}) {
     const result = {
       twitchChannels: 0,
       sevenTvSets: 0,
@@ -5470,7 +5632,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (downloadSources.length > 0) {
       try {
         downloadCompletionHandled = false;
-        setDownloadUiActive(`Restoring ${downloadSources.length} source${downloadSources.length === 1 ? '' : 's'}...`);
+        setDownloadUiActive(`${verb} ${downloadSources.length} source${downloadSources.length === 1 ? '' : 's'}...`);
         startProgressPolling();
         const response = await sendBackgroundMessage({
           action: 'downloadEmotes',
