@@ -2878,6 +2878,7 @@ async function fetchTelegramStickerBlob(botToken, sticker = {}) {
 async function publishTelegramImportLibrarySnapshot({
   channelsById,
   channelId,
+  setName = '',
   setTitle,
   importedEmotes,
   globalEmoteMapping,
@@ -2889,6 +2890,8 @@ async function publishTelegramImportLibrarySnapshot({
   skippedAnimatedCount = 0,
   importInProgress = true
 } = {}) {
+  const resolvedSetName = String(setName || '').trim() || String(channelId || '').replace(/^telegram:/i, '');
+
   channelsById.set(channelId, {
     id: channelId,
     username: setTitle,
@@ -2902,6 +2905,9 @@ async function publishTelegramImportLibrarySnapshot({
       skippedAnimated: skippedAnimatedCount
     },
     sourceType: 'telegram',
+    telegramStickerSetName: resolvedSetName,
+    telegramStickerSetTitle: setTitle,
+    telegramStickerSetLink: resolvedSetName ? `https://t.me/addstickers/${resolvedSetName}` : '',
     importInProgress,
     updatedAt: Date.now()
   });
@@ -3446,7 +3452,10 @@ async function importDiscordServerEmojis(tabId) {
         emojis: importedEmojiCount,
         stickers: importedStickerCount
       },
-      sourceType: 'discord'
+      sourceType: 'discord',
+      discordGuildId: guildId,
+      discordGuildName: guildName,
+      discordGuildLink: `https://discord.com/channels/${guildId}`
     });
 
     await chrome.storage.local.set({
@@ -3675,6 +3684,7 @@ async function importTelegramStickerSet(stickerSetInput) {
           await publishTelegramImportLibrarySnapshot({
             channelsById,
             channelId,
+            setName: stickerSet?.name || setName,
             setTitle,
             importedEmotes,
             globalEmoteMapping,
@@ -3730,6 +3740,7 @@ async function importTelegramStickerSet(stickerSetInput) {
     await publishTelegramImportLibrarySnapshot({
       channelsById,
       channelId,
+      setName: stickerSet?.name || setName,
       setTitle,
       importedEmotes,
       globalEmoteMapping,

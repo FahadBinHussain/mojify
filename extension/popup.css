@@ -1714,6 +1714,27 @@ select:focus {
   min-width: 0;
 }
 
+.source-transfer {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.source-transfer-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.source-backup-textarea {
+  min-height: 88px;
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .storage-details,
 .channel-list {
   margin-top: 12px;
