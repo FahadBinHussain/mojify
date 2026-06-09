@@ -1888,11 +1888,18 @@ select:focus {
 
 .delete-channel-btn,
 .view-channel-sets-btn,
+.refresh-channel-btn,
 .download-set-btn {
   min-height: 32px;
   border-radius: var(--radius-sm);
   padding: 0 10px;
   font-size: 11px;
+}
+
+.refresh-channel-btn {
+  background: rgba(57, 217, 138, 0.1);
+  border: 1px solid rgba(57, 217, 138, 0.22);
+  color: var(--green);
 }
 
 .view-channel-sets-btn {
