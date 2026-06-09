@@ -183,7 +183,7 @@
             </div>
             <button id="download-button" class="action-button" type="button">
               <i class="fas fa-sync-alt"></i>
-              <span>Refresh Emotes</span>
+              <span>Refresh All</span>
             </button>
           </div>
 
@@ -297,9 +297,15 @@
               </div>
 
               <div class="settings-section channel-management" id="channel-management" style="display: none;">
-                <div class="settings-subheader">
-                  <h3>Active Channels</h3>
-                  <span>Live counts</span>
+                <div class="settings-subheader channel-management-header">
+                  <div>
+                    <h3>Active Channels</h3>
+                    <span>Live counts</span>
+                  </div>
+                  <button id="refresh-all-sources" class="refresh-all-sources-btn" type="button">
+                    <i class="fas fa-sync-alt"></i>
+                    <span>Refresh All</span>
+                  </button>
                 </div>
                 <div class="channel-list" id="channel-list">
                   <!-- Channels will be populated here -->

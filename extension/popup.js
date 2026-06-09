@@ -306,6 +306,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const progressFill = document.getElementById('progress-fill');
   const channelManagement = document.getElementById('channel-management');
   const channelList = document.getElementById('channel-list');
+  const refreshAllSourcesButton = document.getElementById('refresh-all-sources');
   const totalEmotesCount = document.getElementById('total-emotes-count');
   const storageUsed = document.getElementById('storage-used');
   const channelsCount = document.getElementById('channels-count');
@@ -3345,8 +3346,23 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Download/refresh emotes
-  downloadButton.addEventListener('click', async () => {
+  downloadButton.addEventListener('click', () => {
+    handleRefreshAllSourcesClick();
+  });
+
+  refreshAllSourcesButton?.addEventListener('click', (event) => {
+    handleRefreshAllSourcesClick(event.currentTarget);
+  });
+
+  async function handleRefreshAllSourcesClick(triggerButton = null) {
+    const originalHtml = triggerButton?.innerHTML || '';
+
     try {
+      if (triggerButton) {
+        triggerButton.disabled = true;
+        triggerButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i><span>Refreshing</span>';
+      }
+
       const { downloadInProgress } = await new Promise((resolve) => {
         chrome.storage.local.get(['downloadInProgress'], resolve);
       });
@@ -3362,8 +3378,13 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (error) {
       console.error('[Mojify] Refresh all failed:', error);
       finishDownloadFlow({ error: error.message || 'Refresh failed' });
+    } finally {
+      if (triggerButton) {
+        triggerButton.disabled = false;
+        triggerButton.innerHTML = originalHtml;
+      }
     }
-  });
+  }
 
   // Button press effect for all buttons
   function addButtonEffects() {
@@ -4356,7 +4377,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function resetDownloadUi() {
     downloadButton.disabled = false;
-    downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh Emotes</span>';
+    downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh All</span>';
     downloadProgress.classList.add('hidden');
     progressFill.style.width = '0%';
     progressText.textContent = '';
