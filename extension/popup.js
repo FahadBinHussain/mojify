@@ -553,23 +553,25 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function isLocalLibraryTab(tabName = activeMediaTab) {
-    return tabName === 'twitch' || tabName === 'discord' || tabName === 'telegram';
+    return tabName === 'all' || tabName === 'twitch' || tabName === 'discord' || tabName === 'telegram';
   }
 
   function getActiveLibrarySourceType(tabName = activeMediaTab) {
     if (tabName === 'discord') return 'discord';
     if (tabName === 'telegram') return 'telegram';
+    if (tabName === 'all') return 'all';
     return 'twitch';
   }
 
   function getActiveLibraryAllLabel(tabName = activeMediaTab) {
     if (tabName === 'discord') return 'All Servers';
     if (tabName === 'telegram') return 'All Packs';
+    if (tabName === 'all') return 'All Sources';
     return 'All Channels';
   }
 
   function getActiveLibraryItemUnit(tabName = activeMediaTab) {
-    return tabName === 'discord' || tabName === 'telegram' ? 'items' : 'emotes';
+    return tabName === 'discord' || tabName === 'telegram' || tabName === 'all' ? 'items' : 'emotes';
   }
 
   function dedupeChannelIds(channelIds) {
@@ -798,8 +800,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function getVisibleChannelsForSource(sourceType = getActiveLibrarySourceType()) {
     return channels.filter((channel) => {
-      return getChannelSourceType(channel) === sourceType &&
-        Object.keys(channel?.emotes || {}).some((key) => emoteDataMap.has(key));
+      const channelSourceType = getChannelSourceType(channel);
+      const matchesSource = sourceType === 'all'
+        ? (channelSourceType === 'twitch' || channelSourceType === 'discord' || channelSourceType === 'telegram')
+        : channelSourceType === sourceType;
+      return matchesSource && Object.keys(channel?.emotes || {}).some((key) => emoteDataMap.has(key));
     });
   }
 
@@ -2378,9 +2383,14 @@ document.addEventListener('DOMContentLoaded', () => {
       : Object.keys(allEmotes);
     if (emoteKeys.length === 0) {
       if (isLocalLibraryTab()) {
+        const emptyMessage = activeMediaTab === 'all'
+          ? 'No emotes, stickers, or media imported yet'
+          : activeMediaTab === 'discord' ? 'No Discord emojis or stickers imported yet'
+          : activeMediaTab === 'telegram' ? 'No Telegram stickers imported yet'
+          : 'No emotes loaded';
         emoteGrid.innerHTML = `
           <div class="no-emotes-message" style="grid-column: 1 / -1;">
-            <p>${activeMediaTab === 'discord' ? 'No Discord emojis or stickers imported yet' : activeMediaTab === 'telegram' ? 'No Telegram stickers imported yet' : 'No emotes loaded'}</p>
+            <p>${emptyMessage}</p>
           </div>
         `;
         loadMoreContainer.classList.add('hidden');
@@ -2710,7 +2720,9 @@ document.addEventListener('DOMContentLoaded', () => {
         updateSortToolbarVisibility();
 
         if (searchInput) {
-          if (selectedTab === 'discord') {
+          if (selectedTab === 'all') {
+            searchInput.placeholder = 'Search all emotes, stickers, and media';
+          } else if (selectedTab === 'discord') {
             searchInput.placeholder = 'Search imported Discord media';
           } else if (selectedTab === 'telegram') {
             searchInput.placeholder = 'Search imported Telegram stickers';
@@ -2719,6 +2731,7 @@ document.addEventListener('DOMContentLoaded', () => {
           } else {
             searchInput.placeholder = 'Search emotes, GIFs, or reaction media';
           }
+          searchInput.focus();
         }
 
         if (isLocalLibraryTab(selectedTab) && isTabActive('emotes') && !emoteLibraryLoaded) {
@@ -3997,18 +4010,31 @@ document.addEventListener('DOMContentLoaded', () => {
       restoreSources.sevenTvSets.length +
       restoreSources.telegramSets.length;
 
-    if (autoRefreshCount === 0) {
-      if (restoreSources.discordServers.length > 0) {
-        showToast('Discord needs an open server tab. Use Refresh on that server row.', 'info');
-        return;
-      }
+    const result = autoRefreshCount > 0
+      ? await applySourceBackupSources(restoreSources, { verb: 'Refreshing' })
+      : { twitchChannels: 0, sevenTvSets: 0, telegramSets: 0, errors: [] };
 
-      showToast('No saved sources to refresh yet', 'error');
-      document.querySelector('.tab-btn[data-tab="settings"]')?.click();
-      return;
+    let discordResult = { refreshed: 0, skipped: 0, errors: [] };
+
+    if (restoreSources.discordServers.length > 0) {
+      const serverIds = restoreSources.discordServers.map((s) => s.serverId).filter(Boolean);
+      if (serverIds.length > 0) {
+        try {
+          const response = await sendBackgroundMessage({
+            action: 'batchRefreshDiscordServers',
+            serverIds
+          });
+          if (response?.success) {
+            discordResult = { refreshed: response.refreshed || 0, skipped: response.skipped || 0, errors: response.errors || [] };
+          } else {
+            discordResult = { refreshed: 0, skipped: serverIds.length, errors: [response?.error || 'Batch Discord refresh failed'] };
+          }
+        } catch {
+          discordResult = { refreshed: 0, skipped: serverIds.length, errors: ['Could not reach background script'] };
+        }
+      }
     }
 
-    const result = await applySourceBackupSources(restoreSources, { verb: 'Refreshing' });
     await refreshLocalLibraryAfterSourceUpdate();
 
     const parts = [];
@@ -4021,17 +4047,23 @@ document.addEventListener('DOMContentLoaded', () => {
     if (result.telegramSets > 0) {
       parts.push(`${result.telegramSets} Telegram pack${result.telegramSets === 1 ? '' : 's'}`);
     }
-
-    const discordNote = restoreSources.discordServers.length > 0
-      ? `; ${restoreSources.discordServers.length} Discord server${restoreSources.discordServers.length === 1 ? '' : 's'} need open-tab refresh`
-      : '';
-
-    if (result.errors.length > 0) {
-      showToast(`Refreshed ${parts.join(', ') || 'sources'}${discordNote}; ${result.errors.length} failed`, 'error');
-      return;
+    if (discordResult.refreshed > 0) {
+      parts.push(`${discordResult.refreshed} Discord server${discordResult.refreshed === 1 ? '' : 's'}`);
     }
 
-    showToast(`Refreshed ${parts.join(', ')}${discordNote}`, discordNote ? 'info' : 'success');
+    const discordNote = discordResult.skipped > 0
+      ? `; ${discordResult.skipped} Discord server${discordResult.skipped === 1 ? '' : 's'} skipped`
+      : '';
+
+    const message = `Refreshed ${parts.join(', ') || 'sources'}${discordNote}`;
+
+    if (parts.length === 0 && discordResult.skipped > 0) {
+      showToast(`Discord refresh skipped — are you logged into Discord in this browser?`, 'info');
+    } else if (result.errors.length > 0) {
+      showToast(`${message}; ${result.errors.length} failed`, 'error');
+    } else {
+      showToast(message, discordNote ? 'info' : 'success');
+    }
   }
 
   async function refreshChannelSource(channel, button) {

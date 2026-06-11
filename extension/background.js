@@ -3519,6 +3519,112 @@ async function importDiscordServerEmojis(tabId) {
   }
 }
 
+function waitForTabLoaded(tabId, timeoutMs = 15000) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(listener);
+      resolve(false);
+    }, timeoutMs);
+
+    function listener(updatedTabId, changeInfo) {
+      if (updatedTabId !== tabId) return;
+      if (changeInfo.status === 'complete') {
+        clearTimeout(timer);
+        chrome.tabs.onUpdated.removeListener(listener);
+        resolve(true);
+      }
+    }
+    chrome.tabs.onUpdated.addListener(listener);
+  });
+}
+
+async function batchRefreshDiscordServers(serverIds) {
+  const results = { refreshed: 0, skipped: 0, errors: [] };
+
+  if (!Array.isArray(serverIds) || serverIds.length === 0) {
+    return results;
+  }
+
+  await updateDiscordImportProgress({
+    inProgress: true,
+    current: 0,
+    total: serverIds.length,
+    statusText: `Refreshing ${serverIds.length} Discord server${serverIds.length === 1 ? '' : 's'}...`
+  });
+
+  const allTabs = await chrome.tabs.query({});
+  const openGuildTabs = new Map();
+  for (const tab of allTabs) {
+    const match = String(tab?.url || '').match(/discord(?:app)?\.com\/channels\/(\d+)/i);
+    if (match && tab.id) {
+      openGuildTabs.set(match[1], tab.id);
+    }
+  }
+
+  for (let i = 0; i < serverIds.length; i++) {
+    const serverId = String(serverIds[i]);
+    let tabId = openGuildTabs.get(serverId);
+    let openedByUs = false;
+
+    if (!tabId) {
+      const tab = await new Promise((resolve) => {
+        chrome.tabs.create({ url: `https://discord.com/channels/${serverId}`, active: false }, resolve);
+      });
+      if (!tab?.id) {
+        results.skipped++;
+        results.errors.push(`Could not open tab for server ${serverId}`);
+        continue;
+      }
+      tabId = tab.id;
+      openedByUs = true;
+
+      const loaded = await waitForTabLoaded(tabId, 15000);
+      if (!loaded) {
+        try { chrome.tabs.remove(tabId); } catch {}
+        results.skipped++;
+        results.errors.push(`Tab did not load for server ${serverId}`);
+        continue;
+      }
+
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+
+    await updateDiscordImportProgress({
+      inProgress: true,
+      current: i,
+      total: serverIds.length,
+      statusText: `Refreshing server ${i + 1} of ${serverIds.length}...`
+    });
+
+    try {
+      const response = await new Promise((resolve, reject) => {
+        importDiscordServerEmojis(tabId)
+          .then((result) => resolve(result))
+          .catch((error) => reject(error));
+      });
+      if (response?.success) results.refreshed++;
+      else results.skipped++;
+    } catch (error) {
+      results.skipped++;
+      results.errors.push(error.message || `Failed for server ${serverId}`);
+    } finally {
+      if (openedByUs) {
+        try { chrome.tabs.remove(tabId); } catch {}
+      }
+    }
+  }
+
+  await updateDiscordImportProgress({
+    inProgress: false,
+    completed: true,
+    current: serverIds.length,
+    total: serverIds.length,
+    statusText: `Discord refresh complete: ${results.refreshed} refreshed, ${results.skipped} skipped`
+  });
+
+  return results;
+}
+
 async function importTelegramStickerSet(stickerSetInput) {
   if (telegramImportState.isImporting) {
     throw new Error('A Telegram import is already in progress');
@@ -4211,6 +4317,13 @@ function handleRuntimeMessage(request, sender, sendResponse) {
   if (request.action === 'importDiscordServerEmojis') {
     importDiscordServerEmojis(request.tabId)
       .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'batchRefreshDiscordServers') {
+    batchRefreshDiscordServers(request.serverIds || [])
+      .then((result) => sendResponse({ success: true, ...result }))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
