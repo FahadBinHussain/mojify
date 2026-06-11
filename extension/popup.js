@@ -2469,11 +2469,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const emoteItem = document.createElement('div');
     emoteItem.className = 'emote-item';
     emoteItem.setAttribute('data-emote-key', key);
-    const imageUrl = getEmotePreviewUrl(key, emoteDbData);
+    const rawUrl = getEmotePreviewUrl(key, emoteDbData);
     const mediaType = String(emoteDbData?.mimeType || emoteDataMap.get(key)?.mimeType || '').toLowerCase();
     const isVideoPreview = mediaType.startsWith('video/');
 
-    if (!imageUrl) return null;
+    if (!rawUrl) return null;
+
+    const needsHydration = !rawUrl.startsWith('http') && !rawUrl.startsWith('blob:');
+    const imageUrl = needsHydration ? '' : rawUrl;
 
     emoteItem.innerHTML = `
       <button class="favorite-toggle ${favoriteEmotes.has(key) ? 'active' : ''}" type="button" aria-label="Toggle favorite">
@@ -2481,8 +2484,8 @@ document.addEventListener('DOMContentLoaded', () => {
       </button>
       <div class="emote-img-container">
         ${isVideoPreview
-          ? `<video src="${imageUrl}" class="emote-img" muted loop playsinline preload="metadata" aria-label="${emoteName}"></video>`
-          : `<img src="${imageUrl}" alt="${emoteName}" class="emote-img" loading="lazy" decoding="async">`}
+          ? `<video ${imageUrl ? `src="${imageUrl}"` : ''} class="emote-img" muted loop playsinline preload="metadata" aria-label="${emoteName}"></video>`
+          : `<img ${imageUrl ? `src="${imageUrl}"` : ''} alt="${emoteName}" class="emote-img" loading="lazy" decoding="async">`}
       </div>
       <div class="emote-details">
         <div class="emote-trigger" title="${key}">
