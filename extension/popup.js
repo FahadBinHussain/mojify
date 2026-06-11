@@ -705,6 +705,14 @@ document.addEventListener('DOMContentLoaded', () => {
       chrome.storage.local.get(['recentItems'], resolve);
     });
     recentItems = Array.isArray(result.recentItems) ? result.recentItems : [];
+
+    const emoteKeys = recentItems
+      .filter((item) => item.type === 'emote' && item.key && !emoteObjectUrlCache.has(item.key))
+      .map((item) => item.key);
+    if (emoteKeys.length > 0) {
+      await Promise.allSettled(emoteKeys.map((key) => ensureLocalEmotePreviewUrl(key)));
+    }
+
     renderRecentGrid();
   }
 
