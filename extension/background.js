@@ -1297,13 +1297,14 @@ async function downloadEmotes(options = {}) {
     // Process emotes in adaptive concurrent batches
     const failedQueue = [];
     let currentBatch = 0;
-    const totalBatches = Math.ceil(allEmotesToDownload.length / BATCH_SIZE);
+    let totalBatches = Math.ceil(allEmotesToDownload.length / BATCH_SIZE);
     let consecutiveHighFailureBatches = 0;
     let lastProgressAt = Date.now();
 
     for (let i = 0; i < allEmotesToDownload.length; i += BATCH_SIZE) {
       const batch = allEmotesToDownload.slice(i, i + BATCH_SIZE);
       currentBatch++;
+      totalBatches = Math.ceil((allEmotesToDownload.length - i) / BATCH_SIZE);
 
       logDownload('batch-start', {
         batch: `${currentBatch}/${totalBatches}`,
@@ -3873,10 +3874,12 @@ function setupContextMenus() {
 
 chrome.runtime.onInstalled.addListener((details) => {
   setupContextMenus();
+  resetDownloadState();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   setupContextMenus();
+  resetDownloadState();
 });
 
 async function getContextMenuTargetTab(tab) {

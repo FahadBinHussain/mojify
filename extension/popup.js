@@ -3779,7 +3779,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const indexedDBStorageUsed = document.getElementById('indexeddb-storage-used');
 
     chrome.storage.local.get(['emoteMapping', 'channels'], (result) => {
-      const emoteCount = result.emoteMapping ? Object.keys(result.emoteMapping).length : 0;
+      const emoteCount = channels.reduce((total, channel) => {
+        return total + Object.keys(channel?.emotes || {}).length;
+      }, 0) || emoteDataMap.size || (result.emoteMapping ? Object.keys(result.emoteMapping).length : 0);
       const channelCount = result.channels ? result.channels.length : 0;
 
       if (totalEmotesCount) totalEmotesCount.textContent = emoteCount;
@@ -4174,73 +4176,109 @@ document.addEventListener('DOMContentLoaded', () => {
       channelManagement.style.display = 'block';
       channelList.innerHTML = '';
 
-      const emoteCountByChannel = {};
-      Array.from(emoteDataMap.values()).forEach((emote) => {
-        const channelKey = normalizeChannelIdentifier(emote?.channelId || emote?.channel);
-        if (!channelKey) return;
-        emoteCountByChannel[channelKey] = (emoteCountByChannel[channelKey] || 0) + 1;
+      const sourceGroups = new Map();
+      managedChannels.forEach((channel) => {
+        const sourceType = getChannelSourceType(channel);
+        if (!sourceGroups.has(sourceType)) sourceGroups.set(sourceType, []);
+        sourceGroups.get(sourceType).push(channel);
       });
 
-      managedChannels.forEach((channel) => {
-        const channelKey = normalizeChannelIdentifier(channel.id || channel.username);
-        const emoteCount = emoteCountByChannel[channelKey] ??
-          (channel.emotes ? Object.keys(channel.emotes).length : 0);
-        const isSetChannel = is7TVSetChannel(channel);
-        const sourceType = getChannelSourceType(channel);
-        const sourceLabel = sourceType === 'telegram' ? 'Telegram' : sourceType === 'discord' ? 'Discord' : isSetChannel ? '7TV Set' : 'Twitch';
-        const itemUnit = sourceType === 'twitch' ? 'emotes' : 'items';
-        const canBrowseSets = sourceType === 'twitch' && !isSetChannel;
-        const setsKey = getChannelSetsLookupKey(channel);
-        const isExpanded = Boolean(setsKey && expandedChannelSetsKey === setsKey);
+      const sourceOrder = ['twitch', 'discord', 'telegram'];
+      const sourceLabels = { twitch: 'Twitch', discord: 'Discord', telegram: 'Telegram' };
+      const sourceIcons = { twitch: 'fa-twitch', discord: 'fa-discord', telegram: 'fa-telegram' };
 
-        const channelRow = document.createElement('div');
-        channelRow.className = `channel-row ${isExpanded ? 'sets-open' : ''}`;
-        channelRow.innerHTML = `
-          <div class="channel-item">
-            <div class="channel-info">
-              <div class="channel-name">
-                ${escapeHtml(getChannelDisplayName(channel))}
-                <span class="channel-type-pill">${escapeHtml(sourceLabel)}</span>
-              </div>
-              <div class="channel-stats">
-                ${emoteCount} ${itemUnit}
-              </div>
-            </div>
-            <div class="channel-actions">
-              <button class="refresh-channel-btn" type="button" data-channel-id="${escapeHtml(channel.id)}">
-                <i class="fas fa-sync-alt"></i> Refresh
-              </button>
-              ${canBrowseSets ? `
-                <button class="view-channel-sets-btn" type="button" data-channel-id="${escapeHtml(channel.id)}">
-                  <i class="fas fa-layer-group"></i> Browse Sets
-                </button>
-              ` : ''}
-              <button class="delete-channel-btn" type="button" data-channel-id="${escapeHtml(channel.id)}">
-                <i class="fas fa-trash"></i> Remove
-              </button>
-            </div>
+      for (const sourceType of sourceOrder) {
+        const groupChannels = sourceGroups.get(sourceType);
+        if (!groupChannels || groupChannels.length === 0) continue;
+
+        const groupTotal = groupChannels.reduce((sum, ch) => sum + (ch.emotes ? Object.keys(ch.emotes).length : 0), 0);
+        const group = document.createElement('div');
+        group.className = 'channel-tree-group';
+
+        group.innerHTML = `
+          <div class="channel-tree-source" data-source="${escapeHtml(sourceType)}">
+            <i class="fas fa-chevron-down channel-tree-toggle-icon"></i>
+            <i class="fas ${sourceIcons[sourceType] || 'fa-folder'} channel-tree-source-icon"></i>
+            <span class="channel-tree-source-name">${escapeHtml(sourceLabels[sourceType] || sourceType)}</span>
+            <span class="channel-tree-source-meta">${groupChannels.length} channel${groupChannels.length === 1 ? '' : 's'} &middot; ${groupTotal} emotes</span>
           </div>
-          ${channel.emoteSetName && !isSetChannel ? `
-            <div class="channel-active-set">
-              <span>Active set</span>
-              <strong>${escapeHtml(channel.emoteSetName)}</strong>
-              <small>${emoteCount} emotes</small>
-            </div>
-          ` : ''}
-          <div class="channel-set-panel ${isExpanded ? '' : 'hidden'}"></div>
+          <div class="channel-tree-source-children"></div>
         `;
 
-        channelList.appendChild(channelRow);
+        const sourceRow = group.querySelector('.channel-tree-source');
+        const childrenContainer = group.querySelector('.channel-tree-source-children');
 
-        if (isExpanded && canBrowseSets) {
-          const panel = channelRow.querySelector('.channel-set-panel');
-          const toggleButton = channelRow.querySelector('.view-channel-sets-btn');
-          loadChannelEmoteSets(channel, panel, toggleButton);
-        }
-      });
+        sourceRow.addEventListener('click', () => {
+          const isOpen = group.classList.toggle('open');
+          sourceRow.querySelector('.channel-tree-toggle-icon').className = `fas fa-chevron-${isOpen ? 'down' : 'right'} channel-tree-toggle-icon`;
+        });
+
+        groupChannels.forEach((channel) => {
+          const emoteCount = channel.emotes ? Object.keys(channel.emotes).length : 0;
+          const isSetChannel = is7TVSetChannel(channel);
+          const canBrowseSets = sourceType === 'twitch' && !isSetChannel;
+          const setsKey = getChannelSetsLookupKey(channel);
+          const isExpanded = Boolean(setsKey && expandedChannelSetsKey === setsKey);
+
+          const channelNode = document.createElement('div');
+          channelNode.className = 'channel-tree-node';
+          channelNode.innerHTML = `
+            <div class="channel-tree-channel">
+              <div class="channel-tree-channel-main">
+                <i class="fas fa-chevron-${isExpanded ? 'down' : 'right'} channel-tree-channel-toggle"></i>
+                <span class="channel-tree-channel-name">${escapeHtml(getChannelDisplayName(channel))}</span>
+                <span class="channel-tree-channel-count">${emoteCount} ${sourceType === 'twitch' ? 'emotes' : 'items'}</span>
+              </div>
+              <div class="channel-tree-channel-actions">
+                <button class="refresh-channel-btn" type="button" data-channel-id="${escapeHtml(channel.id)}" title="Refresh">
+                  <i class="fas fa-sync-alt"></i>
+                </button>
+                ${canBrowseSets ? `
+                  <button class="view-channel-sets-btn" type="button" data-channel-id="${escapeHtml(channel.id)}" title="Browse Sets">
+                    <i class="fas fa-layer-group"></i>
+                  </button>
+                ` : ''}
+                <button class="delete-channel-btn" type="button" data-channel-id="${escapeHtml(channel.id)}" title="Remove">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </div>
+            </div>
+            ${channel.emoteSetName && !isSetChannel ? `
+              <div class="channel-tree-set">
+                <i class="fas fa-cube channel-tree-set-icon"></i>
+                <span class="channel-tree-set-name">${escapeHtml(channel.emoteSetName)}</span>
+                <span class="channel-tree-set-count">${emoteCount} emotes</span>
+                <span class="channel-tree-set-badge">Active</span>
+              </div>
+            ` : ''}
+            <div class="channel-set-panel ${isExpanded ? '' : 'hidden'}"></div>
+          `;
+
+          const channelMain = channelNode.querySelector('.channel-tree-channel-main');
+          channelMain.addEventListener('click', () => {
+            if (!canBrowseSets) return;
+            const lookupKey2 = getChannelSetsLookupKey(channel);
+            expandedChannelSetsKey = expandedChannelSetsKey === lookupKey2 ? '' : lookupKey2;
+            updateChannelManagement();
+          });
+
+          if (isExpanded && canBrowseSets) {
+            const panel = channelNode.querySelector('.channel-set-panel');
+            const toggleButton = channelNode.querySelector('.view-channel-sets-btn');
+            loadChannelEmoteSets(channel, panel, toggleButton);
+          }
+
+          childrenContainer.appendChild(channelNode);
+        });
+
+        channelList.appendChild(group);
+
+        group.classList.add('open');
+      }
 
       channelList.querySelectorAll('.delete-channel-btn').forEach((btn) => {
         btn.addEventListener('click', (e) => {
+          e.stopPropagation();
           const channelId = e.target.closest('.delete-channel-btn').dataset.channelId;
           deleteChannel(channelId);
         });
@@ -4248,6 +4286,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       channelList.querySelectorAll('.refresh-channel-btn').forEach((btn) => {
         btn.addEventListener('click', (e) => {
+          e.stopPropagation();
           const channelId = e.target.closest('.refresh-channel-btn').dataset.channelId;
           const channel = managedChannels.find((candidate) => normalizeChannelIdentifier(candidate.id) === normalizeChannelIdentifier(channelId));
           refreshChannelSource(channel, e.target.closest('.refresh-channel-btn'));
@@ -4256,6 +4295,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       channelList.querySelectorAll('.view-channel-sets-btn').forEach((btn) => {
         btn.addEventListener('click', (e) => {
+          e.stopPropagation();
           const channelId = e.target.closest('.view-channel-sets-btn').dataset.channelId;
           const channel = managedChannels.find((candidate) => normalizeChannelIdentifier(candidate.id) === normalizeChannelIdentifier(channelId));
           if (!channel) return;
