@@ -1252,7 +1252,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function createRecentThumbnailSrc(item) {
     if (item.type === 'emote') {
-      return getEmotePreviewUrl(item.key, emoteDataMap.get(item.key)) || item.previewUrl || '';
+      const url = getEmotePreviewUrl(item.key, emoteDataMap.get(item.key)) || item.previewUrl || '';
+      if (url && !url.startsWith('http') && !url.startsWith('blob:')) return '';
+      return url;
     }
 
     return item.previewUrl || item.mediaUrl || '';
@@ -1292,6 +1294,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const mediaSrc = createRecentThumbnailSrc(item);
       if (mediaSrc) {
         media.src = mediaSrc;
+      } else if (item.type === 'emote' && item.key) {
+        hydrateEmoteImageElement(item.key, media);
       }
 
       const label = document.createElement('span');
