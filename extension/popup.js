@@ -462,6 +462,8 @@ document.addEventListener('DOMContentLoaded', () => {
     return pending;
   }
 
+  const PLACEHOLDER_PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
   function hydrateEmoteImageElement(emoteKey, imageElement) {
     if (!emoteKey || !imageElement) return;
 
@@ -1303,6 +1305,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (mediaSrc) {
         media.src = mediaSrc;
       } else if (item.type === 'emote' && item.key) {
+        media.src = PLACEHOLDER_PX;
         hydrateEmoteImageElement(item.key, media);
       }
 
@@ -2488,7 +2491,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!rawUrl) return null;
 
     const needsHydration = !rawUrl.startsWith('http') && !rawUrl.startsWith('blob:');
-    const imageUrl = needsHydration ? '' : rawUrl;
+    const imageUrl = needsHydration ? PLACEHOLDER_PX : rawUrl;
 
     emoteItem.innerHTML = `
       <button class="favorite-toggle ${favoriteEmotes.has(key) ? 'active' : ''}" type="button" aria-label="Toggle favorite">
@@ -2496,8 +2499,8 @@ document.addEventListener('DOMContentLoaded', () => {
       </button>
       <div class="emote-img-container">
         ${isVideoPreview
-          ? `<video ${imageUrl ? `src="${imageUrl}"` : ''} class="emote-img" muted loop playsinline preload="metadata" aria-label="${emoteName}"></video>`
-          : `<img ${imageUrl ? `src="${imageUrl}"` : ''} alt="${emoteName}" class="emote-img" loading="lazy" decoding="async">`}
+          ? `<video src="${imageUrl}" class="emote-img" muted loop playsinline preload="metadata" aria-label="${emoteName}"></video>`
+          : `<img src="${imageUrl}" alt="${emoteName}" class="emote-img" loading="lazy" decoding="async">`}
       </div>
       <div class="emote-details">
         <div class="emote-trigger" title="${key}">
