@@ -421,7 +421,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const sourceData = emoteData || emoteDataMap.get(emoteKey);
-    return sourceData?.url || allEmotes[emoteKey] || '';
+    const url = sourceData?.url || allEmotes[emoteKey] || '';
+    if (url && !url.startsWith('http') && !url.startsWith('blob:')) return '';
+    return url;
   }
 
   async function ensureLocalEmotePreviewUrl(emoteKey) {
@@ -461,7 +463,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function hydrateEmoteImageElement(emoteKey, imageElement) {
-    if (!emoteKey || !imageElement || emoteObjectUrlCache.has(emoteKey)) {
+    if (!emoteKey || !imageElement) return;
+
+    if (emoteObjectUrlCache.has(emoteKey)) {
+      const cachedUrl = emoteObjectUrlCache.get(emoteKey);
+      if (cachedUrl && !imageElement.src?.endsWith(cachedUrl)) {
+        imageElement.src = cachedUrl;
+      }
       return;
     }
 
