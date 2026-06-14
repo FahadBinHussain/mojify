@@ -326,6 +326,35 @@ document.addEventListener('DOMContentLoaded', () => {
   const RECENT_ITEMS_LIMIT = 150;
   const RECENT_ITEMS_INITIAL_RENDER = 48;
   const RECENT_ITEMS_PAGE_SIZE = 48;
+
+  // Video intersection observer for lazy playback
+  let videoObserver = null;
+
+  function initVideoObserver() {
+    if (videoObserver) return videoObserver;
+
+    videoObserver = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        const video = entry.target;
+        if (entry.isIntersecting) {
+          // Video is visible, try to play
+          if (video.paused) {
+            video.play().catch(() => {});
+          }
+        } else {
+          // Video is not visible, pause to save resources
+          if (!video.paused) {
+            video.pause();
+          }
+        }
+      });
+    }, {
+      threshold: 0.1, // Play when at least 10% visible
+      rootMargin: '50px' // Start loading slightly before entering viewport
+    });
+
+    return videoObserver;
+  }
   const SEND_EMOTE_NAME_SETTING_KEY = 'sendEmoteNameWithMedia';
   const SOURCE_BACKUP_TYPE = 'mojify-source-backup';
   const SOURCE_BACKUP_VERSION = 1;
@@ -440,11 +469,15 @@ document.addEventListener('DOMContentLoaded', () => {
       video.className = 'recent-item-media';
       video.muted = true;
       video.loop = true;
-      video.autoplay = true;
       video.playsInline = true;
       video.preload = 'metadata';
       video.setAttribute('playsinline', '');
       video.setAttribute('aria-label', item.label || 'Recent item');
+      
+      // Use intersection observer for lazy playback
+      const observer = initVideoObserver();
+      observer.observe(video);
+      
       return video;
     }
 
@@ -544,21 +577,24 @@ document.addEventListener('DOMContentLoaded', () => {
           video.className = mediaElement.className;
           video.muted = true;
           video.loop = true;
-          video.autoplay = true;
           video.playsInline = true;
           video.preload = 'metadata';
           video.setAttribute('playsinline', '');
           video.setAttribute('aria-label', mediaElement.alt || 'Recent item');
           video.src = objectUrl;
           mediaElement.replaceWith(video);
-          video.play().catch(() => {});
+          
+          // Use intersection observer for lazy playback
+          const observer = initVideoObserver();
+          observer.observe(video);
+          
           return;
         }
 
         mediaElement.src = objectUrl;
         if (mediaElement.tagName === 'VIDEO') {
           mediaElement.load();
-          mediaElement.play().catch(() => {});
+          // Let intersection observer handle playback
         }
       })
       .catch((error) => {
@@ -2610,11 +2646,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const favoriteButton = emoteItem.querySelector('.favorite-toggle');
     const imageElement = emoteItem.querySelector('.emote-img');
     const triggerElement = emoteItem.querySelector('.emote-trigger');
+    
     if (isVideoPreview && imageElement) {
+      // Use intersection observer for lazy video playback
+      const observer = initVideoObserver();
+      observer.observe(imageElement);
+      
+      // Set up video for lazy loading
       imageElement.addEventListener('canplay', () => {
-        imageElement.play().catch(() => {});
+        // Don't auto-play, let intersection observer handle it
       }, { once: true });
     }
+    
     favoriteButton?.addEventListener('click', async (event) => {
       event.preventDefault();
       event.stopPropagation();
