@@ -39,6 +39,7 @@
   let discordBuffer = '';
   let discordMinibar = null;
   let discordEditor = null;
+  let pendingEmoteName = null; // Stores emote name for send-with-name feature
 
   // EARLY KEYDOWN INTERCEPTOR - added immediately, no conditions
   // This runs before any other code can interfere
@@ -106,6 +107,7 @@
           event.stopImmediatePropagation();
           const selectedEmote = emoteElements[selectedEmoteIndex];
           if (selectedEmote && selectedEmote.key) {
+            pendingEmoteName = selectedEmote.key;
             resetDiscordState();
             insertEmote(selectedEmote.key, active);
           }
@@ -448,6 +450,7 @@ function flushDiscordBuffer() {
 function resetDiscordState() {
     discordState = 'NORMAL';
     discordBuffer = '';
+    pendingEmoteName = null;
     updateDiscordMinibar();
     hideSuggestions();
 }
@@ -515,6 +518,7 @@ function setupDiscordTextInterceptor() {
 
                             if (emoteMapping && (emoteMapping[emoteKey] || emoteMapping[emoteName])) {
                                 debugLog("EMOTE MATCH:", emoteKey);
+                                pendingEmoteName = emoteKey;
                                 resetDiscordState();
                                 const finalKey = emoteMapping[emoteKey] ? emoteKey : emoteName;
                                 insertEmote(finalKey, discordEditor);
@@ -757,6 +761,15 @@ function hideSuggestions() {
 
 async function insertEmoteFromDiscordInterceptor(emoteKey) {
     try {
+        // Guard against double insert
+        if (window.__mojifyInserting) {
+            debugLog("Already inserting, skipping duplicate");
+            return;
+        }
+        window.__mojifyInserting = true;
+        
+        // Store name BEFORE reset clears it
+        pendingEmoteName = emoteKey;
         // Clear the current buffer and minibar
         resetDiscordState();
 
@@ -764,7 +777,11 @@ async function insertEmoteFromDiscordInterceptor(emoteKey) {
         await insertEmote(emoteKey, discordEditor);
 
         debugLog(`Inserted emote from Discord interceptor: ${emoteKey}`);
+        
+        // Clear guard after a delay
+        setTimeout(() => { window.__mojifyInserting = false; }, 500);
     } catch (error) {
+        window.__mojifyInserting = false;
         debugLog("Error inserting emote from Discord interceptor:", error);
     }
 }
@@ -1636,6 +1653,13 @@ async function insertEmote(emoteKey, targetElement = null) {
 
         if (success) {
             debugLog(`[Mojify] Successfully inserted ${emoteKey}`);
+            // Mark upload time to prevent double insert from popup's insertNameText
+            window.__mojifyLastUpload = Date.now();
+            // Insert emote name text via MAIN world ComponentDispatch
+            if (pendingEmoteName && getCurrentPlatform() === 'discord') {
+                insertEmoteNameViaComponentDispatch(pendingEmoteName);
+                pendingEmoteName = null;
+            }
         } else {
             debugLog(`[Mojify] Failed to insert ${emoteKey}`);
         }
@@ -1649,6 +1673,47 @@ async function insertEmote(emoteKey, targetElement = null) {
 }
 
 // Message listener - insertEmote handling removed, now using direct script injection
+// Insert emote name text via Discord's ComponentDispatch (MAIN world injection)
+// This is the textReplace method - uses Discord's internal API to insert text
+function insertEmoteNameViaComponentDispatch(emoteName) {
+    if (!emoteName) return;
+    const nameText = emoteName.replace(/^:+|:+$/g, ''); // Clean the name
+    if (!nameText) return;
+    
+    debugLog("ComponentDispatch: inserting text:", nameText);
+    
+    const key = '__mojify_insert_' + Math.random().toString(36).slice(2);
+    const script = document.createElement('script');
+    script.textContent = '(function(){try{' +
+        'var chunk=window.webpackChunkdiscord_app;' +
+        'if(!chunk){window["' + key + '"]="no_chunk";console.log("[Mojify] no webpack chunk");return;}' +
+        'var CD;' +
+        'chunk.push([[Symbol()],{},function(r){' +
+        'for(var i of Object.keys(r.c||{})){' +
+        'var m=r.c[i]&&r.c[i].exports;' +
+        'if(!m)continue;var e=m.default||m;' +
+        'if(!CD&&typeof e.dispatchToLastSubscribed==="function")CD=e;' +
+        '}}]);' +
+        'if(!CD){window["' + key + '"]="no_cd";console.log("[Mojify] ComponentDispatch not found");return;}' +
+        'CD.dispatchToLastSubscribed("INSERT_TEXT",{rawText:"' + nameText.replace(/"/g, '\\"') + '",plainText:"' + nameText.replace(/"/g, '\\"') + '"});' +
+        'window["' + key + '"]="ok";console.log("[Mojify] ComponentDispatch INSERT_TEXT success");' +
+    '}catch(e){window["' + key + '"]="err:"+e.message;console.log("[Mojify] ComponentDispatch error:",e)}})();';
+    document.head.appendChild(script);
+    script.remove();
+    
+    // Poll for result (optional, fire-and-forget)
+    let attempts = 0;
+    const poll = setInterval(() => {
+        if (window[key] !== undefined || attempts > 30) {
+            clearInterval(poll);
+            const r = window[key];
+            delete window[key];
+            debugLog("ComponentDispatch INSERT_TEXT result:", r);
+        }
+        attempts++;
+    }, 30);
+}
+
 try {
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       debugLog("Message received:", request);
@@ -1848,6 +1913,22 @@ async function handleInputEvent(event) {
   // Skip processing if we're navigating with keyboard
   if (isNavigatingKeyboard) {
     debugLog("Skipping input processing - keyboard navigation active");
+    return;
+  }
+
+  // Skip processing if a file was just uploaded (prevents double insert from popup)
+  if (window.__mojifyLastUpload && Date.now() - window.__mojifyLastUpload < 2000) {
+    return;
+  }
+
+  // Skip file-related input events (popup file uploads dispatch these)
+  if (event.inputType && ['insertFromDrop', 'insertFromPaste', 'insertFromReplace'].includes(event.inputType)) {
+    return;
+  }
+
+  // Skip plain Event inputs (popup dispatches new Event('input'), not InputEvent)
+  // Only process real InputEvent instances from user typing
+  if (event.type === 'input' && !(event instanceof InputEvent)) {
     return;
   }
 
