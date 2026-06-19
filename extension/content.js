@@ -40,6 +40,129 @@
   let discordMinibar = null;
   let discordEditor = null;
 
+  // EARLY KEYDOWN INTERCEPTOR - added immediately, no conditions
+  // This runs before any other code can interfere
+  window.addEventListener('keydown', function mojifyEarlyIntercept(event) {
+    if (event.key === ':' && discordState === 'NORMAL') {
+      const active = document.activeElement;
+      if (active && active.isContentEditable) {
+        console.log('[Mojify] EARLY INTERCEPT caught : on', active);
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        discordState = 'INTERCEPTING';
+        discordBuffer = ':';
+        discordEditor = active;
+        discordMinibar = discordMinibar || createDiscordMinibar();
+        updateDiscordMinibar();
+      }
+    } else if (discordState === 'INTERCEPTING') {
+      const active = document.activeElement;
+      if (!active || !active.isContentEditable) {
+        discordState = 'NORMAL';
+        discordBuffer = '';
+        return;
+      }
+
+      // Check for :: BEFORE preventing default - let : pass through
+      if (event.key === ':') {
+        discordState = 'NORMAL';
+        discordBuffer = '';
+        if (discordMinibar) {
+          discordMinibar.style.opacity = '0';
+          discordMinibar.remove();
+          discordMinibar = null;
+        }
+        const sb = document.getElementById('mojify-suggestion-bar');
+        if (sb) sb.style.display = 'none';
+        currentPartialTextInfo = null;
+        // Don't preventDefault - let the : be typed normally
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+
+      if (event.key === 'Backspace') {
+        discordBuffer = discordBuffer.slice(0, -1);
+        if (discordBuffer.length === 0) {
+          discordState = 'NORMAL';
+          if (discordMinibar) discordMinibar.style.opacity = '0';
+          hideSuggestions();
+        } else {
+          updateDiscordMinibar();
+        }
+      } else if (event.key === 'Escape') {
+        discordState = 'NORMAL';
+        discordBuffer = '';
+        if (discordMinibar) discordMinibar.style.opacity = '0';
+        hideSuggestions();
+      } else if (event.key === 'Enter') {
+        // If minibar is focused and emote selected, insert it
+        if (minibarFocused && selectedEmoteIndex >= 0 && selectedEmoteIndex < emoteElements.length) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+          const selectedEmote = emoteElements[selectedEmoteIndex];
+          if (selectedEmote && selectedEmote.key) {
+            resetDiscordState();
+            insertEmote(selectedEmote.key, active);
+          }
+        } else {
+          // Flush buffer - pass key through
+          discordState = 'NORMAL';
+          discordBuffer = '';
+          if (discordMinibar) discordMinibar.style.opacity = '0';
+          hideSuggestions();
+        }
+      } else if (event.key === ' ' || event.key === 'Tab') {
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        setKeyboardNavigationActive();
+        selectFirstEmote();
+      } else if (event.key === 'ArrowDown') {
+        if (minibarFocused) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+          setKeyboardNavigationActive();
+          unfocusMinibar();
+        }
+      } else if (event.key === 'ArrowLeft') {
+        if (minibarFocused) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+          setKeyboardNavigationActive();
+          selectPrevEmote();
+        }
+      } else if (event.key === 'ArrowRight') {
+        if (minibarFocused) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+          setKeyboardNavigationActive();
+          selectNextEmote();
+        } else {
+          // First right arrow press - enter minibar and select first emote
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+          setKeyboardNavigationActive();
+          selectFirstEmote();
+        }
+      } else if (event.key.length === 1) {
+        discordBuffer += event.key;
+        console.log('[Mojify] EARLY BUFFER:', discordBuffer);
+        discordMinibar = discordMinibar || createDiscordMinibar();
+        updateDiscordMinibar();
+      }
+    }
+  }, true);
+
 // IndexedDB wrapper for emote storage - using message passing to background script
 const emoteDB = {
   async getEmote(key) {
@@ -330,101 +453,83 @@ function resetDiscordState() {
 }
 
 function setupDiscordTextInterceptor() {
-    console.log("[Mojify] Discord text interceptor v1.0 loaded. Waiting for editor.");
+    console.log("[Mojify] Discord text interceptor v3.0 loaded.");
 
-    const bodyObserver = new MutationObserver(() => {
-        const editor = document.querySelector('div[role="textbox"][data-slate-editor="true"]');
-        if (editor && !editor.dataset.mojifyAttached) {
-            editor.dataset.mojifyAttached = 'true';
-            discordEditor = editor;
-            discordMinibar = createDiscordMinibar();
-            console.log("%c[Mojify] Discord editor found! Attaching text interceptor.", "color: green; font-weight: bold;");
+    // Intercept ALL keydown events on window capture phase
+    // No element checking - just intercept : anywhere in Discord
+    window.addEventListener('keydown', (event) => {
+        const active = document.activeElement;
+        const isEditor = active && (active.isContentEditable || active.getAttribute('contenteditable') === 'true');
+        
+        if (!isEditor) return;
 
-            editor.addEventListener('keydown', (event) => {
-                if (discordState === 'NORMAL') {
-                    if (event.key === ':') {
-                        event.preventDefault();
-                        discordState = 'INTERCEPTING';
-                        discordBuffer = ':';
+        if (discordState === 'NORMAL') {
+            if (event.key === ':') {
+                event.preventDefault();
+                event.stopPropagation();
+                discordState = 'INTERCEPTING';
+                discordBuffer = ':';
+                discordEditor = active;
+                discordMinibar = discordMinibar || createDiscordMinibar();
+                updateDiscordMinibar();
+                debugLog("INTERCEPTED colon on contenteditable:", active.tagName, active.className);
+            }
+            return;
+        }
+
+        if (discordState === 'INTERCEPTING') {
+            if (discordBuffer === ':' && event.key === ':') {
+                // Double colon - flush and pass through
+                resetDiscordState();
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            switch (event.key) {
+                case 'Backspace':
+                    discordBuffer = discordBuffer.slice(0, -1);
+                    if (discordBuffer.length === 0) resetDiscordState();
+                    else updateDiscordMinibar();
+                    break;
+
+                case 'Enter':
+                case ' ':
+                case 'Tab':
+                    flushDiscordBuffer();
+                    break;
+
+                case 'Escape':
+                    resetDiscordState();
+                    break;
+
+                default:
+                    if (event.key.length === 1) {
+                        discordBuffer += event.key;
+                        debugLog("Buffer:", discordBuffer);
+
+                        if (event.key === ':' && discordBuffer.length > 2) {
+                            const emoteName = discordBuffer.slice(1, -1);
+                            const emoteKey = `:${emoteName}:`;
+
+                            if (emoteMapping && (emoteMapping[emoteKey] || emoteMapping[emoteName])) {
+                                debugLog("EMOTE MATCH:", emoteKey);
+                                resetDiscordState();
+                                const finalKey = emoteMapping[emoteKey] ? emoteKey : emoteName;
+                                insertEmote(finalKey, discordEditor);
+                                return;
+                            }
+                        }
+
                         updateDiscordMinibar();
                     }
-                    return;
-                }
-
-                if (discordState === 'INTERCEPTING') {
-                    // Handle double colon case
-                    if (discordBuffer === ':' && event.key === ':') {
-                        console.log("[Mojify] Double colon detected. Flushing and allowing pass-through.");
-                        flushDiscordBuffer();
-                        return;
-                    }
-
-                    event.preventDefault();
-
-                    switch (event.key) {
-                        case 'Backspace':
-                            discordBuffer = discordBuffer.slice(0, -1);
-                            if (discordBuffer.length === 0) {
-                                resetDiscordState();
-                            } else {
-                                updateDiscordMinibar();
-                            }
-                            break;
-
-                        case 'Enter':
-                        case ' ':
-                        case 'Tab':
-                            flushDiscordBuffer();
-                            const props = findReactProps(editor);
-                            if (props) props.setQuery(props.query + event.key);
-                            break;
-
-                        case 'Escape':
-                            resetDiscordState();
-                            break;
-
-                        default:
-                            if (event.key.length === 1) {
-                                discordBuffer += event.key;
-
-                                // Check if we have a complete emote command
-                                if (event.key === ':' && discordBuffer.length > 2) {
-                                    const emoteName = discordBuffer.slice(1, -1); // Remove both colons
-                                    const emoteKey = `:${emoteName}:`;
-
-                                    // Check if this emote exists in our mapping
-                                    if (emoteMapping && (emoteMapping[emoteKey] || emoteMapping[emoteName])) {
-                                        event.preventDefault();
-                                        debugLog("Discord interceptor: Auto-inserting emote", emoteKey);
-
-                                        // Reset state first
-                                        resetDiscordState();
-
-                                        // Insert the emote
-                                        const finalEmoteKey = emoteMapping[emoteKey] ? emoteKey : emoteName;
-                                        insertEmote(finalEmoteKey, discordEditor);
-                                        return;
-                                    }
-                                }
-
-                                updateDiscordMinibar();
-                            }
-                            break;
-                    }
-                }
-            }, true);
-
-            editor.addEventListener('blur', () => {
-                if (discordState === 'INTERCEPTING') {
-                    flushDiscordBuffer();
-                }
-            }, true);
-
-            bodyObserver.disconnect();
+                    break;
+            }
         }
-    });
+    }, true);
 
-    bodyObserver.observe(document.body, { childList: true, subtree: true });
+    debugLog("Discord text interceptor attached (v3 - global window capture)");
 }
 
 // Discord-specific emote suggestion functions
