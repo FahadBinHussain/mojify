@@ -175,6 +175,35 @@
                 <p class="discord-import-progress-note">Animated TGS stickers require the native lossless helper; failed conversions are skipped.</p>
               </div>
             </div>
+
+            <div class="discord-import-panel hidden" id="se7tv-import-panel">
+              <div class="discord-import-copy">
+                <span class="discord-import-kicker">7TV Import</span>
+                <p>Open a 7TV user page in another tab, then import all emote sets from that user.</p>
+              </div>
+              <div class="telegram-import-form">
+                <input
+                  id="se7tv-user-input"
+                  type="text"
+                  placeholder="7TV user ID or https://7tv.app/users/..."
+                  spellcheck="false"
+                >
+                <button id="se7tv-import-button" class="secondary-button" type="button">
+                  <i class="fas fa-download"></i>
+                  <span>Import User</span>
+                </button>
+              </div>
+              <div class="discord-import-progress hidden" id="se7tv-import-progress">
+                <div class="progress-info">
+                  <span id="se7tv-import-progress-text">Importing 7TV emotes...</span>
+                  <span id="se7tv-import-progress-count">0/0</span>
+                </div>
+                <div class="progress-bar">
+                  <div class="progress-fill" id="se7tv-import-progress-fill"></div>
+                </div>
+                <p class="discord-import-progress-note">Safe to close the popup. Progress will resume here when you reopen it.</p>
+              </div>
+            </div>
           </div>
 
           <div class="emote-stats">

@@ -5311,9 +5311,11 @@ document.addEventListener('DOMContentLoaded', () => {
     runPopupTask('download status', checkDownloadStatus);
     runPopupTask('discord import status', checkDiscordImportStatus);
     runPopupTask('telegram import status', checkTelegramImportStatus);
+    runPopupTask('se7tv import status', check7TVImportStatus);
     runPopupTask('save button', initSaveButton);
     runPopupTask('discord import button', initDiscordImportButton);
     runPopupTask('telegram import button', initTelegramImportButton);
+    runPopupTask('se7tv import button', init7TVImportButton);
     runPopupTask('emote library warmup', scheduleEmoteLibraryWarmup);
 
     // Check current platform and show warnings
@@ -6053,6 +6055,150 @@ document.addEventListener('DOMContentLoaded', () => {
         telegramImportButton.click();
       }
     });
+  }
+
+  // 7TV Import
+  const se7tvImportPanel = document.getElementById('se7tv-import-panel');
+  const se7tvImportButton = document.getElementById('se7tv-import-button');
+  const se7tvUserInput = document.getElementById('se7tv-user-input');
+  const se7tvImportProgress = document.getElementById('se7tv-import-progress');
+  const se7tvImportProgressText = document.getElementById('se7tv-import-progress-text');
+  const se7tvImportProgressCount = document.getElementById('se7tv-import-progress-count');
+  const se7tvImportProgressFill = document.getElementById('se7tv-import-progress-fill');
+  let se7tvImportPollingTimer = null;
+  let se7tvImportCompletionHandled = false;
+
+  function extract7TVUserId(value) {
+    const urlMatch = value.match(/7tv\.app\/users\/([a-zA-Z0-9]+)/i);
+    if (urlMatch) return urlMatch[1];
+    if (/^[a-zA-Z0-9]{20,}$/.test(value.trim())) return value.trim();
+    return '';
+  }
+
+  function set7TVImportUiActive(statusText) {
+    if (se7tvImportPanel) se7tvImportPanel.classList.remove('hidden');
+    if (se7tvImportProgress) se7tvImportProgress.classList.remove('hidden');
+    if (se7tvImportProgressText) se7tvImportProgressText.textContent = statusText || 'Importing 7TV emotes...';
+    if (se7tvImportButton) {
+      se7tvImportButton.disabled = true;
+      se7tvImportButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Importing...</span>';
+    }
+  }
+
+  function finish7TVImportFlow(result = {}) {
+    se7tvImportCompletionHandled = true;
+    if (se7tvImportPollingTimer) {
+      clearInterval(se7tvImportPollingTimer);
+      se7tvImportPollingTimer = null;
+    }
+    if (se7tvImportButton) {
+      se7tvImportButton.disabled = false;
+      se7tvImportButton.innerHTML = '<i class="fas fa-download"></i> <span>Import User</span>';
+    }
+    if (se7tvImportProgressFill) {
+      se7tvImportProgressFill.style.width = '100%';
+    }
+    if (result.error) {
+      if (se7tvImportProgressText) se7tvImportProgressText.textContent = `Failed: ${result.error}`;
+      showToast(result.error, 'error');
+    } else {
+      if (se7tvImportProgressText) {
+        se7tvImportProgressText.textContent = result.message || 'Import completed';
+      }
+      showToast(result.message || '7TV import completed', 'success');
+      setTimeout(() => {
+        if (se7tvImportProgress) se7tvImportProgress.classList.add('hidden');
+        refreshLocalLibraryAfterSourceUpdate();
+      }, 2000);
+    }
+  }
+
+  function start7TVImportPolling() {
+    if (se7tvImportPollingTimer) clearInterval(se7tvImportPollingTimer);
+    se7tvImportCompletionHandled = false;
+    se7tvImportPollingTimer = setInterval(async () => {
+      if (se7tvImportCompletionHandled) {
+        clearInterval(se7tvImportPollingTimer);
+        se7tvImportPollingTimer = null;
+        return;
+      }
+      try {
+        const status = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({ action: 'get7TVImportStatus' }, (result) => {
+            resolve(result || {});
+          });
+        });
+        if (status.isImporting) {
+          if (se7tvImportProgressText) se7tvImportProgressText.textContent = `Importing emotes for ${status.username || '7TV user'}...`;
+        }
+      } catch (e) { /* ignore */ }
+    }, 1000);
+  }
+
+  function check7TVImportStatus() {
+    if (!se7tvImportPanel) return;
+    chrome.runtime.sendMessage({ action: 'get7TVImportStatus' }, (status) => {
+      if (chrome.runtime.lastError || !status) return;
+      if (status.isImporting) {
+        se7tvImportPanel.classList.remove('hidden');
+        set7TVImportUiActive(`Importing emotes for ${status.username || '7TV user'}...`);
+        start7TVImportPolling();
+      }
+    });
+  }
+
+  function init7TVImportButton() {
+    if (!se7tvImportButton) return;
+
+    se7tvImportButton.addEventListener('click', async () => {
+      const rawValue = se7tvUserInput?.value?.trim() || '';
+      try {
+        se7tvImportCompletionHandled = false;
+        const userId = extract7TVUserId(rawValue);
+        if (!userId) {
+          throw new Error('Enter a 7TV user ID or paste a 7TV user page URL');
+        }
+
+        set7TVImportUiActive('Starting 7TV import...');
+        if (se7tvImportProgressFill) se7tvImportProgressFill.style.width = '0%';
+        if (se7tvImportProgressCount) se7tvImportProgressCount.textContent = '0/0';
+        start7TVImportPolling();
+
+        const response = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage({
+            action: 'import7TVChannelEmotes',
+            userId
+          }, (result) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve(result);
+          });
+        });
+
+        if (!response?.success) {
+          finish7TVImportFlow({ error: response?.error || '7TV import failed' });
+          return;
+        }
+
+        finish7TVImportFlow({
+          message: `Imported ${response.importedCount} emote${response.importedCount === 1 ? '' : 's'} from ${response.username}`
+        });
+      } catch (error) {
+        console.error('[Mojify] 7TV import failed:', error);
+        finish7TVImportFlow({ error: error.message || '7TV import failed' });
+      }
+    });
+
+    if (se7tvUserInput) {
+      se7tvUserInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          se7tvImportButton.click();
+        }
+      });
+    }
   }
 
   function initApiKeysPageButton() {

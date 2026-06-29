@@ -647,6 +647,13 @@ let telegramImportState = {
   startedAt: null
 };
 
+let se7enTvImportState = {
+  isImporting: false,
+  userId: '',
+  username: '',
+  startedAt: null
+};
+
 // Reset download state on service worker startup
 async function resetDownloadState() {
   downloadState.isDownloading = false;
@@ -2396,6 +2403,29 @@ async function updateTelegramImportProgress(progress = {}) {
   });
 }
 
+async function update7TVImportProgress(progress = {}) {
+  const payload = {
+    userId: progress.userId || se7enTvImportState.userId || '',
+    username: progress.username || se7enTvImportState.username || '',
+    statusText: progress.statusText || '',
+    importedCount: Number(progress.importedCount || 0),
+    completed: Boolean(progress.completed),
+    error: progress.error || '',
+    startedAt: progress.startedAt || se7enTvImportState.startedAt || null,
+    updatedAt: Date.now()
+  };
+
+  await chrome.storage.local.set({
+    se7tvImportInProgress: Boolean(progress.inProgress),
+    se7tvImportProgress: payload
+  });
+
+  sendRuntimeMessage({
+    type: 'se7tvImportProgress',
+    ...payload
+  });
+}
+
 function sanitizeDiscordEmojiName(name, fallback = 'emoji') {
   const sanitized = String(name || fallback)
     .trim()
@@ -3971,6 +4001,12 @@ function setupContextMenus() {
     });
 
     chrome.contextMenus.create({
+      id: 'import7TVChannel',
+      title: 'Import 7TV Channel',
+      contexts: ['action']
+    });
+
+    chrome.contextMenus.create({
       id: 'refreshTwitchEmotes',
       title: 'Refresh Twitch/7TV Emotes',
       contexts: ['action']
@@ -3993,6 +4029,128 @@ async function getContextMenuTargetTab(tab) {
 
   const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
   return tabs[0] || null;
+}
+
+function extract7TVUserIdFromUrl(url) {
+  const match = url.match(/7tv\.app\/users\/([a-zA-Z0-9]+)/i);
+  return match ? match[1] : '';
+}
+
+async function import7TVChannelEmotes(userId) {
+  if (se7enTvImportState.isImporting) {
+    throw new Error('A 7TV import is already in progress');
+  }
+
+  se7enTvImportState.isImporting = true;
+  se7enTvImportState.userId = userId;
+  se7enTvImportState.startedAt = Date.now();
+
+  try {
+    await update7TVImportProgress({
+      inProgress: true,
+      current: 0,
+      total: 0,
+      statusText: 'Fetching 7TV user data...'
+    });
+
+    const userData = await fetchJsonWithTimeout(`${SEVEN_TV_API_ORIGIN}/v3/users/${userId}`, {}, SEVEN_TV_RESOLVE_TIMEOUT_MS);
+    const username = userData?.display_name || userData?.username || userId;
+    const emoteSets = Array.isArray(userData?.emote_sets) ? userData.emote_sets : [];
+
+    if (emoteSets.length === 0) {
+      throw new Error('No emote sets found for this 7TV user');
+    }
+
+    se7enTvImportState.username = username;
+
+    await update7TVImportProgress({
+      inProgress: true,
+      current: 0,
+      total: emoteSets.length,
+      username,
+      statusText: `Found ${emoteSets.length} set${emoteSets.length === 1 ? '' : 's'} for ${username}`
+    });
+
+    const sources = emoteSets.map((set) => ({
+      type: '7tv-set',
+      channelId: userId,
+      setId: set.id,
+      setName: set.name || set.id,
+      username,
+      sevenTvUserId: userId,
+      activeSetId: emoteSets[0]?.id || ''
+    }));
+
+    const result = await downloadEmotes({ sources });
+
+    se7enTvImportState.isImporting = false;
+
+    await update7TVImportProgress({
+      inProgress: false,
+      current: emoteSets.length,
+      total: emoteSets.length,
+      username,
+      importedCount: result?.totalEmotes || 0,
+      completed: true,
+      statusText: `Imported emotes from ${username}`
+    });
+
+    return { success: true, importedCount: result?.totalEmotes || 0, username, userId };
+  } catch (error) {
+    se7enTvImportState.isImporting = false;
+    await update7TVImportProgress({
+      inProgress: false,
+      current: 0,
+      total: 0,
+      username: se7enTvImportState.username,
+      error: error.message,
+      statusText: `Import failed: ${error.message}`
+    });
+    throw error;
+  }
+}
+
+async function import7TVChannelFromContextMenu(tab) {
+  const targetTab = await getContextMenuTargetTab(tab);
+  if (!targetTab?.url || !/7tv\.app\/users\//.test(targetTab.url || '')) {
+    sendRuntimeMessage({
+      type: 'showToast',
+      message: 'Open a 7TV user page before importing',
+      toastType: 'error'
+    });
+    return;
+  }
+
+  const userId = extract7TVUserIdFromUrl(targetTab.url);
+  if (!userId) {
+    sendRuntimeMessage({
+      type: 'showToast',
+      message: 'Could not extract 7TV user ID from this page',
+      toastType: 'error'
+    });
+    return;
+  }
+
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: '#7523D6' });
+    await chrome.action.setBadgeText({ text: 'IMP' });
+    const result = await import7TVChannelEmotes(userId);
+    sendRuntimeMessage({
+      type: 'showToast',
+      message: result?.importedCount
+        ? `Imported ${result.importedCount} emote${result.importedCount === 1 ? '' : 's'} from ${result.username}`
+        : '7TV import completed',
+      toastType: 'success'
+    });
+  } catch (error) {
+    sendRuntimeMessage({
+      type: 'showToast',
+      message: `7TV import failed: ${error.message}`,
+      toastType: 'error'
+    });
+  } finally {
+    await chrome.action.setBadgeText({ text: '' });
+  }
 }
 
 async function importDiscordServerFromContextMenu(tab) {
@@ -4036,6 +4194,10 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
   if (info.menuItemId === 'importDiscordServer') {
     importDiscordServerFromContextMenu(tab);
+  }
+
+  if (info.menuItemId === 'import7TVChannel') {
+    import7TVChannelFromContextMenu(tab);
   }
 });
 
@@ -4319,6 +4481,23 @@ function handleRuntimeMessage(request, sender, sendResponse) {
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
+  }
+
+  if (request.action === 'import7TVChannelEmotes') {
+    import7TVChannelEmotes(request.userId)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'get7TVImportStatus') {
+    sendResponse({
+      success: true,
+      isImporting: se7enTvImportState.isImporting,
+      userId: se7enTvImportState.userId,
+      username: se7enTvImportState.username
+    });
+    return false;
   }
 
   if (request.action === 'batchRefreshDiscordServers') {
