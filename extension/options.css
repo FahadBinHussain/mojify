@@ -346,6 +346,83 @@ textarea:focus {
   font-size: 12px;
 }
 
+/* ── Backup & Restore ───────────────────────── */
+.backup-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 20px;
+}
+
+.backup-actions .primary,
+.backup-actions .secondary {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.backup-progress {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--stroke);
+  border-radius: 18px;
+  background: rgba(8, 16, 28, 0.96);
+}
+
+.backup-progress.hidden {
+  display: none;
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.progress-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(124, 154, 208, 0.12);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-strong));
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.source-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 20px;
+}
+
+.source-actions .secondary {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.paste-block textarea {
+  min-height: 120px;
+  margin-top: 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 textarea::-webkit-scrollbar {
   width: 10px;
 }

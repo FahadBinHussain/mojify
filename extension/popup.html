@@ -348,70 +348,19 @@
               </button>
             </section>
 
-            <section class="settings-card backup-restore">
+            <section class="settings-card">
               <div class="settings-card-header">
                 <div>
                   <span class="settings-step">Safety</span>
-                  <h2 class="section-title">Backup & Access</h2>
-                  <p class="section-description">Export the library or open provider credentials when searches/imports need keys.</p>
+                  <h2 class="section-title">Backup &amp; Restore</h2>
+                  <p class="section-description">Full library backups, source transfers, and provider keys live on the Settings page.</p>
                 </div>
-              </div>
-
-              <div class="backup-restore-actions">
-                <button id="create-backup" class="primary-button" type="button">
-                  <i class="fas fa-download"></i>
-                  <span>Create Backup</span>
-                </button>
-
-                <div class="restore-section">
-                  <input type="file" id="restore-file" accept=".json" style="display: none;">
-                  <button id="restore-backup" class="secondary-button" type="button">
-                    <i class="fas fa-upload"></i>
-                    <span>Restore Backup</span>
-                  </button>
-                </div>
-              </div>
-
-              <div class="source-transfer">
-                <div class="settings-subheader">
-                  <h3>Source Links</h3>
-                  <span>Portable</span>
-                </div>
-                <div class="source-transfer-actions">
-                  <button id="copy-source-backup" class="secondary-button" type="button">
-                    <i class="fas fa-clipboard"></i>
-                    <span>Copy Sources</span>
-                  </button>
-                  <button id="paste-source-backup" class="secondary-button" type="button">
-                    <i class="fas fa-link"></i>
-                    <span>Paste & Restore</span>
-                  </button>
-                </div>
-                <textarea
-                  id="source-backup-text"
-                  class="source-backup-textarea"
-                  spellcheck="false"
-                  placeholder="Paste Mojify source JSON or one source per line"></textarea>
               </div>
 
               <button id="open-api-keys-page" class="secondary-button settings-wide-button" type="button">
                 <i class="fas fa-key"></i>
-                <span>Open API Key Settings</span>
+                <span>Open Settings</span>
               </button>
-
-              <div class="settings-inline-note">
-                <i class="fas fa-shield-alt"></i>
-                <span>Backups include emotes, channels, mappings, settings, and minibar positions.</span>
-              </div>
-
-              <div class="backup-progress hidden" id="backup-progress">
-                <div class="progress-info">
-                  <span id="backup-progress-text">Creating backup...</span>
-                </div>
-                <div class="progress-bar">
-                  <div class="progress-fill" id="backup-progress-fill"></div>
-                </div>
-              </div>
             </section>
 
             <section class="settings-card debug-section">
