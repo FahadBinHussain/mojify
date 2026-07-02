@@ -4158,50 +4158,34 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function refreshAllSavedSources() {
-    const result = await new Promise((resolve) => chrome.storage.local.get(['channelIds', 'channels'], resolve));
-    const channelIds = result.channelIds || [];
-    const channels = result.channels || [];
+    const result = await new Promise((resolve) => chrome.storage.local.get(['channels'], resolve));
+    const channels = result.channels || {};
 
-    // Build refreshable sources from channelIds + channels metadata
+    // Build refreshable sources from channels object values
     const twitchChannels = [];
     const sevenTvSets = [];
     const telegramSets = [];
     const discordServers = [];
 
-    channelIds.forEach((entry) => {
-      if (!entry || !entry.site) return;
-      if (entry.site === 'twitch') {
-        if (entry.type === '7tv-set' || entry.emoteSetId) {
-          sevenTvSets.push(entry);
-        } else if (entry.id) {
-          twitchChannels.push(entry);
-        }
-      } else if (entry.site === 'telegram' && entry.setName) {
-        telegramSets.push(entry);
-      } else if (entry.site === 'discord' && entry.serverId) {
-        discordServers.push(entry);
+    for (const channel of Object.values(channels)) {
+      const source = getRefreshSourceForChannel(channel);
+      if (!source) continue;
+      if (source.site === 'twitch' && source.type === 'channel') {
+        twitchChannels.push(source);
+      } else if (source.site === '7tv' && source.type === 'emote-set') {
+        sevenTvSets.push(source);
+      } else if (source.site === 'telegram' && source.type === 'sticker-set') {
+        telegramSets.push(source);
+      } else if (source.site === 'discord' && source.type === 'server') {
+        discordServers.push(source);
       }
-    });
+    }
 
     const autoRefreshCount = twitchChannels.length + sevenTvSets.length + telegramSets.length;
 
     let refreshResult = { twitchChannels: 0, sevenTvSets: 0, telegramSets: 0, errors: [] };
 
     if (autoRefreshCount > 0) {
-      const sources = [];
-      twitchChannels.forEach((c) => sources.push({
-        site: 'twitch', type: 'channel', id: c.id, username: c.username || '', link: c.link || ''
-      }));
-      sevenTvSets.forEach((s) => sources.push({
-        site: '7tv', type: 'emote-set', setId: s.emoteSetId || s.id, setName: s.setName || s.username || '',
-        channelId: s.channelId || '', username: s.username || '', sevenTvUserId: s.sevenTvUserId || '',
-        activeSetId: s.activeSetId || '', link: s.link || ''
-      }));
-      telegramSets.forEach((t) => sources.push({
-        site: 'telegram', type: 'sticker-set', setName: t.setName,
-        title: t.title || t.setName, link: t.link || ''
-      }));
-
       refreshResult = await applySourceBackupSources({ twitchChannels, sevenTvSets, telegramSets, discordServers: [] }, { verb: 'Refreshing' });
     }
 
