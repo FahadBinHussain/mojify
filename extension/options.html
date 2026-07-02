@@ -136,28 +136,45 @@
 
         <div class="action-row">
           <button id="save-api-keys" class="primary" type="button">Save Keys</button>
-          <p id="status-message" class="status" aria-live="polite"></p>
+          <p id="status" class="status" aria-live="polite"></p>
         </div>
 
-        <!-- Backup & Restore -->
+        <!-- Master Backup & Restore -->
         <div class="section-block">
           <div class="section-head">
             <span class="section-kicker">Safety</span>
             <h2>Backup &amp; Restore</h2>
-            <p>Export your full emote library, channels, mappings, settings, and minibar positions.</p>
+            <p>One JSON exports everything — emotes, channels, sources, provider keys, settings, and minibar positions.</p>
           </div>
 
           <div class="backup-actions">
-            <button id="create-backup" class="primary" type="button">
-              <i class="fas fa-download"></i> Create Backup
+            <button id="download-backup" class="primary" type="button">
+              <i class="fas fa-download"></i> Download Backup
             </button>
+            <button id="copy-backup" class="secondary" type="button">
+              <i class="fas fa-clipboard"></i> Copy to Clipboard
+            </button>
+          </div>
+
+          <div class="backup-actions" style="margin-top: 14px;">
             <div class="restore-section">
-              <input type="file" id="restore-file" accept=".json" style="display: none;">
-              <button id="restore-backup" class="secondary" type="button">
-                <i class="fas fa-upload"></i> Restore Backup
+              <input type="file" id="upload-backup" accept=".json" style="display: none;">
+              <button id="restore-backup-btn" class="secondary" type="button">
+                <i class="fas fa-upload"></i> Upload JSON
               </button>
             </div>
+            <button id="restore-pasted-backup" class="secondary" type="button">
+              <i class="fas fa-link"></i> Paste &amp; Restore
+            </button>
           </div>
+
+          <label class="paste-block" for="backup-paste-area">
+            <textarea
+              id="backup-paste-area"
+              placeholder="Paste your Mojify backup JSON here to restore..."
+              spellcheck="false"
+            ></textarea>
+          </label>
 
           <div class="backup-progress hidden" id="backup-progress">
             <div class="progress-info">
@@ -168,75 +185,25 @@
             </div>
           </div>
         </div>
-
-        <!-- Source Links -->
-        <div class="section-block">
-          <div class="section-head">
-            <span class="section-kicker">Portable</span>
-            <h2>Source Links</h2>
-            <p>Copy or paste your channel and server sources for easy transfer between browsers or machines.</p>
-          </div>
-
-          <div class="source-actions">
-            <button id="copy-source-backup" class="secondary" type="button">
-              <i class="fas fa-clipboard"></i> Copy Sources
-            </button>
-            <button id="paste-source-backup" class="secondary" type="button">
-              <i class="fas fa-link"></i> Paste &amp; Restore
-            </button>
-          </div>
-
-          <label class="paste-block" for="source-backup-text">
-            <textarea
-              id="source-backup-text"
-              placeholder="Paste Mojify source JSON or one source per line"
-              spellcheck="false"
-            ></textarea>
-          </label>
-        </div>
       </section>
 
       <aside class="side-panel">
         <div class="side-block">
-          <span class="section-kicker">Transfer</span>
-          <h2>Copy or paste JSON</h2>
-          <p>Move your Mojify provider setup between browsers, profiles, or machines without retyping everything.</p>
-
-          <div class="side-actions">
-            <button id="copy-api-keys" class="secondary" type="button">Copy JSON</button>
-            <button id="export-api-keys" class="secondary" type="button">Download JSON</button>
-          </div>
-
-          <label class="paste-block" for="import-api-keys-text">
-            <span class="field-label">Paste JSON</span>
-            <textarea
-              id="import-api-keys-text"
-              placeholder="Paste exported Mojify provider JSON or a raw apiKeys object"
-              spellcheck="false"
-            ></textarea>
-          </label>
-
-          <button id="import-api-keys" class="secondary" type="button">Import Pasted JSON</button>
-        </div>
-
-        <div class="side-block">
           <span class="section-kicker">Included</span>
-          <h2>Supported keys</h2>
+          <h2>What gets backed up</h2>
           <ul class="support-list">
-            <li>Tenor API key</li>
-            <li>Giphy API key</li>
-            <li>Klipy API key</li>
-            <li>Pixabay API key</li>
-            <li>Twitch client ID</li>
-            <li>Twitch client secret</li>
-            <li>Telegram bot token</li>
+            <li>Emote blobs &amp; metadata (IndexedDB)</li>
+            <li>Channel &amp; server sources</li>
+            <li>Provider API keys</li>
+            <li>Settings &amp; preferences</li>
+            <li>Minibar positions</li>
           </ul>
         </div>
 
         <div class="side-block info-block">
           <span class="section-kicker">Note</span>
           <h2>Local by default</h2>
-          <p>Mojify stores these values in <code>chrome.storage.local</code>. Exported JSON includes only provider credentials, not your full emote library.</p>
+          <p>Everything stays in <code>chrome.storage.local</code> and IndexedDB. The exported JSON is self-contained and can be moved between browsers, profiles, or machines.</p>
         </div>
       </aside>
     </main>

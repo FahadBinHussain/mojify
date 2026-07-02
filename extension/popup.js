@@ -4158,20 +4158,57 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function refreshAllSavedSources() {
-    const payload = await buildSourceBackupPayload();
-    const restoreSources = collectRestoreSources(payload);
-    const autoRefreshCount = restoreSources.twitchChannels.length +
-      restoreSources.sevenTvSets.length +
-      restoreSources.telegramSets.length;
+    const result = await new Promise((resolve) => chrome.storage.local.get(['channelIds', 'channels'], resolve));
+    const channelIds = result.channelIds || [];
+    const channels = result.channels || [];
 
-    const result = autoRefreshCount > 0
-      ? await applySourceBackupSources(restoreSources, { verb: 'Refreshing' })
-      : { twitchChannels: 0, sevenTvSets: 0, telegramSets: 0, errors: [] };
+    // Build refreshable sources from channelIds + channels metadata
+    const twitchChannels = [];
+    const sevenTvSets = [];
+    const telegramSets = [];
+    const discordServers = [];
+
+    channelIds.forEach((entry) => {
+      if (!entry || !entry.site) return;
+      if (entry.site === 'twitch') {
+        if (entry.type === '7tv-set' || entry.emoteSetId) {
+          sevenTvSets.push(entry);
+        } else if (entry.id) {
+          twitchChannels.push(entry);
+        }
+      } else if (entry.site === 'telegram' && entry.setName) {
+        telegramSets.push(entry);
+      } else if (entry.site === 'discord' && entry.serverId) {
+        discordServers.push(entry);
+      }
+    });
+
+    const autoRefreshCount = twitchChannels.length + sevenTvSets.length + telegramSets.length;
+
+    let refreshResult = { twitchChannels: 0, sevenTvSets: 0, telegramSets: 0, errors: [] };
+
+    if (autoRefreshCount > 0) {
+      const sources = [];
+      twitchChannels.forEach((c) => sources.push({
+        site: 'twitch', type: 'channel', id: c.id, username: c.username || '', link: c.link || ''
+      }));
+      sevenTvSets.forEach((s) => sources.push({
+        site: '7tv', type: 'emote-set', setId: s.emoteSetId || s.id, setName: s.setName || s.username || '',
+        channelId: s.channelId || '', username: s.username || '', sevenTvUserId: s.sevenTvUserId || '',
+        activeSetId: s.activeSetId || '', link: s.link || ''
+      }));
+      telegramSets.forEach((t) => sources.push({
+        site: 'telegram', type: 'sticker-set', setName: t.setName,
+        title: t.title || t.setName, link: t.link || ''
+      }));
+
+      refreshResult = await applySourceBackupSources({ twitchChannels, sevenTvSets, telegramSets, discordServers: [] }, { verb: 'Refreshing' });
+    }
 
     let discordResult = { refreshed: 0, skipped: 0, errors: [] };
 
-    if (restoreSources.discordServers.length > 0) {
-      const serverIds = restoreSources.discordServers.map((s) => s.serverId).filter(Boolean);
+    if (discordServers.length > 0) {
+      const serverIds = discordServers.map((s) => s.serverId).filter(Boolean);
       if (serverIds.length > 0) {
         try {
           const response = await sendBackgroundMessage({
@@ -4192,14 +4229,14 @@ document.addEventListener('DOMContentLoaded', () => {
     await refreshLocalLibraryAfterSourceUpdate();
 
     const parts = [];
-    if (result.twitchChannels > 0) {
-      parts.push(`${result.twitchChannels} Twitch channel${result.twitchChannels === 1 ? '' : 's'}`);
+    if (refreshResult.twitchChannels > 0) {
+      parts.push(`${refreshResult.twitchChannels} Twitch channel${refreshResult.twitchChannels === 1 ? '' : 's'}`);
     }
-    if (result.sevenTvSets > 0) {
-      parts.push(`${result.sevenTvSets} 7TV set${result.sevenTvSets === 1 ? '' : 's'}`);
+    if (refreshResult.sevenTvSets > 0) {
+      parts.push(`${refreshResult.sevenTvSets} 7TV set${refreshResult.sevenTvSets === 1 ? '' : 's'}`);
     }
-    if (result.telegramSets > 0) {
-      parts.push(`${result.telegramSets} Telegram pack${result.telegramSets === 1 ? '' : 's'}`);
+    if (refreshResult.telegramSets > 0) {
+      parts.push(`${refreshResult.telegramSets} Telegram pack${refreshResult.telegramSets === 1 ? '' : 's'}`);
     }
     if (discordResult.refreshed > 0) {
       parts.push(`${discordResult.refreshed} Discord server${discordResult.refreshed === 1 ? '' : 's'}`);
@@ -4213,8 +4250,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (parts.length === 0 && discordResult.skipped > 0) {
       showToast(`Discord refresh skipped — are you logged into Discord in this browser?`, 'info');
-    } else if (result.errors.length > 0) {
-      showToast(`${message}; ${result.errors.length} failed`, 'error');
+    } else if (refreshResult.errors.length > 0) {
+      showToast(`${message}; ${refreshResult.errors.length} failed`, 'error');
     } else {
       showToast(message, discordNote ? 'info' : 'success');
     }
@@ -4240,7 +4277,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (source.site === 'discord') {
         await refreshDiscordChannelSource(channel);
       } else {
-        const result = await applySourceBackupSources(collectRestoreSources({ sources: [source] }), { verb: 'Refreshing' });
+        const restoreSources = {
+          twitchChannels: source.site === 'twitch' && source.type === 'channel' ? [source] : [],
+          sevenTvSets: source.site === '7tv' && source.type === 'emote-set' ? [source] : [],
+          telegramSets: source.site === 'telegram' && source.type === 'sticker-set' ? [source] : [],
+          discordServers: []
+        };
+        const result = await applySourceBackupSources(restoreSources, { verb: 'Refreshing' });
         if (result.errors.length > 0) {
           throw new Error(result.errors[0]);
         }
@@ -5993,6 +6036,148 @@ async function clearAllStorage() {
     clearButton.disabled = false;
     clearButton.innerHTML = '<i class="fas fa-trash"></i> <span>Clear All Data</span>';
   }
+}
+
+/* ═══════════════════════════════════════════════
+   Source refresh helpers (kept in popup since they use UI state)
+   ═══════════════════════════════════════════════ */
+async function applySourceBackupSources(restoreSources, { verb = 'Restoring' } = {}) {
+  const result = {
+    twitchChannels: 0,
+    sevenTvSets: 0,
+    telegramSets: 0,
+    discordServers: 0,
+    errors: []
+  };
+
+  const stored = await new Promise((resolve) => {
+    chrome.storage.local.get(['channelIds', 'mojifySourceBackupDiscordServers'], resolve);
+  });
+
+  const rawTwitchIds = dedupeChannelIds(
+    restoreSources.twitchChannels
+      .map((source) => source.id || source.channelId || source.username)
+      .filter(Boolean)
+  );
+  let resolvedTwitchIds = [];
+
+  if (rawTwitchIds.length > 0) {
+    try {
+      resolvedTwitchIds = await resolveTwitchIdentifiers(rawTwitchIds);
+    } catch (error) {
+      resolvedTwitchIds = rawTwitchIds.filter((value) => /^\d+$/.test(value));
+      result.errors.push(error.message || 'Some Twitch usernames could not be resolved');
+    }
+  }
+
+  const mergedChannelIds = dedupeChannelIds([...(stored.channelIds || []), ...resolvedTwitchIds]);
+  const storedDiscordServers = mergeDiscordSourceLinks(
+    stored.mojifySourceBackupDiscordServers || [],
+    restoreSources.discordServers
+  );
+
+  await new Promise((resolve) => {
+    chrome.storage.local.set({
+      channelIds: mergedChannelIds,
+      mojifySourceBackupDiscordServers: storedDiscordServers
+    }, resolve);
+  });
+
+  if (channelIdsInput) {
+    channelIdsInput.value = mergedChannelIds.join('\n');
+  }
+
+  result.twitchChannels = resolvedTwitchIds.length;
+  result.discordServers = restoreSources.discordServers.length;
+
+  const downloadSources = [
+    ...resolvedTwitchIds.map((channelId) => ({
+      type: 'twitch-channel',
+      channelId
+    })),
+    ...restoreSources.sevenTvSets.map((source) => ({
+      type: '7tv-set',
+      channelId: source.channelId || '',
+      setId: source.setId,
+      setName: source.setName || '',
+      username: source.username || '',
+      sevenTvUserId: source.sevenTvUserId || '',
+      activeSetId: source.activeSetId || ''
+    }))
+  ];
+
+  if (downloadSources.length > 0) {
+    try {
+      downloadCompletionHandled = false;
+      setDownloadUiActive(`${verb} ${downloadSources.length} source${downloadSources.length === 1 ? '' : 's'}...`);
+      startProgressPolling();
+      const response = await sendBackgroundMessage({
+        action: 'downloadEmotes',
+        options: { sources: downloadSources }
+      });
+
+      if (!response?.success) {
+        throw new Error(response?.error || '7TV restore failed');
+      }
+
+      result.sevenTvSets = restoreSources.sevenTvSets.length;
+    } catch (error) {
+      stopProgressPolling();
+      resetDownloadUi();
+      result.errors.push(error.message || '7TV restore failed');
+    }
+  }
+
+  for (const source of restoreSources.telegramSets) {
+    try {
+      const stickerSet = source.link || source.setName;
+      setTelegramImportUiActive(`Restoring ${source.title || source.setName}...`);
+      startTelegramImportPolling();
+      const response = await sendBackgroundMessage({
+        action: 'importTelegramStickerSet',
+        stickerSet
+      });
+
+      if (!response?.success) {
+        throw new Error(response?.error || `Telegram restore failed for ${source.setName}`);
+      }
+
+      result.telegramSets += 1;
+    } catch (error) {
+      stopTelegramImportPolling();
+      resetTelegramImportUi();
+      result.errors.push(error.message || `Telegram restore failed for ${source.setName}`);
+    }
+  }
+
+  return result;
+}
+
+function mergeDiscordSourceLinks(existingServers, restoredServers) {
+  const byId = new Map();
+
+  [...(existingServers || []), ...(restoredServers || [])].forEach((server) => {
+    const serverId = cleanString(server.serverId || server.discordGuildId || server.id);
+    if (!serverId) return;
+    byId.set(serverId, {
+      serverId,
+      serverName: cleanString(server.serverName || server.discordGuildName || server.name),
+      link: server.link || `https://discord.com/channels/${serverId}`
+    });
+  });
+
+  return Array.from(byId.values());
+}
+
+function cleanString(value) {
+  return String(value || '').trim();
+}
+
+function cleanTelegramSetName(value) {
+  const text = cleanString(value);
+  const linkMatch = text.match(/(?:https?:\/\/)?(?:t\.me|telegram\.me)\/add(?:stickers|emoji)\/([A-Za-z][A-Za-z0-9_]{0,63})/i);
+  if (linkMatch) return linkMatch[1];
+  return text.replace(/^telegram:/i, '');
 }
 });
 
