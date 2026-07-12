@@ -1,5 +1,6 @@
 let detectedTelegramStickerSet = null;
 try { chrome.action.setBadgeText({ text: '' }); } catch (e) {}
+try { chrome.storage.local.set({ downloadInProgress: false, downloadProgress: { current: 0, total: 0, completed: false, reset: true } }); } catch (e) {}
 
 const SEVEN_TV_API_ORIGIN = "https://api.7tv.app";
 const SEVEN_TV_V3_BASE_URL = `${SEVEN_TV_API_ORIGIN}/v3`;
@@ -443,7 +444,11 @@ function extract7TVEmotes(emoteList = []) {
         const files = emote.data.host.files;
         if (files && files.length > 0) {
           const fileName = files[files.length - 1].name;
-          emotes[emoteKey] = `https://${hostUrl}/${fileName}`;
+          emotes[emoteKey] = {
+            url: `https://${hostUrl}/${fileName}`,
+            emoteId: emote.id || '',
+            name: emote.name
+          };
         }
       }
     } catch (emoteError) {
@@ -930,8 +935,9 @@ async function downloadEmotes(options = {}) {
     }
 
     // Get existing data from chrome.storage (metadata only) and IndexedDB (images)
-    const existing = await chrome.storage.local.get(['emoteMapping', 'channels']);
+    const existing = await chrome.storage.local.get(['emoteMapping', 'triggerToStorageKey', 'channels']);
     const globalEmoteMapping = existing.emoteMapping || {};
+    const globalTriggerToStorageKey = existing.triggerToStorageKey || {};
     const channelsById = new Map();
     // Load ALL existing channels first (not just current ones)
     (existing.channels || []).forEach((channel) => {
@@ -1047,9 +1053,11 @@ async function downloadEmotes(options = {}) {
 
       if (resolvedEmoteCount > 0) {
         const newEmotes = {};
-        Object.entries(result.emotes).forEach(([key, url]) => {
-          if (!existingEmoteKeys.has(key)) {
-            newEmotes[key] = url;
+        Object.entries(result.emotes).forEach(([triggerKey, emoteInfo]) => {
+          const emoteId = emoteInfo.emoteId || triggerKey;
+          const storageKey = `7tv:${storageChannelId}:${result.activeSetId || result.emoteSetId || ''}:${emoteId}`;
+          if (!existingEmoteKeys.has(storageKey)) {
+            newEmotes[triggerKey] = { ...emoteInfo, storageKey, url: emoteInfo.url };
           }
         });
 
@@ -1202,10 +1210,11 @@ async function downloadEmotes(options = {}) {
     // Prepare all emotes for download with metadata and optimization
     const allEmotesToDownload = [];
     for (const channelData of channelEmotes) {
-      for (const [key, url] of Object.entries(channelData.emotes)) {
+      for (const [triggerKey, emoteInfo] of Object.entries(channelData.emotes)) {
         allEmotesToDownload.push({
-          key,
-          url,
+          key: emoteInfo.storageKey || triggerKey,
+          triggerKey,
+          url: emoteInfo.url,
           channel: channelData.username,
           channelId: channelData.channelId
         });
@@ -1225,7 +1234,7 @@ async function downloadEmotes(options = {}) {
 
     // Function to download a single emote with adaptive timeout and caching
     const downloadSingleEmote = async (emoteData, batchNumber, totalBatches) => {
-      const { key, url, channel, channelId } = emoteData;
+      const { key, triggerKey, url, channel, channelId } = emoteData;
       const startTime = Date.now();
 
       try {
@@ -1274,10 +1283,16 @@ async function downloadEmotes(options = {}) {
         if (blob.size > 0) {
           await emoteDB.storeEmote(key, url, blob, {
             channel: channel,
-            channelId: channelId
+            channelId: channelId,
+            triggerKey: triggerKey || key
           });
 
-          globalEmoteMapping[key] = url;
+          if (triggerKey) {
+            globalEmoteMapping[triggerKey] = url;
+            globalTriggerToStorageKey[triggerKey] = key;
+          } else {
+            globalEmoteMapping[key] = url;
+          }
           const responseTime = Date.now() - startTime;
 
           // Update URL cache with successful response time
@@ -1603,17 +1618,27 @@ async function downloadEmotes(options = {}) {
             await emoteDB.storeEmote(key, url, blob, {
               channel: channel,
               channelId: channelId,
+              triggerKey: triggerKey || key,
               retried: true
             });
 
-            globalEmoteMapping[key] = url;
+            if (triggerKey) {
+              globalEmoteMapping[triggerKey] = url;
+              globalTriggerToStorageKey[triggerKey] = key;
+            } else {
+              globalEmoteMapping[key] = url;
+            }
             return { success: true, key };
           }
 
           throw new Error('Empty blob received');
         } catch (error) {
           // Still store URL mapping for fallback
-          globalEmoteMapping[key] = url;
+          if (triggerKey) {
+            globalEmoteMapping[triggerKey] = url;
+          } else {
+            globalEmoteMapping[key] = url;
+          }
           return { success: false, key, error: error.message };
         }
       };
@@ -1652,10 +1677,25 @@ async function downloadEmotes(options = {}) {
       sizeEstimates.clear();
     }
 
-    // Final storage update (images are now in IndexedDB, only store metadata)
+    // Final storage update — merge with current channels to respect mid-download deletions
+    const currentStorage = await chrome.storage.local.get(['channels', 'emoteMapping', 'triggerToStorageKey']);
+    const currentChannels = Array.isArray(currentStorage.channels) ? currentStorage.channels : [];
+    const currentChannelIds = new Set(currentChannels.map((c) => String(c?.id || '')));
+
+    const mergedChannels = [...currentChannels];
+    for (const ch of channels) {
+      if (!currentChannelIds.has(String(ch.id))) {
+        mergedChannels.push(ch);
+      }
+    }
+
+    const mergedEmoteMapping = { ...(currentStorage.emoteMapping || {}), ...globalEmoteMapping };
+    const mergedTriggerToStorageKey = { ...(currentStorage.triggerToStorageKey || {}), ...globalTriggerToStorageKey };
+
     await chrome.storage.local.set({
-      emoteMapping: globalEmoteMapping,
-      channels: channels,
+      emoteMapping: mergedEmoteMapping,
+      triggerToStorageKey: mergedTriggerToStorageKey,
+      channels: mergedChannels,
       downloadInProgress: false,
       downloadProgress: {
         current: downloadState.total,
@@ -4587,8 +4627,16 @@ function handleRuntimeMessage(request, sender, sendResponse) {
   }
 
   if (request.action === 'getEmote') {
-    emoteDB.getEmote(request.key)
-      .then(serializeStoredEmote)
+    const resolveEmote = async () => {
+      let storageKey = request.key;
+      const mapping = await chrome.storage.local.get(['triggerToStorageKey']);
+      if (mapping.triggerToStorageKey && mapping.triggerToStorageKey[request.key]) {
+        storageKey = mapping.triggerToStorageKey[request.key];
+      }
+      const emote = await emoteDB.getEmote(storageKey);
+      return serializeStoredEmote(emote);
+    };
+    resolveEmote()
       .then((result) => sendResponse(result))
       .catch(() => sendResponse(null));
     return true;
@@ -4689,8 +4737,14 @@ function handleRuntimeMessage(request, sender, sendResponse) {
   }
 
   if (request.action === 'deleteStoredEmotes') {
-    Promise.all((request.keys || []).map((key) => emoteDB.deleteEmote(key)))
-      .then(() => sendResponse({ success: true }))
+    (async () => {
+      const keys = request.keys || [];
+      const mapping = await chrome.storage.local.get(['triggerToStorageKey']);
+      const resolvedKeys = keys.map((k) => mapping.triggerToStorageKey?.[k] || k);
+      await Promise.all(resolvedKeys.map((key) => emoteDB.deleteEmote(key)));
+      return { success: true };
+    })()
+      .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }

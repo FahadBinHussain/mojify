@@ -1901,6 +1901,22 @@ select:focus {
   color: var(--text-tertiary);
 }
 
+.delete-source-btn {
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  transition: all 0.15s ease;
+}
+
+.delete-source-btn:hover {
+  color: var(--danger, #ef4444);
+  background: rgba(239, 68, 68, 0.1);
+}
+
 .channel-tree-source-children {
   display: none;
   padding: 4px 0 0 20px;

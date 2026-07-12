@@ -278,32 +278,6 @@
               </label>
             </section>
 
-            <section class="settings-card settings-card-primary">
-              <div class="settings-card-header">
-                <div>
-                  <span class="settings-step">Step 1</span>
-                  <h2 class="section-title">Twitch Channels</h2>
-                  <p class="section-description">Paste usernames or numeric IDs. Mojify saves IDs and starts downloading right away.</p>
-                </div>
-              </div>
-
-              <div class="form-group">
-                <label for="channel-ids">Usernames or IDs</label>
-                <textarea id="channel-ids" placeholder="xqc&#10;forsen&#10;71092938"></textarea>
-                <div class="helper-text">Example: xqc, forsen, sodapoppin</div>
-              </div>
-
-              <button id="save-button" class="primary-button" type="button">
-                <i class="fas fa-save"></i>
-                <span>Save Channels</span>
-              </button>
-
-              <div class="settings-inline-note">
-                <i class="fas fa-bolt"></i>
-                <span>Saving converts usernames to IDs, stores them, then starts the download.</span>
-              </div>
-            </section>
-
             <section class="settings-card storage-info">
               <div class="settings-card-header">
                 <div>
@@ -336,12 +310,7 @@
                 <div class="settings-subheader channel-management-header">
                   <div>
                     <h3>Active Channels</h3>
-                    <span>Live counts</span>
                   </div>
-                  <button id="refresh-all-sources" class="refresh-all-sources-btn" type="button">
-                    <i class="fas fa-sync-alt"></i>
-                    <span>Refresh All</span>
-                  </button>
                 </div>
                 <div class="channel-list" id="channel-list">
                   <!-- Channels will be populated here -->
