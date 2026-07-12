@@ -2404,7 +2404,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // Update global emoteDataMap for quick lookup
         emoteDataMap.clear();
         indexedDBEmotes.forEach((emote) => {
-          emoteDataMap.set(emote.key, emote);
+          const lookupKey = emote.triggerKey || emote.key;
+          emoteDataMap.set(lookupKey, emote);
         });
 
         emoteLibraryLoaded = true;
@@ -2414,7 +2415,8 @@ document.addEventListener('DOMContentLoaded', () => {
           channels.forEach(channel => {
             if (channel.emotes) {
               const processedEmotes = {};
-              Object.entries(channel.emotes).forEach(([key, url]) => {
+              Object.entries(channel.emotes).forEach(([key, emoteInfo]) => {
+                const url = typeof emoteInfo === 'string' ? emoteInfo : emoteInfo?.url;
                 const emoteData = emoteDataMap.get(key);
                 // Only include emotes that exist in IndexedDB
                 if (emoteData) {
@@ -4235,15 +4237,16 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function refreshSources({ includeTwitch = false, includeTelegram = false, includeDiscord = false } = {}) {
-    const result = await new Promise((resolve) => chrome.storage.local.get(['channels'], resolve));
-    const channels = result.channels || {};
+    const result = await new Promise((resolve) => chrome.storage.local.get(['channels', 'channelIds'], resolve));
+    const channels = result.channels || [];
+    const channelIds = result.channelIds || [];
 
     const allTwitchChannels = [];
     const allSevenTvSets = [];
     const allTelegramSets = [];
     const allDiscordServers = [];
 
-    for (const channel of Object.values(channels)) {
+    for (const channel of (Array.isArray(channels) ? channels : Object.values(channels))) {
       const source = getRefreshSourceForChannel(channel);
       if (!source) continue;
       if (source.site === 'twitch' && source.type === 'channel') {
@@ -4255,6 +4258,12 @@ document.addEventListener('DOMContentLoaded', () => {
       } else if (source.site === 'discord' && source.type === 'server') {
         allDiscordServers.push(source);
       }
+    }
+
+    if (includeTwitch && allTwitchChannels.length === 0 && allSevenTvSets.length === 0 && channelIds.length > 0) {
+      channelIds.filter(Boolean).forEach((id) => {
+        allTwitchChannels.push({ type: 'twitch-channel', channelId: String(id).trim() });
+      });
     }
 
     const twitchChannels = includeTwitch ? allTwitchChannels : [];
@@ -4317,7 +4326,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const message = `Refreshed ${parts.join(', ') || 'sources'}${discordNote}`;
 
-    if (parts.length === 0 && discordResult.skipped > 0) {
+    if (parts.length === 0 && discordResult.skipped === 0) {
+      showToast('No sources to refresh. Add channel IDs in Settings first.', 'info');
+    } else if (parts.length === 0 && discordResult.skipped > 0) {
       showToast(`Discord refresh skipped — are you logged into Discord in this browser?`, 'info');
     } else if (refreshResult.errors.length > 0) {
       showToast(`${message}; ${refreshResult.errors.length} failed`, 'error');
@@ -4518,6 +4529,9 @@ document.addEventListener('DOMContentLoaded', () => {
             <i class="fas ${sourceIcons[sourceType] || 'fa-folder'} channel-tree-source-icon"></i>
             <span class="channel-tree-source-name">${escapeHtml(sourceLabels[sourceType] || sourceType)}</span>
             <span class="channel-tree-source-meta">${groupChannels.length} channel${groupChannels.length === 1 ? '' : 's'} &middot; ${groupTotal} emotes</span>
+            <button class="delete-source-btn" type="button" data-source="${escapeHtml(sourceType)}" title="Delete all ${escapeHtml(sourceLabels[sourceType] || sourceType)} emotes">
+              <i class="fas fa-trash"></i>
+            </button>
           </div>
           <div class="channel-tree-source-children"></div>
         `;
@@ -4598,6 +4612,14 @@ document.addEventListener('DOMContentLoaded', () => {
           e.stopPropagation();
           const channelId = e.target.closest('.delete-channel-btn').dataset.channelId;
           deleteChannel(channelId);
+        });
+      });
+
+      channelList.querySelectorAll('.delete-source-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const sourceType = e.target.closest('.delete-source-btn').dataset.source;
+          deleteSourceGroup(sourceType);
         });
       });
 
@@ -4701,7 +4723,66 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // Clear all storage handler
+  async function deleteSourceGroup(sourceType) {
+    const sourceLabels = { twitch: 'Twitch', discord: 'Discord', telegram: 'Telegram' };
+    const label = sourceLabels[sourceType] || sourceType;
+
+    const confirmed = await showConfirmDialog(
+      `Delete all ${label} emotes`,
+      `This will delete ALL ${label} channels and their emotes. This action cannot be undone.`,
+      'Delete all',
+      'Cancel',
+      true
+    );
+
+    if (!confirmed) return;
+
+    chrome.storage.local.get(['channels', 'emoteMapping', 'emoteImageData', 'channelIds', 'triggerToStorageKey'], (result) => {
+      const channels = dedupeChannelsById(result.channels || []);
+      const emoteMapping = result.emoteMapping || {};
+      const emoteImageData = result.emoteImageData || {};
+      const channelIds = dedupeChannelIds(result.channelIds || []);
+      const triggerToStorageKey = result.triggerToStorageKey || {};
+
+      const targetChannels = channels.filter((c) => getChannelSourceType(c) === sourceType);
+      const targetChannelIds = new Set(targetChannels.map((c) => normalizeChannelIdentifier(c.id)));
+
+      const removedEmoteKeys = Array.from(new Set(
+        targetChannels.flatMap((channel) => Object.keys(channel.emotes || {}))
+      ));
+
+      const cleanedChannels = channels.filter((c) => !targetChannelIds.has(normalizeChannelIdentifier(c.id)));
+      const stillReferencedKeys = new Set();
+      cleanedChannels.forEach((channel) => {
+        Object.keys(channel.emotes || {}).forEach((key) => stillReferencedKeys.add(key));
+      });
+      const emoteKeysSafeToDelete = removedEmoteKeys.filter((key) => !stillReferencedKeys.has(key));
+
+      emoteKeysSafeToDelete.forEach((emoteKey) => {
+        delete emoteMapping[emoteKey];
+        delete emoteImageData[emoteKey];
+        delete triggerToStorageKey[emoteKey];
+      });
+
+      chrome.storage.local.set({
+        channels: cleanedChannels,
+        emoteMapping,
+        emoteImageData,
+        triggerToStorageKey
+      }, async () => {
+        try {
+          if (emoteKeysSafeToDelete.length > 0) {
+            await chrome.runtime.sendMessage({ action: 'deleteStoredEmotes', keys: emoteKeysSafeToDelete });
+          }
+        } catch (error) {
+          console.warn('[Mojify] Failed to delete stored emote blobs:', error);
+        }
+        showToast(`All ${label} emotes deleted. Channel IDs kept — click Refresh to re-download.`);
+        updateChannelManagement();
+        loadEmotes();
+      });
+    });
+  }
   clearAllStorageBtn.addEventListener('click', async () => {
     const confirmed = await showConfirmDialog(
       'Delete All Emote Data',
