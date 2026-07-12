@@ -953,6 +953,34 @@ img {
   padding: 10px 14px;
 }
 
+#emotes-tab[data-media-tab="giphy"] .emote-stats,
+#emotes-tab[data-media-tab="klipy"] .emote-stats,
+#emotes-tab[data-media-tab="pixabay"] .emote-stats {
+  display: none !important;
+}
+
+#emotes-tab[data-media-tab="twitch"] .refresh-actions,
+#emotes-tab[data-media-tab="discord"] .refresh-actions,
+#emotes-tab[data-media-tab="telegram"] .refresh-actions {
+  justify-content: flex-end;
+}
+
+#emotes-tab[data-media-tab="twitch"] #download-button,
+#emotes-tab[data-media-tab="discord"] #download-button,
+#emotes-tab[data-media-tab="telegram"] #download-button {
+  display: none !important;
+}
+
+#emotes-tab[data-media-tab="twitch"] .sorted-emote-header,
+#emotes-tab[data-media-tab="discord"] .sorted-emote-header,
+#emotes-tab[data-media-tab="telegram"] .sorted-emote-header {
+  display: none !important;
+}
+
+#discord-import-panel {
+  display: none !important;
+}
+
 .stat {
   display: flex;
   flex-direction: column;
@@ -1003,6 +1031,14 @@ img {
   font-weight: 700;
   letter-spacing: -0.01em;
   box-shadow: 0 2px 8px var(--accent-glow);
+}
+
+.refresh-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
 }
 
 .action-button {

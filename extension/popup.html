@@ -211,10 +211,16 @@
               <span class="stat-number" id="emote-count">0</span>
               <span class="stat-label">Emotes</span>
             </div>
-            <button id="download-button" class="action-button" type="button">
-              <i class="fas fa-sync-alt"></i>
-              <span>Refresh All</span>
-            </button>
+            <div class="refresh-actions">
+              <button id="refresh-source-button" class="action-button hidden" type="button">
+                <i class="fas fa-sync-alt"></i>
+                <span id="refresh-source-label">Refresh</span>
+              </button>
+              <button id="download-button" class="action-button" type="button">
+                <i class="fas fa-sync-alt"></i>
+                <span>Refresh All</span>
+              </button>
+            </div>
           </div>
 
           <div class="download-progress hidden" id="download-progress">

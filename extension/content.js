@@ -2130,9 +2130,16 @@ document.addEventListener('keyup', handleInputEvent);
 document.addEventListener('textInput', handleInputEvent);
 document.addEventListener('compositionend', handleInputEvent);
 
-// Also listen on document body with event delegation
-document.body.addEventListener('input', handleInputEvent, true);
-document.body.addEventListener('keyup', handleInputEvent, true);
+// Also listen on document body with event delegation (deferred if body not ready at document_start)
+if (document.body) {
+  document.body.addEventListener('input', handleInputEvent, true);
+  document.body.addEventListener('keyup', handleInputEvent, true);
+} else {
+  document.addEventListener('DOMContentLoaded', () => {
+    document.body.addEventListener('input', handleInputEvent, true);
+    document.body.addEventListener('keyup', handleInputEvent, true);
+  });
+}
 
 // Hide suggestions when clicking outside
 document.addEventListener('click', (event) => {
@@ -2239,3 +2246,83 @@ setTimeout(() => {
 }, 5000);
 
 })(); // End of early exit function
+
+// ── Telegram Web sticker set popup detection ──────────
+
+function mojifyExtractShortNameFromHref(href) {
+  if (!href) return null;
+  const m = href.match(/t\.me\/(?:addemoji|addstickers)\/([A-Za-z0-9_]+)/);
+  return m ? m[1] : null;
+}
+
+function mojifyDetectTelegramStickerSetName(modal) {
+  if (!modal) return null;
+
+  const titleEl = modal.querySelector('.modal-title');
+  if (!titleEl) return null;
+
+  const title = titleEl.textContent.replace(/@\w+/, '').trim();
+  const normalizedTitle = title.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+
+  const chatLinks = [...document.querySelectorAll('a[href*="t.me/addemoji/"], a[href*="t.me/addstickers/"]')];
+
+  for (const link of chatLinks) {
+    const setName = mojifyExtractShortNameFromHref(link.href);
+    if (!setName) continue;
+    const normalized = setName.replace(/_/g, '').replace(/by.*$/i, '').toLowerCase();
+    if (normalizedTitle && normalized && (normalizedTitle.includes(normalized) || normalized.includes(normalizedTitle))) {
+      return setName;
+    }
+  }
+
+  return null;
+}
+
+function mojifyInitTelegramObserver() {
+  if (!location.hostname.includes('web.telegram.org') && !location.hostname.includes('web.telegram')) return;
+
+  let lastDetectedSet = null;
+  let clickedSetName = null;
+
+  document.addEventListener('click', (e) => {
+    const link = e.target.closest('a[href*="t.me/addemoji/"], a[href*="t.me/addstickers/"]');
+    if (link) {
+      clickedSetName = mojifyExtractShortNameFromHref(link.href);
+    }
+  }, true);
+
+  const tgObserver = new MutationObserver(() => {
+    const modal = document.querySelector('.StickerSetModal.shown.open, .StickerSetModal.open, .popup-stickers.active');
+    if (modal) {
+      let setName = null;
+
+      if (clickedSetName) {
+        setName = clickedSetName;
+      } else {
+        setName = mojifyDetectTelegramStickerSetName(modal);
+      }
+
+      if (setName && setName !== lastDetectedSet) {
+        lastDetectedSet = setName;
+        try {
+          chrome.runtime.sendMessage({ type: 'telegramStickerSetDetected', setName: setName });
+        } catch (e) {}
+      }
+    } else if (lastDetectedSet) {
+      lastDetectedSet = null;
+      clickedSetName = null;
+      try {
+        chrome.runtime.sendMessage({ type: 'telegramStickerSetClosed' });
+      } catch (e) {}
+    }
+  });
+
+  const target = document.body || document.documentElement;
+  tgObserver.observe(target, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', mojifyInitTelegramObserver);
+} else {
+  mojifyInitTelegramObserver();
+}
