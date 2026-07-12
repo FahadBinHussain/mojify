@@ -1,3 +1,6 @@
+let detectedTelegramStickerSet = null;
+try { chrome.action.setBadgeText({ text: '' }); } catch (e) {}
+
 const SEVEN_TV_API_ORIGIN = "https://api.7tv.app";
 const SEVEN_TV_V3_BASE_URL = `${SEVEN_TV_API_ORIGIN}/v3`;
 const TWITCH_API_BASE_URL = `${SEVEN_TV_V3_BASE_URL}/users/twitch`;
@@ -3992,35 +3995,105 @@ async function handleChannelIdsChanged(oldChannelIds = [], newChannelIds = []) {
   }
 }
 
-function setupContextMenus() {
+let _menuSetupInProgress = false;
+let _menuSetupPendingUrl = null;
+
+function setupContextMenusForUrl(url) {
+  if (_menuSetupInProgress) {
+    _menuSetupPendingUrl = url;
+    return;
+  }
+  _menuSetupInProgress = true;
+
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({
-      id: 'importDiscordServer',
-      title: 'Import Discord Server',
-      contexts: ['action']
-    });
+    if (/discord(?:app)?\.com\/channels\//.test(url || '')) {
+      chrome.contextMenus.create({
+        id: 'importDiscordServer',
+        title: 'Import Discord Server',
+        contexts: ['action']
+      });
+    }
 
-    chrome.contextMenus.create({
-      id: 'import7TVChannel',
-      title: 'Import 7TV Channel',
-      contexts: ['action']
-    });
+    if (/7tv\.app\/users\//.test(url || '')) {
+      chrome.contextMenus.create({
+        id: 'import7TVChannel',
+        title: 'Import 7TV Channel',
+        contexts: ['action']
+      });
+    }
 
-    chrome.contextMenus.create({
-      id: 'refreshTwitchEmotes',
-      title: 'Refresh Twitch/7TV Emotes',
-      contexts: ['action']
-    });
+    if (/t\.me\/add(?:stickers|emoji)\//.test(url || '') || (/web\.telegram\.org/.test(url || '') && detectedTelegramStickerSet)) {
+      chrome.contextMenus.create({
+        id: 'importTelegramStickerSet',
+        title: 'Import Telegram Sticker Set',
+        contexts: ['action']
+      });
+    }
+
+    _menuSetupInProgress = false;
+    if (_menuSetupPendingUrl !== null) {
+      const pending = _menuSetupPendingUrl;
+      _menuSetupPendingUrl = null;
+      setupContextMenusForUrl(pending);
+    }
   });
 }
 
+function isImportSupportedUrl(url) {
+  const u = url || '';
+  if (/discord(?:app)?\.com\/channels\//.test(u)) return true;
+  if (/7tv\.app\/users\//.test(u)) return true;
+  if (/t\.me\/add(?:stickers|emoji)\//.test(u)) return true;
+  if (/web\.telegram\.org/.test(u) && detectedTelegramStickerSet) return true;
+  return false;
+}
+
+function updateBadgeForUrl(url) {
+  if (isImportSupportedUrl(url)) {
+    chrome.action.setBadgeBackgroundColor({ color: '#229ED9' });
+    chrome.action.setBadgeText({ text: '+' });
+  } else {
+    if (!isImportSupportedUrl(url)) detectedTelegramStickerSet = null;
+    chrome.action.setBadgeText({ text: '' });
+  }
+}
+
+chrome.tabs.onActivated.addListener((activeInfo) => {
+  chrome.tabs.get(activeInfo.tabId, (tab) => {
+    if (chrome.runtime.lastError) return;
+    updateBadgeForUrl(tab?.url);
+    setupContextMenusForUrl(tab?.url);
+  });
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete') return;
+  if (/web\.telegram\.org/.test(tab?.url || '') && detectedTelegramStickerSet) {
+    detectedTelegramStickerSet = null;
+  }
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (tabs[0]?.id === tabId) {
+      updateBadgeForUrl(tab?.url);
+      setupContextMenusForUrl(tab?.url);
+    }
+  });
+});
+
 chrome.runtime.onInstalled.addListener((details) => {
-  setupContextMenus();
+  detectedTelegramStickerSet = null;
+  chrome.action.setBadgeText({ text: '' });
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    setupContextMenusForUrl(tabs[0]?.url);
+  });
   resetDownloadState();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-  setupContextMenus();
+  detectedTelegramStickerSet = null;
+  chrome.action.setBadgeText({ text: '' });
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    setupContextMenusForUrl(tabs[0]?.url);
+  });
   resetDownloadState();
 });
 
@@ -4186,18 +4259,86 @@ async function importDiscordServerFromContextMenu(tab) {
   }
 }
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === 'refreshTwitchEmotes') {
-    downloadEmotes();
+async function importTelegramStickerSetFromContextMenu(tab) {
+  const targetTab = await getContextMenuTargetTab(tab);
+  const url = String(targetTab?.url || '');
+
+  let setName = '';
+  const urlMatch = url.match(/t\.me\/add(?:stickers|emoji)\/([A-Za-z][A-Za-z0-9_]*)/i);
+  if (urlMatch) {
+    setName = urlMatch[1];
+  } else if (/web\.telegram\.org/.test(url)) {
+    if (detectedTelegramStickerSet) {
+      setName = detectedTelegramStickerSet;
+    }
+    if (!setName) {
+      try {
+        const [result] = await chrome.scripting.executeScript({
+          target: { tabId: targetTab.id },
+          func: () => {
+            const modal = document.querySelector('.StickerSetModal.shown.open, .StickerSetModal.open');
+            if (!modal) return '';
+            const titleEl = modal.querySelector('.modal-title');
+            if (!titleEl) return '';
+            const title = titleEl.textContent.replace(/@\w+/, '').trim();
+            const chatLinks = [...document.querySelectorAll('a')].filter(a =>
+              a.href.includes('t.me/addemoji/') || a.href.includes('t.me/addstickers/')
+            );
+            for (const link of chatLinks) {
+              const sn = link.href.split('/').pop();
+              const norm = sn.replace(/_/g, '').replace(/by.*$/i, '').toLowerCase();
+              const normTitle = title.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+              if (normTitle && (normTitle.includes(norm) || norm.includes(normTitle))) return sn;
+            }
+            return '';
+          }
+        });
+        setName = result?.result || '';
+      } catch {}
+    }
+  }
+
+  if (!setName) {
+    sendRuntimeMessage({
+      type: 'showToast',
+      message: 'Open a sticker set in Telegram web first, then try again',
+      toastType: 'error'
+    });
     return;
   }
 
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color: '#229ED9' });
+    await chrome.action.setBadgeText({ text: 'IMP' });
+    await importTelegramStickerSet(setName);
+    sendRuntimeMessage({
+      type: 'showToast',
+      message: 'Telegram sticker set imported',
+      toastType: 'success'
+    });
+  } catch (error) {
+    sendRuntimeMessage({
+      type: 'showToast',
+      message: error?.message || 'Telegram import failed',
+      toastType: 'error'
+    });
+  } finally {
+    detectedTelegramStickerSet = null;
+    await chrome.action.setBadgeText({ text: '' });
+  }
+}
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === 'importDiscordServer') {
     importDiscordServerFromContextMenu(tab);
   }
 
   if (info.menuItemId === 'import7TVChannel') {
     import7TVChannelFromContextMenu(tab);
+  }
+
+  if (info.menuItemId === 'importTelegramStickerSet') {
+    importTelegramStickerSetFromContextMenu(tab);
   }
 });
 
@@ -4426,6 +4567,25 @@ async function startMonitoringTab(tabId) {
 }
 
 function handleRuntimeMessage(request, sender, sendResponse) {
+  if (request.type === 'telegramStickerSetDetected' && request.setName) {
+    detectedTelegramStickerSet = request.setName;
+    chrome.action.setBadgeBackgroundColor({ color: '#229ED9' });
+    chrome.action.setBadgeText({ text: '+' });
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      setupContextMenusForUrl(tabs[0]?.url);
+    });
+    return;
+  }
+
+  if (request.type === 'telegramStickerSetClosed') {
+    detectedTelegramStickerSet = null;
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      updateBadgeForUrl(tabs[0]?.url);
+      setupContextMenusForUrl(tabs[0]?.url);
+    });
+    return;
+  }
+
   if (request.action === 'getEmote') {
     emoteDB.getEmote(request.key)
       .then(serializeStoredEmote)
