@@ -1,6 +1,5 @@
 let detectedTelegramStickerSet = null;
 try { chrome.action.setBadgeText({ text: '' }); } catch (e) {}
-try { chrome.storage.local.set({ downloadInProgress: false, downloadProgress: { current: 0, total: 0, completed: false, reset: true } }); } catch (e) {}
 
 const SEVEN_TV_API_ORIGIN = "https://api.7tv.app";
 const SEVEN_TV_V3_BASE_URL = `${SEVEN_TV_API_ORIGIN}/v3`;
@@ -694,6 +693,12 @@ let downloadState = {
   startTime: null
 };
 
+let retryState = {
+  isRetrying: false,
+  current: 0,
+  total: 0
+};
+
 function logDownload(event, data = {}) {
   console.log(`[Mojify Download] ${event}`, data);
 }
@@ -1118,24 +1123,34 @@ async function downloadEmotes(options = {}) {
       });
 
       if (resolvedEmoteCount > 0) {
+        // Build ALL emotes for channel metadata (includes already-cached ones)
+        const allChannelEmotes = {};
         const newEmotes = {};
+
         Object.entries(result.emotes).forEach(([triggerKey, emoteInfo]) => {
           const emoteId = emoteInfo.emoteId || triggerKey;
           const storageKey = `7tv:${storageChannelId}:${result.activeSetId || result.emoteSetId || ''}:${emoteId}`;
+          allChannelEmotes[triggerKey] = { ...emoteInfo, storageKey, url: emoteInfo.url };
           if (!existingEmoteKeys.has(storageKey)) {
             newEmotes[triggerKey] = { ...emoteInfo, storageKey, url: emoteInfo.url };
           }
         });
 
-        if (Object.keys(newEmotes).length > 0) {
-          channelEmotes.push({
-            channelId: storageChannelId,
-            username: result.username,
-            emotes: newEmotes,
-            allEmotes: result.emotes
-          });
-          totalNewEmotes += Object.keys(newEmotes).length;
+        // Always add to channelEmotes for download (even if empty — metadata still needs updating)
+        channelEmotes.push({
+          channelId: storageChannelId,
+          username: result.username,
+          emotes: newEmotes,
+          allEmotes: allChannelEmotes
+        });
+
+        // Update the channel's emotes with ALL resolved emotes (not just new ones)
+        const channelData = channelsById.get(storageChannelId);
+        if (channelData) {
+          channelData.emotes = allChannelEmotes;
         }
+
+        totalNewEmotes += Object.keys(newEmotes).length;
       }
     });
 
@@ -1262,6 +1277,7 @@ async function downloadEmotes(options = {}) {
 
         try {
           const blob = await fetchBlobWithTimeout(url, {}, 30000);
+          if (downloadState.cancelled) return;
           if (blob.size > 0) {
             await emoteDB.storeEmote(key, url, blob, {
               channel, channelId, triggerKey: triggerKey || key
@@ -1291,7 +1307,9 @@ async function downloadEmotes(options = {}) {
               current: downloadState.current,
               total: downloadState.total,
               currentEmote: `Downloading ${downloadState.current}/${downloadState.total}`
-            }
+            },
+            emoteMapping: { ...globalEmoteMapping },
+            triggerToStorageKey: { ...globalTriggerToStorageKey }
           });
           try {
             chrome.runtime.sendMessage({
@@ -1308,89 +1326,46 @@ async function downloadEmotes(options = {}) {
     // Launch POOL_SIZE workers — each grabs next emote as soon as it finishes
     await Promise.all(Array.from({ length: Math.min(POOL_SIZE, allEmotesToDownload.length) }, () => worker()));
 
-    // Second pass: retry failed emotes with smaller concurrent batches
-    if (failedQueue.length > 0) {
-      warnDownload('retry-start', {
-        failed: failedQueue.length
+    // If cancelled, skip retry and finalize immediately
+    if (downloadState.cancelled) {
+      logDownload('cancelled-before-retry');
+
+      await chrome.storage.local.set({
+        emoteMapping: { ...globalEmoteMapping },
+        triggerToStorageKey: { ...globalTriggerToStorageKey },
+        channels,
+        downloadInProgress: false,
+        downloadProgress: {
+          current: downloadState.current,
+          total: downloadState.total,
+          completed: true,
+          cancelled: true
+        }
       });
 
-      const RETRY_BATCH_SIZE = 5; // Smaller batches for retries
-      const retryDownload = async (emoteData, retryAttempt = 1) => {
-        const { key, triggerKey, url, channel, channelId } = emoteData;
-
-        try {
-          // Exponential timeout for retries: 20s, 30s, 45s for multiple attempts
-          const retryTimeout = 20000 + (retryAttempt * 10000) + Math.min(retryAttempt * retryAttempt * 5000, 25000);
-
-          const blob = await fetchBlobWithTimeout(url, {
-            headers: {
-              'Cache-Control': 'no-cache',
-              'Pragma': 'no-cache'
-            }
-          }, retryTimeout);
-
-          if (blob.size > 0) {
-            await emoteDB.storeEmote(key, url, blob, {
-              channel: channel,
-              channelId: channelId,
-              triggerKey: triggerKey || key,
-              retried: true
-            });
-
-            if (triggerKey) {
-              globalEmoteMapping[triggerKey] = url;
-              globalTriggerToStorageKey[triggerKey] = key;
-            } else {
-              globalEmoteMapping[key] = url;
-            }
-            return { success: true, key };
-          }
-
-          throw new Error('Empty blob received');
-        } catch (error) {
-          // Still store URL mapping for fallback
-          if (triggerKey) {
-            globalEmoteMapping[triggerKey] = url;
-          } else {
-            globalEmoteMapping[key] = url;
-          }
-          return { success: false, key, error: error.message };
-        }
-      };
-
-      // Process retry queue in smaller concurrent batches with exponential backoff
-      const retryBatchSize = Math.max(2, Math.floor(RETRY_BATCH_SIZE * 0.7)); // Smaller retry batches
-
-      for (let i = 0; i < failedQueue.length; i += retryBatchSize) {
-        const retryBatch = failedQueue.slice(i, i + retryBatchSize);
-        const retryBatchNum = Math.floor(i/retryBatchSize) + 1;
-        const totalRetryBatches = Math.ceil(failedQueue.length/retryBatchSize);
-
-        logDownload('retry-batch-start', {
-          batch: `${retryBatchNum}/${totalRetryBatches}`,
-          items: retryBatch.length
+      downloadState.isDownloading = false;
+      try {
+        chrome.runtime.sendMessage({
+          type: 'downloadProgress',
+          current: downloadState.current,
+          total: downloadState.total,
+          completed: true,
+          cancelled: true
         });
-        const retryBatchStartedAt = Date.now();
+      } catch (e) {}
 
-        await Promise.allSettled(
-          retryBatch.map(emoteData => retryDownload(emoteData, retryBatchNum))
-        );
-        logDownload('retry-batch-done', {
-          batch: `${retryBatchNum}/${totalRetryBatches}`,
-          durationMs: Date.now() - retryBatchStartedAt
-        });
-
-        // Exponential backoff delay between retry batches
-        if (i + retryBatchSize < failedQueue.length) {
-          const exponentialDelay = 800 + (retryBatchNum * 400) + Math.min(retryBatchNum * retryBatchNum * 200, 2000);
-          await new Promise(resolve => setTimeout(resolve, exponentialDelay));
-        }
-      }
-
-      // Clear cache to free memory
-      urlCache.clear();
-      sizeEstimates.clear();
+      const totalStoredEmotes = await emoteDB.getEmoteCount();
+      return { success: true, totalEmotes: totalStoredEmotes, cancelled: true };
     }
+
+    // Final progress report after main pool completes
+    await publishDownloadProgress({
+      current: downloadState.total,
+      total: downloadState.total,
+      currentEmote: failedQueue.length > 0
+        ? `Finalizing — ${failedQueue.length} to retry in background...`
+        : 'Finalizing...'
+    });
 
     // Final storage update — merge with current channels to respect mid-download deletions
     const currentStorage = await chrome.storage.local.get(['channels', 'emoteMapping', 'triggerToStorageKey']);
@@ -1432,6 +1407,15 @@ async function downloadEmotes(options = {}) {
       // Popup is closed, continue silently
     }
 
+    // Clear cache to free memory
+    urlCache.clear();
+    sizeEstimates.clear();
+
+    // Fire retry as a detached background task — doesn't block new imports
+    if (failedQueue.length > 0) {
+      runBackgroundRetry([...failedQueue]);
+    }
+
     // Get final count from IndexedDB
     const totalStoredEmotes = await emoteDB.getEmoteCount();
     logDownload('complete', {
@@ -1458,6 +1442,110 @@ async function downloadEmotes(options = {}) {
 
     return { success: false, error: error.message };
   }
+}
+
+// Background retry — runs detached after main download completes
+// Reads fresh storage before each write so it never clobbers new imports
+async function runBackgroundRetry(failedQueue) {
+  if (!failedQueue || failedQueue.length === 0) return;
+
+  retryState.isRetrying = true;
+  retryState.current = 0;
+  retryState.total = failedQueue.length;
+
+  warnDownload('retry-start', { failed: failedQueue.length });
+
+  const RETRY_BATCH_SIZE = 10;
+
+  const retryDownload = async (emoteData) => {
+    const { key, triggerKey, url, channel, channelId } = emoteData;
+
+    try {
+      const blob = await fetchBlobWithTimeout(url, {
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      }, 30000);
+
+      if (blob.size > 0) {
+        await emoteDB.storeEmote(key, url, blob, {
+          channel: channel,
+          channelId: channelId,
+          triggerKey: triggerKey || key,
+          retried: true
+        });
+
+        return { success: true, key, triggerKey, url };
+      }
+
+      return { success: false, key, triggerKey, url };
+    } catch (error) {
+      return { success: false, key, triggerKey, url };
+    }
+  };
+
+  for (let i = 0; i < failedQueue.length; i += RETRY_BATCH_SIZE) {
+    const retryBatch = failedQueue.slice(i, i + RETRY_BATCH_SIZE);
+
+    const results = await Promise.allSettled(
+      retryBatch.map(emoteData => retryDownload(emoteData))
+    );
+
+    // Merge successful retries into current storage (don't clobber other writes)
+    const freshStorage = await chrome.storage.local.get(['emoteMapping', 'triggerToStorageKey']);
+    const freshMapping = { ...(freshStorage.emoteMapping || {}) };
+    const freshTrigger = { ...(freshStorage.triggerToStorageKey || {}) };
+
+    for (const result of results) {
+      if (result.status !== 'fulfilled') continue;
+      const { success, key, triggerKey, url } = result.value;
+      if (success) {
+        if (triggerKey) {
+          freshMapping[triggerKey] = url;
+          freshTrigger[triggerKey] = key;
+        } else {
+          freshMapping[key] = url;
+        }
+      }
+    }
+
+    retryState.current += retryBatch.length;
+
+    await chrome.storage.local.set({
+      emoteMapping: freshMapping,
+      triggerToStorageKey: freshTrigger
+    });
+
+    try {
+      chrome.runtime.sendMessage({
+        type: 'retryProgress',
+        current: retryState.current,
+        total: retryState.total
+      });
+    } catch (e) {}
+  }
+
+  // Persist still-failed emotes for the dashboard
+  const stillFailed = [];
+  for (let i = 0; i < failedQueue.length; i += RETRY_BATCH_SIZE) {
+    const batch = failedQueue.slice(i, i + RETRY_BATCH_SIZE);
+    for (const emoteData of batch) {
+      try {
+        const stored = await emoteDB.getEmote(emoteData.key);
+        if (!stored || !stored.blob || stored.blob.size === 0) {
+          stillFailed.push(emoteData);
+        }
+      } catch (e) {
+        stillFailed.push(emoteData);
+      }
+    }
+  }
+
+  await chrome.storage.local.set({ failedEmotes: stillFailed });
+
+  retryState.isRetrying = false;
+  logDownload('retry-complete', { stillFailed: stillFailed.length });
 }
 
 // Function to insert emote into messenger.com using drag and drop
@@ -2685,6 +2773,11 @@ async function publishTelegramImportLibrarySnapshot({
     id: channelId,
     username: setTitle,
     emotes: { ...importedEmotes },
+    parentChannelId: '',
+    isEmoteSet: true,
+    emoteSetId: channelId,
+    emoteSetName: setTitle || resolvedSetName,
+    emoteSetKind: 'NORMAL',
     mediaCounts: {
       stickers: importedStickerCount,
       animatedStickers: importedAnimatedCount,
@@ -3148,11 +3241,18 @@ async function importDiscordServerEmojis(tabId) {
     });
 
     const existingGuildChannel = channelsById.get(guildId);
-    const previousGuildKeys = new Set(Object.keys(existingGuildChannel?.emotes || {}));
+    const existingEmojisSet = channelsById.get(`discord:${guildId}:emojis`);
+    const existingStickersSet = channelsById.get(`discord:${guildId}:stickers`);
+    const previousGuildKeys = new Set([
+      ...Object.keys(existingGuildChannel?.emotes || {}),
+      ...Object.keys(existingEmojisSet?.emotes || {}),
+      ...Object.keys(existingStickersSet?.emotes || {})
+    ]);
     const reservedKeys = new Set(Object.keys(globalEmoteMapping));
     previousGuildKeys.forEach((key) => reservedKeys.delete(key));
 
-    const importedEmotes = {};
+    const importedEmojis = {};
+    const importedStickers = {};
 
     for (const item of guildItems) {
       const isSticker = item.type === 'sticker';
@@ -3194,7 +3294,11 @@ async function importDiscordServerEmojis(tabId) {
           filename: `${sanitizeDiscordEmojiName(item.name, isSticker ? 'sticker' : 'emoji')}.${extension || 'png'}`
         });
 
-        importedEmotes[key] = url;
+        if (isSticker) {
+          importedStickers[key] = url;
+        } else {
+          importedEmojis[key] = url;
+        }
         globalEmoteMapping[key] = url;
         importedCount += 1;
         if (isSticker) {
@@ -3228,7 +3332,8 @@ async function importDiscordServerEmojis(tabId) {
     }
 
     for (const oldKey of previousGuildKeys) {
-      if (Object.prototype.hasOwnProperty.call(importedEmotes, oldKey)) continue;
+      if (Object.prototype.hasOwnProperty.call(importedEmojis, oldKey)) continue;
+      if (Object.prototype.hasOwnProperty.call(importedStickers, oldKey)) continue;
       delete globalEmoteMapping[oldKey];
       await emoteDB.deleteEmote(oldKey);
     }
@@ -3236,7 +3341,9 @@ async function importDiscordServerEmojis(tabId) {
     channelsById.set(guildId, {
       id: guildId,
       username: guildName,
-      emotes: importedEmotes,
+      emotes: {},
+      parentChannelId: '',
+      isEmoteSet: false,
       mediaCounts: {
         emojis: importedEmojiCount,
         stickers: importedStickerCount
@@ -3246,6 +3353,52 @@ async function importDiscordServerEmojis(tabId) {
       discordGuildName: guildName,
       discordGuildLink: `https://discord.com/channels/${guildId}`
     });
+
+    const emojisSetId = `discord:${guildId}:emojis`;
+    if (Object.keys(importedEmojis).length > 0) {
+      channelsById.set(emojisSetId, {
+        id: emojisSetId,
+        username: `${guildName} - Emojis`,
+        baseUsername: guildName,
+        emotes: importedEmojis,
+        parentChannelId: guildId,
+        platformChannelId: guildId,
+        isEmoteSet: true,
+        emoteSetId: emojisSetId,
+        emoteSetName: 'Emojis',
+        emoteSetKind: 'NORMAL',
+        sourceType: 'discord',
+        discordGuildId: guildId,
+        discordGuildName: guildName,
+        discordGuildLink: `https://discord.com/channels/${guildId}`,
+        discordAssetType: 'emoji'
+      });
+    } else {
+      channelsById.delete(emojisSetId);
+    }
+
+    const stickersSetId = `discord:${guildId}:stickers`;
+    if (Object.keys(importedStickers).length > 0) {
+      channelsById.set(stickersSetId, {
+        id: stickersSetId,
+        username: `${guildName} - Stickers`,
+        baseUsername: guildName,
+        emotes: importedStickers,
+        parentChannelId: guildId,
+        platformChannelId: guildId,
+        isEmoteSet: true,
+        emoteSetId: stickersSetId,
+        emoteSetName: 'Stickers',
+        emoteSetKind: 'NORMAL',
+        sourceType: 'discord',
+        discordGuildId: guildId,
+        discordGuildName: guildName,
+        discordGuildLink: `https://discord.com/channels/${guildId}`,
+        discordAssetType: 'sticker'
+      });
+    } else {
+      channelsById.delete(stickersSetId);
+    }
 
     await chrome.storage.local.set({
       emoteMapping: globalEmoteMapping,
@@ -4419,6 +4572,117 @@ function handleRuntimeMessage(request, sender, sendResponse) {
     downloadState.cancelled = true;
     sendResponse({ success: true });
     return;
+  }
+
+  if (request.action === 'getDashboardState') {
+    (async () => {
+      try {
+        const storage = await chrome.storage.local.get([
+          'channels', 'emoteMapping', 'triggerToStorageKey',
+          'downloadInProgress', 'downloadProgress',
+          'discordImportInProgress', 'discordImportProgress',
+          'telegramImportInProgress', 'telegramImportProgress',
+          'failedEmotes'
+        ]);
+
+        let emoteCount = 0;
+        let failedBlobCount = 0;
+        try {
+          if (!emoteDB.db) await emoteDB.init();
+          emoteCount = await emoteDB.getEmoteCount();
+          const allMeta = await emoteDB.getAllEmoteMetadata();
+          for (const meta of allMeta) {
+            const blob = await emoteDB.getEmote(meta.key);
+            if (!blob || !blob.blob || blob.blob.size === 0) {
+              failedBlobCount++;
+            }
+          }
+        } catch (e) {}
+
+        const channels = storage.channels || [];
+        const byPlatform = { twitch: [], discord: [], telegram: [] };
+        for (const ch of channels) {
+          const st = ch?.sourceType || 'twitch';
+          if (!byPlatform[st]) byPlatform[st] = [];
+          byPlatform[st].push({
+            id: ch.id,
+            username: ch.username || ch.baseUsername || ch.id,
+            emoteCount: ch.emotes ? Object.keys(ch.emotes).length : 0,
+            isEmoteSet: Boolean(ch.isEmoteSet),
+            parentChannelId: ch.parentChannelId || '',
+            emoteSetName: ch.emoteSetName || '',
+            discordGuildName: ch.discordGuildName || '',
+            telegramStickerSetName: ch.telegramStickerSetName || '',
+            telegramStickerSetTitle: ch.telegramStickerSetTitle || '',
+            mediaCounts: ch.mediaCounts || {},
+            updatedAt: ch.updatedAt || null
+          });
+        }
+
+        sendResponse({
+          success: true,
+          download: {
+            isDownloading: downloadState.isDownloading,
+            cancelled: downloadState.cancelled,
+            current: downloadState.current,
+            total: downloadState.total,
+            progress: storage.downloadProgress || null
+          },
+          retry: {
+            isRetrying: retryState.isRetrying,
+            current: retryState.current,
+            total: retryState.total
+          },
+          discord: {
+            isImporting: discordImportState.isImporting,
+            current: discordImportState.current,
+            total: discordImportState.total,
+            guildName: discordImportState.guildName,
+            progress: storage.discordImportProgress || null
+          },
+          telegram: {
+            isImporting: telegramImportState.isImporting,
+            current: telegramImportState.current,
+            total: telegramImportState.total,
+            setTitle: telegramImportState.setTitle,
+            progress: storage.telegramImportProgress || null
+          },
+          sevenTv: {
+            isImporting: se7enTvImportState.isImporting,
+            username: se7enTvImportState.username
+          },
+          emoteCount,
+          failedBlobCount,
+          mappingCount: storage.emoteMapping ? Object.keys(storage.emoteMapping).length : 0,
+          triggerCount: storage.triggerToStorageKey ? Object.keys(storage.triggerToStorageKey).length : 0,
+          channelCount: channels.length,
+          channels: byPlatform,
+          failedEmotes: storage.failedEmotes || []
+        });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    return true;
+  }
+
+  if (request.action === 'clearFailedEmotes') {
+    chrome.storage.local.remove(['failedEmotes']);
+    sendResponse({ success: true });
+    return;
+  }
+
+  if (request.action === 'retryFailedEmotes') {
+    (async () => {
+      const { failedEmotes = [] } = await chrome.storage.local.get(['failedEmotes']);
+      if (failedEmotes.length === 0) {
+        sendResponse({ success: false, error: 'No failed emotes to retry' });
+        return;
+      }
+      runBackgroundRetry(failedEmotes);
+      sendResponse({ success: true, count: failedEmotes.length });
+    })();
+    return true;
   }
 
   if (request.action === 'injectDiscordSendInterceptor') {

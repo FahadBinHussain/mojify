@@ -450,10 +450,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return emoteObjectUrlCache.get(emoteKey);
     }
 
-    const sourceData = emoteData || emoteDataMap.get(emoteKey);
-    const url = sourceData?.url || allEmotes[emoteKey] || '';
-    if (url && !url.startsWith('http') && !url.startsWith('blob:')) return '';
-    return url;
+    return '';
   }
 
   function getEmoteMimeType(emoteKey) {
@@ -502,7 +499,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     const pending = (async () => {
-      const emoteData = await emoteDB.getEmote(emoteKey);
+      const emoteData = await emoteDB.getEmote(
+        emoteDataMap.get(emoteKey)?.key || emoteKey
+      );
       if (!emoteData?.blob) {
         console.warn(`[Mojify] No blob found for emote ${emoteKey}`, emoteData ? { url: emoteData.url, hasBlob: !!emoteData.blob } : 'No emote data');
         return null;
@@ -529,27 +528,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const PLACEHOLDER_PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
-  function hydrateEmoteImageElement(emoteKey, mediaElement, fallbackUrl = '') {
+  function hydrateEmoteImageElement(emoteKey, mediaElement) {
     if (!emoteKey || !mediaElement) return;
 
-    const safeFallbackUrl = fallbackUrl && (fallbackUrl.startsWith('http') || fallbackUrl.startsWith('blob:'))
-      ? fallbackUrl
-      : '';
-
-    const applyFallbackUrl = () => {
-      if (!safeFallbackUrl || !mediaElement.isConnected || mediaElement.src === safeFallbackUrl) return;
-      mediaElement.src = safeFallbackUrl;
-      if (mediaElement.tagName === 'VIDEO') {
-        mediaElement.load();
-        mediaElement.play().catch(() => {});
-      }
+    const applyMissingState = () => {
+      if (!mediaElement.isConnected) return;
+      mediaElement.style.opacity = '0.2';
+      mediaElement.style.filter = 'grayscale(1)';
     };
 
     const rehydrateAfterCachedUrlFailure = () => {
       if (!emoteObjectUrlCache.has(emoteKey)) return;
       URL.revokeObjectURL(emoteObjectUrlCache.get(emoteKey));
       emoteObjectUrlCache.delete(emoteKey);
-      hydrateEmoteImageElement(emoteKey, mediaElement, safeFallbackUrl);
+      hydrateEmoteImageElement(emoteKey, mediaElement);
     };
 
     if (emoteObjectUrlCache.has(emoteKey)) {
@@ -569,7 +561,7 @@ document.addEventListener('DOMContentLoaded', () => {
       .then((objectUrl) => {
         if (!mediaElement.isConnected) return;
         if (!objectUrl) {
-          applyFallbackUrl();
+          applyMissingState();
           return;
         }
 
@@ -599,7 +591,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       })
       .catch((error) => {
-        applyFallbackUrl();
+        applyMissingState();
         console.warn('[Mojify] Failed to hydrate local emote preview:', emoteKey, error);
       });
   }
@@ -1015,7 +1007,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function shouldRenderDiscordMediaTree(channel) {
-    return getChannelSourceType(channel) === 'discord';
+    return false;
   }
 
   function createActiveScopeSet(channel) {
@@ -1750,7 +1742,9 @@ document.addEventListener('DOMContentLoaded', () => {
             await emoteDB.init();
           }
 
-          const cachedEmote = await emoteDB.getEmote(emoteTrigger);
+          const cachedEmote = await emoteDB.getEmote(
+            emoteDataMap.get(emoteTrigger)?.key || emoteTrigger
+          );
           if (!cachedEmote || !cachedEmote.blob) {
             showToast('Emote not found in cache', 'error');
             if (emoteElement) resetEmoteLoadingState(emoteElement);
@@ -2681,11 +2675,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const isVideoPreview = mediaType.startsWith('video/');
     const hasLocalAsset = emoteDataMap.has(key);
 
-    if (!rawUrl && !hasLocalAsset) return null;
+    if (!hasLocalAsset) return null;
 
-    const canUsePreviewUrl = rawUrl && (rawUrl.startsWith('http') || rawUrl.startsWith('blob:'));
-    const needsHydration = hasLocalAsset && !emoteObjectUrlCache.has(key);
-    const imageUrl = needsHydration || !canUsePreviewUrl ? PLACEHOLDER_PX : rawUrl;
+    const needsHydration = !emoteObjectUrlCache.has(key);
+    const imageUrl = needsHydration ? PLACEHOLDER_PX : (emoteObjectUrlCache.get(key) || PLACEHOLDER_PX);
 
     emoteItem.innerHTML = `
       <button class="favorite-toggle ${favoriteEmotes.has(key) ? 'active' : ''}" type="button" aria-label="Toggle favorite">
@@ -2728,7 +2721,7 @@ document.addEventListener('DOMContentLoaded', () => {
       insertEmoteIntoActiveTab(key, emoteItem);
     });
 
-    hydrateEmoteImageElement(key, imageElement, canUsePreviewUrl ? rawUrl : '');
+    hydrateEmoteImageElement(key, imageElement);
     requestAnimationFrame(() => fitEmoteTriggerText(triggerElement));
 
     return emoteItem;
@@ -4580,8 +4573,12 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         groupChannels.forEach((channel) => {
-          const emoteCount = channel.emotes ? Object.keys(channel.emotes).length : 0;
+          const rawEmoteCount = channel.emotes ? Object.keys(channel.emotes).length : 0;
           const isSetChannel = is7TVSetChannel(channel);
+          const isParentNode = !isSetChannel && rawEmoteCount === 0 && channel.mediaCounts;
+          const emoteCount = isParentNode
+            ? Object.values(channel.mediaCounts).reduce((sum, n) => sum + (Number(n) || 0), 0)
+            : rawEmoteCount;
           const canBrowseSets = sourceType === 'twitch' && !isSetChannel;
           const setsKey = getChannelSetsLookupKey(channel);
           const isExpanded = Boolean(setsKey && expandedChannelSetsKey === setsKey);
