@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mojify Dashboard</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <span class="eyebrow">Mojify Control</span>
+        <h1>Dashboard</h1>
+        <p>Live status of all emote sources — downloads, imports, failures, and storage at a glance.</p>
+      </div>
+      <div class="hero-status">
+        <div class="status-tile" id="tile-emotes">
+          <span class="tile-label">Total Emotes</span>
+          <strong id="stat-emote-count">—</strong>
+        </div>
+        <div class="status-tile" id="tile-sources">
+          <span class="tile-label">Sources</span>
+          <strong id="stat-channel-count">—</strong>
+        </div>
+        <div class="status-tile" id="tile-storage">
+          <span class="tile-label">Mappings</span>
+          <strong id="stat-mapping-count">—</strong>
+        </div>
+        <div class="status-tile" id="tile-failures">
+          <span class="tile-label">Failed</span>
+          <strong id="stat-failed-count">—</strong>
+        </div>
+      </div>
+    </header>
+
+    <div class="nav-row">
+      <a href="options.html" class="nav-link"><i class="fas fa-cog"></i> Settings</a>
+      <button class="nav-link refresh-btn" id="refresh-btn"><i class="fas fa-sync-alt"></i> Refresh</button>
+      <label class="nav-toggle">
+        <input type="checkbox" id="auto-refresh" checked>
+        <span>Auto-refresh</span>
+      </label>
+    </div>
+
+    <section id="active-ops" class="section-block active-ops hidden">
+      <div class="section-head">
+        <span class="section-kicker">Live</span>
+        <h2>Active Operations</h2>
+      </div>
+      <div id="active-ops-body"></div>
+    </section>
+
+    <div class="dashboard-grid">
+      <section class="section-block">
+        <div class="section-head">
+          <span class="section-kicker"><i class="fab fa-twitch"></i> Twitch</span>
+          <h2>7TV Channels &amp; Sets</h2>
+        </div>
+        <div class="platform-summary" id="twitch-summary"></div>
+        <div class="source-list" id="twitch-list"></div>
+      </section>
+
+      <section class="section-block">
+        <div class="section-head">
+          <span class="section-kicker"><i class="fab fa-discord"></i> Discord</span>
+          <h2>Guilds</h2>
+        </div>
+        <div class="platform-summary" id="discord-summary"></div>
+        <div class="source-list" id="discord-list"></div>
+      </section>
+
+      <section class="section-block">
+        <div class="section-head">
+          <span class="section-kicker"><i class="fab fa-telegram"></i> Telegram</span>
+          <h2>Sticker Packs</h2>
+        </div>
+        <div class="platform-summary" id="telegram-summary"></div>
+        <div class="source-list" id="telegram-list"></div>
+      </section>
+    </div>
+
+    <section class="section-block" id="failures-section">
+      <div class="section-head">
+        <span class="section-kicker"><i class="fas fa-exclamation-triangle"></i> Issues</span>
+        <h2>Failed &amp; Orphaned Emotes</h2>
+        <div class="section-actions">
+          <button class="secondary" id="retry-failed-btn" type="button">
+            <i class="fas fa-redo"></i> Retry Failed
+          </button>
+          <button class="secondary" id="clear-failed-btn" type="button">
+            <i class="fas fa-trash"></i> Clear List
+          </button>
+        </div>
+      </div>
+      <div id="failures-body"></div>
+    </section>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
