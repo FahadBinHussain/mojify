@@ -270,6 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const downloadButton = document.getElementById('download-button');
   const refreshSourceButton = document.getElementById('refresh-source-button');
   const refreshSourceLabel = document.getElementById('refresh-source-label');
+  const stopDownloadButton = document.getElementById('stop-download-button');
   const emoteStats = document.querySelector('.emote-stats');
   const emotesTabPane = document.getElementById('emotes-tab');
   const emoteGrid = document.getElementById('emote-grid');
@@ -315,6 +316,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const storageUsed = document.getElementById('storage-used');
   const channelsCount = document.getElementById('channels-count');
   const clearAllStorageBtn = document.getElementById('clear-all-storage');
+  const cleanOrphansBtn = document.getElementById('clean-orphans');
   const recentGrid = document.getElementById('recent-grid');
   const recentEmptyState = document.getElementById('recent-empty-state');
   const recentCount = document.getElementById('recent-count');
@@ -2525,7 +2527,14 @@ document.addEventListener('DOMContentLoaded', () => {
       .reduce((total, channel) => {
         return total + Object.keys(channel?.emotes || {}).length;
       }, 0);
-    const count = countFromChannels || emoteDataMap.size || Object.keys(allEmotes).length;
+
+    // For specific source tabs, only count from channels — don't fall back to total
+    let count;
+    if (sourceType === 'all') {
+      count = countFromChannels || emoteDataMap.size || Object.keys(allEmotes).length;
+    } else {
+      count = countFromChannels;
+    }
     emoteCount.textContent = count;
     const statLabel = document.querySelector('.emote-stats .stat-label');
     if (statLabel) {
@@ -3612,6 +3621,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   refreshSourceButton?.addEventListener('click', (event) => {
     handleRefreshSourceClick(event.currentTarget);
+  });
+
+  stopDownloadButton?.addEventListener('click', async () => {
+    try {
+      await chrome.runtime.sendMessage({ action: 'cancelDownload' });
+      showToast('Download stopped', 'info');
+    } catch (e) {
+      showToast('Failed to stop download', 'error');
+    }
   });
 
   async function handleRefreshSourceClick(triggerButton = null) {
@@ -4763,10 +4781,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const targetChannels = channels.filter((c) => getChannelSourceType(c) === sourceType);
       const targetChannelIds = new Set(targetChannels.map((c) => normalizeChannelIdentifier(c.id)));
+      const targetRawIds = targetChannels.map(c => c.id).filter(Boolean);
 
+      // Collect all trigger keys from target channels' emotes
       const removedEmoteKeys = Array.from(new Set(
         targetChannels.flatMap((channel) => Object.keys(channel.emotes || {}))
       ));
+
+      // Also collect trigger keys whose storage key contains a target channel ID
+      const allTriggerKeys = Object.keys(triggerToStorageKey);
+      for (const triggerKey of allTriggerKeys) {
+        const storageKey = triggerToStorageKey[triggerKey] || '';
+        for (const cid of targetRawIds) {
+          if (storageKey.includes(cid)) {
+            removedEmoteKeys.push(triggerKey);
+            break;
+          }
+        }
+      }
+
+      // Also include emoteMapping keys that don't have a storage mapping (old format)
+      // Only if there are target channels being deleted
+      if (targetChannels.length > 0 && sourceType === 'twitch') {
+        const mappingKeys = Object.keys(emoteMapping);
+        for (const key of mappingKeys) {
+          if (!removedEmoteKeys.includes(key)) {
+            // Check if this mapping entry's URL belongs to a deleted channel
+            // Old-format keys are :name: — include them for twitch deletion
+            if (key.startsWith(':') && !key.includes('discord') && !key.includes('telegram')) {
+              removedEmoteKeys.push(key);
+            }
+          }
+        }
+      }
 
       const cleanedChannels = channels.filter((c) => !targetChannelIds.has(normalizeChannelIdentifier(c.id)));
       const stillReferencedKeys = new Set();
@@ -4788,13 +4835,19 @@ document.addEventListener('DOMContentLoaded', () => {
         triggerToStorageKey
       }, async () => {
         try {
-          if (emoteKeysSafeToDelete.length > 0) {
-            await chrome.runtime.sendMessage({ action: 'deleteStoredEmotes', keys: emoteKeysSafeToDelete });
+          // Delete blobs by channel IDs (reliable) + trigger keys (fallback)
+          const targetChannelIdValues = targetChannels.map(c => c.id).filter(Boolean);
+          if (emoteKeysSafeToDelete.length > 0 || targetChannelIdValues.length > 0) {
+            await chrome.runtime.sendMessage({
+              action: 'deleteStoredEmotes',
+              keys: emoteKeysSafeToDelete,
+              channelIds: targetChannelIdValues
+            });
           }
         } catch (error) {
           console.warn('[Mojify] Failed to delete stored emote blobs:', error);
         }
-        showToast(`All ${label} emotes deleted. Channel IDs kept — click Refresh to re-download.`);
+        showToast(`All ${label} emotes deleted`);
         updateChannelManagement();
         loadEmotes();
       });
@@ -4819,11 +4872,35 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  cleanOrphansBtn?.addEventListener('click', async () => {
+    try {
+      cleanOrphansBtn.disabled = true;
+      cleanOrphansBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Scanning...</span>';
+
+      const response = await chrome.runtime.sendMessage({ action: 'cleanOrphanedEmotes' });
+      const deleted = response?.deleted || 0;
+
+      if (deleted > 0) {
+        showToast(`Deleted ${deleted} orphaned emote${deleted === 1 ? '' : 's'}`, 'success');
+      } else {
+        showToast('No orphaned emotes found', 'info');
+      }
+      loadEmotes();
+    } catch (e) {
+      showToast('Failed to clean orphans: ' + (e.message || e), 'error');
+    } finally {
+      cleanOrphansBtn.disabled = false;
+      cleanOrphansBtn.innerHTML = '<i class="fas fa-broom"></i> <span>Clean Orphaned Emotes</span>';
+    }
+  });
+
   function setDownloadUiActive(statusText = 'Downloading emotes...') {
     downloadCompletionHandled = false;
     downloadButton.disabled = true;
     downloadButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>Downloading...</span>';
     downloadProgress.classList.remove('hidden');
+    refreshSourceButton?.classList.add('hidden');
+    stopDownloadButton?.classList.remove('hidden');
 
     if (!progressText.textContent || progressText.textContent === 'Starting download...') {
       progressText.textContent = statusText;
@@ -4834,6 +4911,8 @@ document.addEventListener('DOMContentLoaded', () => {
     downloadButton.disabled = false;
     downloadButton.innerHTML = '<i class="fas fa-sync-alt"></i> <span>Refresh All</span>';
     downloadProgress.classList.add('hidden');
+    stopDownloadButton?.classList.add('hidden');
+    updateRefreshSourceButton();
     progressFill.style.width = '0%';
     progressText.textContent = '';
     progressCount.textContent = '0/0';
@@ -6106,6 +6185,9 @@ async function resolveTwitchIdentifiers(identifiers) {
   identifiers.forEach((value) => {
     if (/^\d+$/.test(value)) {
       numericIds.push(value);
+    } else if (/^[0-9A-Z]{26}$/.test(value)) {
+      // 7TV user ID — pass through as-is
+      numericIds.push(value);
     } else {
       usernames.push(value.toLowerCase());
     }
@@ -6251,8 +6333,11 @@ async function applySourceBackupSources(restoreSources, { verb = 'Restoring' } =
     try {
       resolvedTwitchIds = await resolveTwitchIdentifiers(rawTwitchIds);
     } catch (error) {
-      resolvedTwitchIds = rawTwitchIds.filter((value) => /^\d+$/.test(value));
-      result.errors.push(error.message || 'Some Twitch usernames could not be resolved');
+      // Keep numeric IDs and 7TV-style IDs (26 char alphanumeric)
+      resolvedTwitchIds = rawTwitchIds.filter((value) => /^\d+$/.test(value) || /^[0-9A-Z]{26}$/.test(value));
+      if (resolvedTwitchIds.length < rawTwitchIds.length) {
+        result.errors.push(error.message || 'Some Twitch usernames could not be resolved');
+      }
     }
   }
 
