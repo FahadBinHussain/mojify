@@ -1242,88 +1242,71 @@ async function downloadEmotes(options = {}) {
       }
     }
 
-    // Download all emotes concurrently with a concurrency limit
+    // Download all emotes — continuous pool, no chunk waiting
     logDownload('download-start', {
       total: allEmotesToDownload.length
     });
 
-    const MAX_CONCURRENT = 50;
+    const POOL_SIZE = 100;
     const failedQueue = [];
-    const batchSize = MAX_CONCURRENT;
+    let poolIndex = 0;
+    let lastReport = 0;
 
-    for (let i = 0; i < allEmotesToDownload.length; i += batchSize) {
-      if (downloadState.cancelled) {
-        logDownload('cancelled', { progress: `${downloadState.current}/${downloadState.total}` });
-        break;
-      }
+    const worker = async () => {
+      while (true) {
+        if (downloadState.cancelled) return;
+        const myIndex = poolIndex++;
+        if (myIndex >= allEmotesToDownload.length) return;
 
-      const chunk = allEmotesToDownload.slice(i, i + batchSize);
+        const { key, triggerKey, url, channel, channelId } = allEmotesToDownload[myIndex];
 
-      const chunkResults = await Promise.allSettled(
-        chunk.map(emoteData => {
-          const { key, triggerKey, url, channel, channelId } = emoteData;
-          return fetchBlobWithTimeout(url, {}, 30000).then(blob => {
-            if (blob.size > 0) {
-              return emoteDB.storeEmote(key, url, blob, {
-                channel, channelId, triggerKey: triggerKey || key
-              }).then(() => {
-                if (triggerKey) {
-                  globalEmoteMapping[triggerKey] = url;
-                  globalTriggerToStorageKey[triggerKey] = key;
-                } else {
-                  globalEmoteMapping[key] = url;
-                }
-                downloadState.performanceMetrics.totalBytes += blob.size;
-                return { success: true, key, size: blob.size };
-              });
+        try {
+          const blob = await fetchBlobWithTimeout(url, {}, 30000);
+          if (blob.size > 0) {
+            await emoteDB.storeEmote(key, url, blob, {
+              channel, channelId, triggerKey: triggerKey || key
+            });
+            if (triggerKey) {
+              globalEmoteMapping[triggerKey] = url;
+              globalTriggerToStorageKey[triggerKey] = key;
+            } else {
+              globalEmoteMapping[key] = url;
             }
-            throw new Error("Empty blob received");
-          }).catch(error => ({ success: false, key, triggerKey, url, channel, channelId, error: error.message }));
-        })
-      );
-
-      let chunkFailures = 0;
-      let chunkBytes = 0;
-
-      for (const result of chunkResults) {
-        if (result.status === 'fulfilled') {
-          const emoteResult = result.value;
-          if (!emoteResult.success) {
-            failedQueue.push(emoteResult);
-            chunkFailures++;
+            downloadState.performanceMetrics.totalBytes += blob.size;
           } else {
-            chunkBytes += emoteResult.size || 0;
+            throw new Error("Empty blob received");
           }
-        } else {
-          chunkFailures++;
+        } catch (error) {
+          failedQueue.push({ success: false, key, triggerKey, url, channel, channelId, error: error.message });
         }
 
         downloadState.current++;
-      }
 
-      logDownload('chunk-done', {
-        progress: `${downloadState.current}/${downloadState.total}`,
-        failed: chunkFailures,
-        bytes: chunkBytes
-      });
-
-      await chrome.storage.local.set({
-        downloadProgress: {
-          current: downloadState.current,
-          total: downloadState.total,
-          currentEmote: `Downloading ${downloadState.current}/${downloadState.total}`
+        // Throttled progress reporting
+        const now = Date.now();
+        if (now - lastReport > 500) {
+          lastReport = now;
+          await chrome.storage.local.set({
+            downloadProgress: {
+              current: downloadState.current,
+              total: downloadState.total,
+              currentEmote: `Downloading ${downloadState.current}/${downloadState.total}`
+            }
+          });
+          try {
+            chrome.runtime.sendMessage({
+              type: 'downloadProgress',
+              current: downloadState.current,
+              total: downloadState.total,
+              currentEmote: `Downloading ${downloadState.current}/${downloadState.total}...`
+            });
+          } catch (e) {}
         }
-      });
+      }
+    };
 
-      try {
-        chrome.runtime.sendMessage({
-          type: 'downloadProgress',
-          current: downloadState.current,
-          total: downloadState.total,
-          currentEmote: `Downloading ${downloadState.current}/${downloadState.total}...`
-        });
-      } catch (e) {}
-    }
+    // Launch POOL_SIZE workers — each grabs next emote as soon as it finishes
+    await Promise.all(Array.from({ length: Math.min(POOL_SIZE, allEmotesToDownload.length) }, () => worker()));
 
     // Second pass: retry failed emotes with smaller concurrent batches
     if (failedQueue.length > 0) {
