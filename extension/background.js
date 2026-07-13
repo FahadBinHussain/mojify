@@ -335,6 +335,66 @@ const emoteDB = {
     });
   },
 
+  async getAllEmoteMetadata() {
+    if (!this.db) await this.init();
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emoteMetadata'], 'readonly');
+      const metadataStore = transaction.objectStore('emoteMetadata');
+      const request = metadataStore.getAll();
+
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+  },
+
+  async deleteEmotesByChannelIds(channelIds) {
+    if (!this.db) await this.init();
+    if (!channelIds || channelIds.length === 0) return 0;
+
+    const channelIdSet = new Set(channelIds.map(String));
+
+    // Find all keys whose metadata channelId matches
+    const allMetadata = await this.getAllEmoteMetadata();
+    const keysToDelete = [];
+
+    for (const meta of allMetadata) {
+      const metaChannelId = String(meta?.channelId || '');
+      const metaKey = String(meta?.key || '');
+
+      // Match by channelId in metadata, or by channelId in the storage key prefix
+      if (channelIdSet.has(metaChannelId)) {
+        keysToDelete.push(meta.key);
+      } else {
+        // Check if the storage key contains any of the channel IDs
+        for (const cid of channelIdSet) {
+          if (metaKey.includes(cid)) {
+            keysToDelete.push(meta.key);
+            break;
+          }
+        }
+      }
+    }
+
+    if (keysToDelete.length === 0) return 0;
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db.transaction(['emoteBlobs', 'emoteMetadata'], 'readwrite');
+      const blobsStore = transaction.objectStore('emoteBlobs');
+      const metadataStore = transaction.objectStore('emoteMetadata');
+      let deleted = 0;
+
+      transaction.oncomplete = () => resolve(deleted);
+      transaction.onerror = () => reject(transaction.error);
+
+      for (const key of keysToDelete) {
+        blobsStore.delete(key);
+        metadataStore.delete(key);
+        deleted++;
+      }
+    });
+  },
+
   async getEmoteCount() {
     if (!this.db) await this.init();
 
@@ -595,7 +655,11 @@ async function get7TVEmoteSet(setId, options = {}) {
 }
 
 async function get7TVEmotes(channelId) {
-  const url = `${TWITCH_API_BASE_URL}/${channelId}`;
+  // Use /users/twitch/:id for Twitch numeric IDs, /users/:id for 7TV user IDs
+  const is7tvUserId = /^[0-9A-Z]{26}$/.test(channelId);
+  const url = is7tvUserId
+    ? `${SEVEN_TV_V3_BASE_URL}/users/${channelId}`
+    : `${TWITCH_API_BASE_URL}/${channelId}`;
   try {
     const data = await fetchJsonWithTimeout(url, {}, SEVEN_TV_RESOLVE_TIMEOUT_MS);
     const emoteList = data.emote_set?.emotes || [];
@@ -624,6 +688,7 @@ async function get7TVEmotes(channelId) {
 // Simple download state tracking
 let downloadState = {
   isDownloading: false,
+  cancelled: false,
   current: 0,
   total: 0,
   startTime: null
@@ -818,6 +883,7 @@ async function downloadEmotes(options = {}) {
 
   try {
     downloadState.isDownloading = true;
+    downloadState.cancelled = false;
     downloadState.startTime = Date.now();
     downloadState.current = 0;
     downloadState.total = 0;
@@ -1162,52 +1228,7 @@ async function downloadEmotes(options = {}) {
       });
     };
 
-    // Adaptive concurrent download implementation with optimized batching
-    let BATCH_SIZE = 10; // Start with smaller batches to avoid throttling
-    let BATCH_DELAY = 200; // Start with longer delay
-    const MIN_BATCH_SIZE = 2; // Minimum batch size for heavily throttled connections
-    const MAX_BATCH_SIZE = 15; // Maximum batch size (reduced to prevent throttling)
-    const BASE_TIMEOUT = 15000; // Base timeout in milliseconds
-
-    // Performance tracking for adaptive optimization
-    let batchFailureRates = [];
-    let avgResponseTimes = [];
-    let totalSuccessfulDownloads = 0;
-    let totalFailedDownloads = 0;
-    let consecutiveTimeouts = 0;
-    let throttlingDetected = false;
-
-    // Connection pool management
-    const activeConnections = new Set();
-    const MAX_CONCURRENT_CONNECTIONS = 15;
-
-    // Memory optimization tracking
-    let memoryCheckInterval = null;
-
-    // Start memory monitoring
-    const startMemoryMonitoring = () => {
-      if (typeof performance !== 'undefined' && performance.memory) {
-        memoryCheckInterval = setInterval(() => {
-          const memInfo = {
-            used: performance.memory.usedJSHeapSize,
-            total: performance.memory.totalJSHeapSize,
-            limit: performance.memory.jsHeapSizeLimit,
-            timestamp: Date.now()
-          };
-          downloadState.performanceMetrics.memoryUsage.push(memInfo);
-
-          // Keep only last 10 memory readings
-          if (downloadState.performanceMetrics.memoryUsage.length > 10) {
-            downloadState.performanceMetrics.memoryUsage.shift();
-          }
-
-        }, 5000);
-      }
-    };
-
-    startMemoryMonitoring();
-
-    // Prepare all emotes for download with metadata and optimization
+    // Prepare all emotes for download
     const allEmotesToDownload = [];
     for (const channelData of channelEmotes) {
       for (const [triggerKey, emoteInfo] of Object.entries(channelData.emotes)) {
@@ -1221,240 +1242,76 @@ async function downloadEmotes(options = {}) {
       }
     }
 
-    // Analyze URLs for intelligent optimization
-    analyzeUrls(allEmotesToDownload);
-
-    // Sort emotes by priority (smaller/faster downloads first for quick progress)
-    allEmotesToDownload.sort((a, b) => {
-      const aPriority = sizeEstimates.get(a.key)?.priority || 1;
-      const bPriority = sizeEstimates.get(b.key)?.priority || 1;
-      return bPriority - aPriority; // Higher priority first
+    // Download all emotes concurrently with a concurrency limit
+    logDownload('download-start', {
+      total: allEmotesToDownload.length
     });
 
-
-    // Function to download a single emote with adaptive timeout and caching
-    const downloadSingleEmote = async (emoteData, batchNumber, totalBatches) => {
-      const { key, triggerKey, url, channel, channelId } = emoteData;
-      const startTime = Date.now();
-
-      try {
-        // Check cache first for URL analysis
-        let cacheEntry = urlCache.get(url);
-        if (!cacheEntry) {
-          cacheEntry = { attempts: 0, lastAttempt: 0, avgResponseTime: 0 };
-          urlCache.set(url, cacheEntry);
-        }
-
-        // Calculate adaptive timeout based on multiple factors
-        const progressFactor = Math.min(batchNumber / totalBatches, 1);
-        const avgFailureRate = batchFailureRates.length > 0 ?
-          batchFailureRates.reduce((a, b) => a + b, 0) / batchFailureRates.length : 0;
-
-        // Factor in URL-specific performance history
-        const urlPerformanceFactor = cacheEntry.avgResponseTime > 5000 ? 1.5 : 1.0;
-        const attemptFactor = Math.min(cacheEntry.attempts * 0.2, 1.0);
-
-        // Scale timeout: start at base, increase for later batches and higher failure rates
-        const adaptiveTimeout = BASE_TIMEOUT +
-          (progressFactor * 8000) + // Add up to 8s for batch progression
-          (avgFailureRate * 10000) + // Add up to 10s for high failure rates
-          (urlPerformanceFactor * 3000) + // Add time for slow URLs
-          (attemptFactor * 2000); // Add time for previously failed URLs
-
-        // Enhanced headers for better cache control and performance
-        const headers = {
-          'Accept': 'image/webp,image/avif,image/apng,image/svg+xml,image/*,*/*;q=0.8'
-        };
-
-        // Use cache-control strategically based on batch progression
-        if (batchNumber <= 3) {
-          headers['Cache-Control'] = 'no-cache'; // Fresh data for early batches
-        } else {
-          headers['Cache-Control'] = 'max-age=300'; // Allow some caching for later batches
-        }
-
-        cacheEntry.attempts++;
-        cacheEntry.lastAttempt = Date.now();
-
-        const blob = await fetchBlobWithTimeout(url, {
-          headers
-        }, adaptiveTimeout);
-
-        if (blob.size > 0) {
-          await emoteDB.storeEmote(key, url, blob, {
-            channel: channel,
-            channelId: channelId,
-            triggerKey: triggerKey || key
-          });
-
-          if (triggerKey) {
-            globalEmoteMapping[triggerKey] = url;
-            globalTriggerToStorageKey[triggerKey] = key;
-          } else {
-            globalEmoteMapping[key] = url;
-          }
-          const responseTime = Date.now() - startTime;
-
-          // Update URL cache with successful response time
-          cacheEntry.avgResponseTime = cacheEntry.avgResponseTime === 0 ?
-            responseTime : (cacheEntry.avgResponseTime + responseTime) / 2;
-
-          // Update performance metrics
-          downloadState.performanceMetrics.totalBytes += blob.size;
-          totalSuccessfulDownloads++;
-
-          // Update size estimates with actual data
-          if (sizeEstimates.has(key)) {
-            sizeEstimates.get(key).actualSize = blob.size;
-          }
-
-          return { success: true, key, url, channel, channelId, responseTime, size: blob.size };
-        } else {
-          throw new Error("Empty blob received");
-        }
-      } catch (error) {
-        const responseTime = Date.now() - startTime;
-        totalFailedDownloads++;
-        return { success: false, key, url, channel, channelId, error: error.message, responseTime };
-      }
-    };
-
-    // Process emotes in adaptive concurrent batches
+    const MAX_CONCURRENT = 50;
     const failedQueue = [];
-    let currentBatch = 0;
-    let totalBatches = Math.ceil(allEmotesToDownload.length / BATCH_SIZE);
-    let consecutiveHighFailureBatches = 0;
-    let lastProgressAt = Date.now();
+    const batchSize = MAX_CONCURRENT;
 
-    for (let i = 0; i < allEmotesToDownload.length; i += BATCH_SIZE) {
-      const batch = allEmotesToDownload.slice(i, i + BATCH_SIZE);
-      currentBatch++;
-      totalBatches = Math.ceil((allEmotesToDownload.length - i) / BATCH_SIZE);
-
-      logDownload('batch-start', {
-        batch: `${currentBatch}/${totalBatches}`,
-        items: batch.length,
-        batchSize: BATCH_SIZE,
-        delayMs: BATCH_DELAY,
-        progress: `${downloadState.current}/${downloadState.total}`,
-        first: batch[0]?.key || '',
-        last: batch[batch.length - 1]?.key || ''
-      });
-      const batchStartTime = Date.now();
-      const slowBatchTimer = setTimeout(() => {
-        warnDownload('batch-still-running', {
-          batch: `${currentBatch}/${totalBatches}`,
-          runningMs: Date.now() - batchStartTime,
-          activeConnections: activeConnections.size,
-          progress: `${downloadState.current}/${downloadState.total}`,
-          first: batch[0]?.key || '',
-          last: batch[batch.length - 1]?.key || ''
-        });
-      }, 20000);
-
-      // Limit concurrent connections for better stability
-      const connectionLimitedBatch = [];
-      for (const emoteData of batch) {
-        if (activeConnections.size < MAX_CONCURRENT_CONNECTIONS) {
-          const connectionId = `${emoteData.key}_${Date.now()}`;
-          activeConnections.add(connectionId);
-
-          const downloadPromise = downloadSingleEmote(emoteData, currentBatch, totalBatches)
-            .finally(() => activeConnections.delete(connectionId));
-
-          connectionLimitedBatch.push(downloadPromise);
-        } else {
-          // Queue for next micro-batch if too many connections
-          await new Promise(resolve => setTimeout(resolve, 50));
-          connectionLimitedBatch.push(downloadSingleEmote(emoteData, currentBatch, totalBatches));
-        }
+    for (let i = 0; i < allEmotesToDownload.length; i += batchSize) {
+      if (downloadState.cancelled) {
+        logDownload('cancelled', { progress: `${downloadState.current}/${downloadState.total}` });
+        break;
       }
 
-      // Download batch concurrently with connection limiting
-      const batchResults = await Promise.allSettled(connectionLimitedBatch);
-      clearTimeout(slowBatchTimer);
+      const chunk = allEmotesToDownload.slice(i, i + batchSize);
 
-      // Analyze batch performance
-      let batchFailures = 0;
-      let batchResponseTimes = [];
-      let batchTotalBytes = 0;
+      const chunkResults = await Promise.allSettled(
+        chunk.map(emoteData => {
+          const { key, triggerKey, url, channel, channelId } = emoteData;
+          return fetchBlobWithTimeout(url, {}, 30000).then(blob => {
+            if (blob.size > 0) {
+              return emoteDB.storeEmote(key, url, blob, {
+                channel, channelId, triggerKey: triggerKey || key
+              }).then(() => {
+                if (triggerKey) {
+                  globalEmoteMapping[triggerKey] = url;
+                  globalTriggerToStorageKey[triggerKey] = key;
+                } else {
+                  globalEmoteMapping[key] = url;
+                }
+                downloadState.performanceMetrics.totalBytes += blob.size;
+                return { success: true, key, size: blob.size };
+              });
+            }
+            throw new Error("Empty blob received");
+          }).catch(error => ({ success: false, key, triggerKey, url, channel, channelId, error: error.message }));
+        })
+      );
 
-      // Process results and detect throttling patterns
-      let timeoutCount = 0;
-      let successfulInBatch = 0;
+      let chunkFailures = 0;
+      let chunkBytes = 0;
 
-      for (const result of batchResults) {
+      for (const result of chunkResults) {
         if (result.status === 'fulfilled') {
           const emoteResult = result.value;
           if (!emoteResult.success) {
             failedQueue.push(emoteResult);
-            batchFailures++;
-
-            // Detect throttling pattern: timeouts after successful downloads
-            if (emoteResult.error && emoteResult.error.includes('Failed to fetch') &&
-                emoteResult.responseTime > 30000) {
-              timeoutCount++;
-            }
+            chunkFailures++;
           } else {
-            successfulInBatch++;
-          }
-          if (emoteResult.responseTime) {
-            batchResponseTimes.push(emoteResult.responseTime);
-          }
-          if (emoteResult.size) {
-            batchTotalBytes += emoteResult.size;
+            chunkBytes += emoteResult.size || 0;
           }
         } else {
-          console.error(`[Download] Batch promise rejected:`, result.reason);
-          batchFailures++;
+          chunkFailures++;
         }
 
         downloadState.current++;
       }
 
-      // Record batch completion time
-      const batchDuration = Date.now() - batchStartTime;
-      lastProgressAt = Date.now();
-      downloadState.performanceMetrics.batchTimes.push({
-        batchNumber: currentBatch,
-        duration: batchDuration,
-        emoteCount: batch.length,
-        failures: batchFailures,
-        totalBytes: batchTotalBytes
-      });
-
-      // Keep only last 10 batch records
-      if (downloadState.performanceMetrics.batchTimes.length > 10) {
-        downloadState.performanceMetrics.batchTimes.shift();
-      }
-
-      logDownload('batch-done', {
-        batch: `${currentBatch}/${totalBatches}`,
+      logDownload('chunk-done', {
         progress: `${downloadState.current}/${downloadState.total}`,
-        success: successfulInBatch,
-        failed: batchFailures,
-        failedQueue: failedQueue.length,
-        durationMs: batchDuration,
-        bytes: batchTotalBytes,
-        batchSize: BATCH_SIZE,
-        delayMs: BATCH_DELAY
+        failed: chunkFailures,
+        bytes: chunkBytes
       });
-
-      if (batchDuration > 20000 || batchFailures > 0) {
-        warnDownload('batch-attention', {
-          batch: `${currentBatch}/${totalBatches}`,
-          durationMs: batchDuration,
-          failures: batchFailures,
-          timeoutCount,
-          failedQueue: failedQueue.length
-        });
-      }
 
       await chrome.storage.local.set({
         downloadProgress: {
           current: downloadState.current,
           total: downloadState.total,
-          currentEmote: `Batch ${currentBatch}/${totalBatches}`
+          currentEmote: `Downloading ${downloadState.current}/${downloadState.total}`
         }
       });
 
@@ -1463,135 +1320,10 @@ async function downloadEmotes(options = {}) {
           type: 'downloadProgress',
           current: downloadState.current,
           total: downloadState.total,
-          currentEmote: `Downloading batch ${currentBatch}/${totalBatches}...`
+          currentEmote: `Downloading ${downloadState.current}/${downloadState.total}...`
         });
-      } catch (e) {
-        // Popup is closed, continue silently
-      }
-
-      // Detect server throttling pattern: successful downloads followed by timeouts
-      if (successfulInBatch > 0 && timeoutCount > 0 &&timeoutCount >= successfulInBatch){
-        throttlingDetected = true;
-        consecutiveTimeouts += timeoutCount;
-      } else if (timeoutCount === 0) {
-        consecutiveTimeouts = 0;
-        throttlingDetected = false;
-      }
-
-      // Calculate and store batch performance metrics
-      const batchFailureRate = batchFailures / batch.length;
-      batchFailureRates.push(batchFailureRate);
-
-      if (batchResponseTimes.length > 0) {
-        const avgResponseTime = batchResponseTimes.reduce((a, b) => a + b, 0) / batchResponseTimes.length;
-        avgResponseTimes.push(avgResponseTime);
-      }
-
-      // Keep only last 5 batches for rolling average
-      if (batchFailureRates.length > 5) batchFailureRates.shift();
-      if (avgResponseTimes.length > 5) avgResponseTimes.shift();
-
-
-      // Aggressive throttling response
-      if (throttlingDetected || consecutiveTimeouts > 5) {
-        BATCH_SIZE = MIN_BATCH_SIZE;
-        BATCH_DELAY = Math.max(BATCH_DELAY * 2, 1000);
-        consecutiveHighFailureBatches = 0; // Reset other counter
-        warnDownload('throttle-mode', {
-          batch: `${currentBatch}/${totalBatches}`,
-          batchSize: BATCH_SIZE,
-          delayMs: BATCH_DELAY,
-          consecutiveTimeouts
-        });
-      }
-      // Adaptive optimization based on performance
-      else if (batchFailureRate > 0.3) { // High failure rate
-        consecutiveHighFailureBatches++;
-
-        if (consecutiveHighFailureBatches >= 1 && BATCH_SIZE > MIN_BATCH_SIZE) {
-          BATCH_SIZE = Math.max(MIN_BATCH_SIZE, Math.floor(BATCH_SIZE * 0.6));
-          BATCH_DELAY = Math.min(BATCH_DELAY * 1.8, 3000);
-          warnDownload('slowing-down', {
-            batch: `${currentBatch}/${totalBatches}`,
-            failureRate: Number(batchFailureRate.toFixed(2)),
-            batchSize: BATCH_SIZE,
-            delayMs: BATCH_DELAY
-          });
-        }
-      } else if (batchFailureRate < 0.1 && consecutiveHighFailureBatches === 0 && !throttlingDetected) {
-        // Low failure rate and no recent issues - can try to optimize
-        if (avgResponseTimes.length > 0) {
-          const avgResponseTime = avgResponseTimes.reduce((a, b) => a + b, 0) / avgResponseTimes.length;
-          if (avgResponseTime < 5000 && BATCH_SIZE < MAX_BATCH_SIZE) {
-            BATCH_SIZE = Math.min(MAX_BATCH_SIZE, BATCH_SIZE + 1);
-            BATCH_DELAY = Math.max(200, Math.floor(BATCH_DELAY * 0.95));
-            if (currentBatch % 10 === 0) {
-              logDownload('speed-up', {
-                batch: `${currentBatch}/${totalBatches}`,
-                avgResponseMs: Math.round(avgResponseTime),
-                batchSize: BATCH_SIZE,
-                delayMs: BATCH_DELAY
-              });
-            }
-          }
-        }
-        consecutiveHighFailureBatches = 0;
-      } else {
-        consecutiveHighFailureBatches = Math.max(0, consecutiveHighFailureBatches - 1);
-      }
-
-      // Adaptive delay between batches
-      if (i + BATCH_SIZE < allEmotesToDownload.length) {
-        // Calculate progressive delay with aggressive throttling response
-        let progressiveDelay = BATCH_DELAY + (currentBatch * 30) + (batchFailureRate * 1000);
-
-        // Much longer delays if throttling detected
-        if (throttlingDetected) {
-          progressiveDelay = Math.max(progressiveDelay * 3, 2000);
-        }
-
-        await new Promise(resolve => setTimeout(resolve, Math.min(progressiveDelay, 5000)));
-        if (Date.now() - lastProgressAt > 30000) {
-          warnDownload('progress-watchdog', {
-            idleMs: Date.now() - lastProgressAt,
-            batch: `${currentBatch}/${totalBatches}`,
-            progress: `${downloadState.current}/${downloadState.total}`
-          });
-        }
-
-        // Memory optimization: Clear completed downloads from memory periodically
-        if (currentBatch % 5 === 0) {
-          // Clear old batch performance data to free memory
-          if (downloadState.performanceMetrics.batchTimes.length > 5) {
-            downloadState.performanceMetrics.batchTimes = downloadState.performanceMetrics.batchTimes.slice(-5);
-          }
-
-          // Force garbage collection hint for memory optimization
-          if (typeof global !== 'undefined' && global.gc) {
-            global.gc();
-          }
-        }
-      }
+      } catch (e) {}
     }
-
-    // Stop memory monitoring
-    if (memoryCheckInterval) {
-      clearInterval(memoryCheckInterval);
-    }
-
-    // Calculate final performance metrics
-    const totalDownloads = totalSuccessfulDownloads + totalFailedDownloads;
-    downloadState.performanceMetrics.successRate = totalDownloads > 0 ?
-      (totalSuccessfulDownloads / totalDownloads) * 100 : 0;
-
-    if (avgResponseTimes.length > 0) {
-      downloadState.performanceMetrics.avgResponseTime =
-        avgResponseTimes.reduce((a, b) => a + b, 0) / avgResponseTimes.length;
-    }
-
-
-    // Clear active connections tracking
-    activeConnections.clear();
 
     // Second pass: retry failed emotes with smaller concurrent batches
     if (failedQueue.length > 0) {
@@ -1601,7 +1333,7 @@ async function downloadEmotes(options = {}) {
 
       const RETRY_BATCH_SIZE = 5; // Smaller batches for retries
       const retryDownload = async (emoteData, retryAttempt = 1) => {
-        const { key, url, channel, channelId } = emoteData;
+        const { key, triggerKey, url, channel, channelId } = emoteData;
 
         try {
           // Exponential timeout for retries: 20s, 30s, 45s for multiple attempts
@@ -4626,6 +4358,86 @@ function handleRuntimeMessage(request, sender, sendResponse) {
     return;
   }
 
+  if (request.action === 'cleanOrphanedEmotes') {
+    (async () => {
+      const data = await chrome.storage.local.get(['channels']);
+      const channels = data.channels || [];
+
+      // Collect all valid channel IDs and all trigger keys from channels
+      const validChannelIds = new Set();
+      const referencedTriggers = new Set();
+      for (const ch of channels) {
+        if (ch.id) validChannelIds.add(String(ch.id));
+        if (ch.parentChannelId) validChannelIds.add(String(ch.parentChannelId));
+        if (ch.platformChannelId) validChannelIds.add(String(ch.platformChannelId));
+        if (ch.emotes) Object.keys(ch.emotes).forEach(k => referencedTriggers.add(k));
+      }
+
+      // Get all IndexedDB metadata
+      const allMeta = await emoteDB.getAllEmoteMetadata();
+      console.log('[Mojify] Orphan scan:', allMeta.length, 'emotes in IndexedDB,', validChannelIds.size, 'valid channel IDs,', referencedTriggers.size, 'referenced triggers');
+      if (allMeta.length > 0) {
+        console.log('[Mojify] Sample metadata:', JSON.stringify(allMeta[0]));
+        console.log('[Mojify] Sample old-format:', JSON.stringify(allMeta.find(m => String(m.key||'').startsWith(':') && !String(m.key).includes('7tv:'))));
+      }
+
+      const orphanKeys = [];
+
+      for (const meta of allMeta) {
+        const metaChannelId = String(meta?.channelId || '');
+        const metaKey = String(meta?.key || '');
+        const metaTriggerKey = String(meta?.triggerKey || '');
+
+        let isOrphan = true;
+
+        // Referenced by a current channel via trigger key?
+        if (metaTriggerKey && referencedTriggers.has(metaTriggerKey)) {
+          isOrphan = false;
+        }
+
+        // Referenced by key directly?
+        if (isOrphan && referencedTriggers.has(metaKey)) {
+          isOrphan = false;
+        }
+
+        // channelId in metadata matches a current channel?
+        if (isOrphan && metaChannelId && metaChannelId !== 'undefined' && validChannelIds.has(metaChannelId)) {
+          isOrphan = false;
+        }
+
+        // Storage key contains a valid channel ID?
+        if (isOrphan) {
+          for (const cid of validChannelIds) {
+            if (metaKey.includes(cid)) {
+              isOrphan = false;
+              break;
+            }
+          }
+        }
+
+        if (isOrphan) {
+          orphanKeys.push(meta.key);
+        }
+      }
+
+      // Delete orphans
+      for (const key of orphanKeys) {
+        try { await emoteDB.deleteEmote(key); } catch (e) {}
+      }
+
+      return { success: true, deleted: orphanKeys.length };
+    })()
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'cancelDownload') {
+    downloadState.cancelled = true;
+    sendResponse({ success: true });
+    return;
+  }
+
   if (request.action === 'injectDiscordSendInterceptor') {
     const tabId = sender.tab?.id;
     if (!tabId) {
@@ -4770,10 +4582,24 @@ function handleRuntimeMessage(request, sender, sendResponse) {
   if (request.action === 'deleteStoredEmotes') {
     (async () => {
       const keys = request.keys || [];
-      const mapping = await chrome.storage.local.get(['triggerToStorageKey']);
-      const resolvedKeys = keys.map((k) => mapping.triggerToStorageKey?.[k] || k);
-      await Promise.all(resolvedKeys.map((key) => emoteDB.deleteEmote(key)));
-      return { success: true };
+      const channelIds = request.channelIds || [];
+      let deleted = 0;
+
+      // Delete by channel IDs (most reliable — scans metadata)
+      if (channelIds.length > 0) {
+        deleted += await emoteDB.deleteEmotesByChannelIds(channelIds);
+      }
+
+      // Also delete by trigger keys (for old-format keys)
+      if (keys.length > 0) {
+        const mapping = await chrome.storage.local.get(['triggerToStorageKey']);
+        const resolvedKeys = keys.map((k) => mapping.triggerToStorageKey?.[k] || k);
+        for (const key of resolvedKeys) {
+          try { await emoteDB.deleteEmote(key); deleted++; } catch (e) {}
+        }
+      }
+
+      return { success: true, deleted };
     })()
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ success: false, error: error.message }));
