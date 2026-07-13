@@ -16,6 +16,12 @@
     return;
   }
 
+  // Debug: mark that IIFE passed supported check
+  const _m = document.createElement('div');
+  _m.id = 'mojify-iife-start';
+  _m.style.display = 'none';
+  (document.body || document.documentElement).appendChild(_m);
+
   // Error handling function
   function handleRuntimeError(context, error) {
     if (error.message && error.message.includes('chrome://')) {
@@ -1655,10 +1661,12 @@ async function insertEmote(emoteKey, targetElement = null) {
             debugLog(`[Mojify] Successfully inserted ${emoteKey}`);
             // Mark upload time to prevent double insert from popup's insertNameText
             window.__mojifyLastUpload = Date.now();
-            // Insert emote name text via MAIN world ComponentDispatch
+            // Insert emote name text into Discord editor
             if (pendingEmoteName && getCurrentPlatform() === 'discord') {
-                insertEmoteNameViaComponentDispatch(pendingEmoteName);
-                pendingEmoteName = null;
+                setTimeout(() => {
+                    insertEmoteNameViaEditor(pendingEmoteName);
+                    pendingEmoteName = null;
+                }, 200);
             }
         } else {
             debugLog(`[Mojify] Failed to insert ${emoteKey}`);
@@ -1673,45 +1681,38 @@ async function insertEmote(emoteKey, targetElement = null) {
 }
 
 // Message listener - insertEmote handling removed, now using direct script injection
-// Insert emote name text via Discord's ComponentDispatch (MAIN world injection)
-// This is the textReplace method - uses Discord's internal API to insert text
-function insertEmoteNameViaComponentDispatch(emoteName) {
+// Insert emote name text into Discord's message send pipeline
+// Uses webpack module patching — same method as Vencord's TextReplace plugin
+// Intercepts handleSendMessage and modifies parsedMessage.content before send
+
+function mojifySetupEnterInterceptor() {
+    if (window.__mojifyEnterHooked) return;
+    window.__mojifyEnterHooked = true;
+
+    // Inject fetch patch AFTER Discord loads its own fetch wrapper
+    setTimeout(() => {
+        try {
+            chrome.runtime.sendMessage({ action: 'injectDiscordSendInterceptor' });
+        } catch (e) {}
+    }, 5000);
+
+    console.log('[Mojify] Discord Enter interceptor installed');
+}
+
+function insertEmoteNameViaEditor(emoteName) {
     if (!emoteName) return;
-    const nameText = emoteName.replace(/^:+|:+$/g, ''); // Clean the name
+    const nameText = emoteName.replace(/^:+|:+$/g, '');
     if (!nameText) return;
-    
-    debugLog("ComponentDispatch: inserting text:", nameText);
-    
-    const key = '__mojify_insert_' + Math.random().toString(36).slice(2);
-    const script = document.createElement('script');
-    script.textContent = '(function(){try{' +
-        'var chunk=window.webpackChunkdiscord_app;' +
-        'if(!chunk){window["' + key + '"]="no_chunk";console.log("[Mojify] no webpack chunk");return;}' +
-        'var CD;' +
-        'chunk.push([[Symbol()],{},function(r){' +
-        'for(var i of Object.keys(r.c||{})){' +
-        'var m=r.c[i]&&r.c[i].exports;' +
-        'if(!m)continue;var e=m.default||m;' +
-        'if(!CD&&typeof e.dispatchToLastSubscribed==="function")CD=e;' +
-        '}}]);' +
-        'if(!CD){window["' + key + '"]="no_cd";console.log("[Mojify] ComponentDispatch not found");return;}' +
-        'CD.dispatchToLastSubscribed("INSERT_TEXT",{rawText:"' + nameText.replace(/"/g, '\\"') + '",plainText:"' + nameText.replace(/"/g, '\\"') + '"});' +
-        'window["' + key + '"]="ok";console.log("[Mojify] ComponentDispatch INSERT_TEXT success");' +
-    '}catch(e){window["' + key + '"]="err:"+e.message;console.log("[Mojify] ComponentDispatch error:",e)}})();';
-    document.head.appendChild(script);
-    script.remove();
-    
-    // Poll for result (optional, fire-and-forget)
-    let attempts = 0;
-    const poll = setInterval(() => {
-        if (window[key] !== undefined || attempts > 30) {
-            clearInterval(poll);
-            const r = window[key];
-            delete window[key];
-            debugLog("ComponentDispatch INSERT_TEXT result:", r);
-        }
-        attempts++;
-    }, 30);
+
+    let el = document.getElementById('mojify-pending-content');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'mojify-pending-content';
+        el.style.display = 'none';
+        document.body.appendChild(el);
+    }
+    el.textContent = nameText;
+    console.log('[Mojify] Set pending emote name:', nameText);
 }
 
 try {
@@ -2195,11 +2196,26 @@ setTimeout(() => {
 
 // Initialize Discord text interceptor if on Discord
 if (getCurrentPlatform() === 'discord') {
-  debugLog("Discord platform detected - initializing text interceptor");
-  window.addEventListener('load', setupDiscordTextInterceptor, false);
-  // Also try immediate setup in case page is already loaded
+  // Debug marker
+  const marker = document.createElement('div');
+  marker.id = 'mojify-loaded-marker';
+  marker.style.display = 'none';
+  marker.dataset.platform = 'discord';
+  (document.body || document.documentElement).appendChild(marker);
+  debugLog("Discord platform detected - initializing interceptors at document_start");
+  
+  // Try injecting immediately and also on DOMContentLoaded
+  mojifySetupEnterInterceptor();
+  document.addEventListener('DOMContentLoaded', () => {
+    mojifySetupEnterInterceptor();
+  });
+  window.addEventListener('load', () => {
+    setupDiscordTextInterceptor();
+    mojifySetupEnterInterceptor();
+  }, false);
   if (document.readyState === 'complete') {
     setupDiscordTextInterceptor();
+    mojifySetupEnterInterceptor();
   }
 
   // Handle Discord navigation/channel changes
@@ -2224,7 +2240,11 @@ if (getCurrentPlatform() === 'discord') {
       discordEditor = null;
 
       // Reinitialize the text interceptor
-      setTimeout(setupDiscordTextInterceptor, 500);
+      setTimeout(() => {
+        setupDiscordTextInterceptor();
+        window.__mojifyEnterHooked = false;
+        mojifySetupEnterInterceptor();
+      }, 500);
     }
   });
 
@@ -2244,6 +2264,106 @@ setTimeout(() => {
     debugLog("3. Click 'Refresh Emotes'");
   }
 }, 5000);
+
+// ── Discord pre-send text replace (Vencord TextReplace method) ──────────
+// Intercepts Enter key before Discord sends, reads editor text,
+// replaces :emoteName: patterns with plain emote names, writes back.
+
+function mojifyApplyTextReplace(content) {
+  if (!content || !emoteMapping) return content;
+  return content.replace(/:([a-zA-Z0-9_!]+):/g, (full, name) => {
+    if (emoteMapping[full] || emoteMapping[name]) {
+      return name;
+    }
+    return full;
+  });
+}
+
+function mojifyGetDiscordEditorText() {
+  const editor = document.querySelector('[data-slate-editor="true"], div[role="textbox"][contenteditable="true"]');
+  if (!editor) return null;
+  return editor.innerText || editor.textContent || '';
+}
+
+function mojifySetDiscordEditorText(text) {
+  const editor = document.querySelector('[data-slate-editor="true"], div[role="textbox"][contenteditable="true"]');
+  if (!editor) return false;
+
+  // Focus the editor
+  editor.focus();
+
+  // Select all and delete
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(editor);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  document.execCommand('delete');
+
+  // Insert the replaced text using execCommand
+  document.execCommand('insertText', false, text);
+  return true;
+}
+
+function mojifySetupDiscordPreSendInterceptor() {
+  if (getCurrentPlatform() !== 'discord') return;
+  if (window.__mojifyPreSendHooked) return;
+  window.__mojifyPreSendHooked = true;
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return;
+    if (event.defaultPrevented) return;
+
+    const editor = event.target.closest('[data-slate-editor="true"], div[role="textbox"][contenteditable="true"]');
+    if (!editor) return;
+
+    const currentText = mojifyGetDiscordEditorText();
+    if (!currentText || !currentText.includes(':')) return;
+
+    const replacedText = mojifyApplyTextReplace(currentText);
+    if (replacedText === currentText) return;
+
+    // Replace the text before Discord sends
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    mojifySetDiscordEditorText(replacedText);
+
+    // Re-dispatch Enter to trigger Discord's send
+    setTimeout(() => {
+      const sendEvent = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        code: 'Enter',
+        keyCode: 13,
+        which: 13,
+        bubbles: true,
+        cancelable: true,
+      });
+      editor.dispatchEvent(sendEvent);
+    }, 0);
+  }, true);
+
+  debugLog('[Mojify] Discord pre-send text replace interceptor installed');
+}
+
+if (getCurrentPlatform() === 'discord') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', mojifySetupDiscordPreSendInterceptor);
+  } else {
+    mojifySetupDiscordPreSendInterceptor();
+  }
+  // Re-setup on Discord navigation
+  let mojifyLastDiscordUrl = location.href;
+  const mojifyDiscordNavObserver = new MutationObserver(() => {
+    if (location.href !== mojifyLastDiscordUrl) {
+      mojifyLastDiscordUrl = location.href;
+      window.__mojifyPreSendHooked = false;
+      setTimeout(mojifySetupDiscordPreSendInterceptor, 500);
+    }
+  });
+  mojifyDiscordNavObserver.observe(document.body, { childList: true, subtree: true });
+}
 
 })(); // End of early exit function
 

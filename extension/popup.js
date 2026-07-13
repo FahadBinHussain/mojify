@@ -2191,6 +2191,23 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!normalizedNameText || !target) return false;
 
         try {
+          // For Discord (Slate.js), set pending text for XHR interceptor
+          // instead of trying to insert into the editor (which floats)
+          const isDiscord = window.location.hostname.includes('discord.com') || window.location.hostname.includes('discordapp.com');
+          if (isDiscord) {
+            let pendingEl = document.getElementById('mojify-pending-content');
+            if (!pendingEl) {
+              pendingEl = document.createElement('div');
+              pendingEl.id = 'mojify-pending-content';
+              pendingEl.style.display = 'none';
+              document.body.appendChild(pendingEl);
+            }
+            pendingEl.textContent = normalizedNameText;
+            console.log('[Mojify] Set pending emote name for XHR interceptor:', normalizedNameText);
+            return true;
+          }
+
+          // For other platforms, insert directly
           target.focus();
           if (typeof target.click === 'function') target.click();
 

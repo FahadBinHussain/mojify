@@ -4626,6 +4626,37 @@ function handleRuntimeMessage(request, sender, sendResponse) {
     return;
   }
 
+  if (request.action === 'injectDiscordSendInterceptor') {
+    const tabId = sender.tab?.id;
+    if (!tabId) {
+      sendResponse({ success: false, error: 'No sender tab' });
+      return;
+    }
+    chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['mojify-discord-send.js'],
+      world: 'MAIN',
+    }).then(() => sendResponse({ success: true }))
+      .catch((e) => { console.error('[Mojify] Send interceptor inject failed:', e); sendResponse({ success: false, error: e.message }); });
+    return true;
+  }
+
+  if (request.action === 'setPendingEmoteText') {
+    const tabId = sender.tab?.id;
+    if (!tabId) {
+      sendResponse({ success: false });
+      return;
+    }
+    chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: (text) => { window.__mojifyPendingContent = text; },
+      args: [request.text || ''],
+    }).then(() => sendResponse({ success: true }))
+      .catch((e) => sendResponse({ success: false, error: e.message }));
+    return true;
+  }
+
   if (request.action === 'getEmote') {
     const resolveEmote = async () => {
       let storageKey = request.key;
