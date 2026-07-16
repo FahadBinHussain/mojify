@@ -1495,6 +1495,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (recentPagination) {
       recentPagination.classList.add('hidden');
     }
+    resizePopupToFit();
   }
 
   recentPaginationPrev?.addEventListener('click', () => {
@@ -1620,6 +1621,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById(`${tabName}-tab`).classList.add('active');
 
         updateIndicator(index);
+        resizePopupToFit();
 
         if (tabName === 'emotes') {
           if (!emoteLibraryLoaded) {
@@ -3525,14 +3527,28 @@ document.addEventListener('DOMContentLoaded', () => {
         paginationContainer.classList.add('hidden');
       }
     }
+    resizePopupToFit();
   }
 
   // Pagination controls
+  function resizePopupToFit() {
+    requestAnimationFrame(() => {
+      const content = document.querySelector('.tab-pane.active');
+      if (!content) return;
+      const naturalHeight = content.scrollHeight;
+      const maxHeight = 600;
+      const newHeight = Math.min(naturalHeight + 120, maxHeight);
+      document.documentElement.style.height = newHeight + 'px';
+      document.body.style.height = newHeight + 'px';
+    });
+  }
+
   paginationPrevBtn.addEventListener('click', () => {
     if (!isLocalLibraryTab()) return;
     if (currentPage > 1) {
       currentPage--;
       renderEmoteGrid();
+      resizePopupToFit();
       emoteGrid.scrollIntoView({ block: 'start' });
     }
   });
@@ -3541,6 +3557,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!isLocalLibraryTab()) return;
     currentPage++;
     renderEmoteGrid();
+    resizePopupToFit();
     emoteGrid.scrollIntoView({ block: 'start' });
   });
 
