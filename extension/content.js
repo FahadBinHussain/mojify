@@ -1581,6 +1581,19 @@ async function insertEmoteFromSuggestion(emoteKey, inputElement) {
                 inputElement.dispatchEvent(event);
             });
 
+            // Insert emote name text (matching insertEmote behavior)
+            window.__mojifyLastUpload = Date.now();
+            if (getCurrentPlatform() === 'discord') {
+                chrome.storage.local.get(['sendEmoteNameWithMedia'], (result) => {
+                    if (result.sendEmoteNameWithMedia !== false) {
+                        const cleanName = emoteKey.replace(/^:+|:+$/g, '');
+                        setTimeout(() => {
+                            insertEmoteNameViaEditor(cleanName);
+                        }, 200);
+                    }
+                });
+            }
+
         } catch (emoteError) {
             debugLog("❌ Error inserting emote from suggestion:", emoteError);
         }
@@ -1965,7 +1978,7 @@ async function handleInputEvent(event) {
   const recentText = currentText.slice(-50);
   debugLog("Recent text for emote detection:", recentText);
 
-  const emotePattern = /:([a-zA-Z0-9_!]+):/g;
+  const emotePattern = /:([a-zA-Z0-9_!?]+):/g;
   let match;
 
 
@@ -2271,7 +2284,7 @@ setTimeout(() => {
 
 function mojifyApplyTextReplace(content) {
   if (!content || !emoteMapping) return content;
-  return content.replace(/:([a-zA-Z0-9_!]+):/g, (full, name) => {
+  return content.replace(/:([a-zA-Z0-9_!?]+):/g, (full, name) => {
     if (emoteMapping[full] || emoteMapping[name]) {
       return name;
     }
