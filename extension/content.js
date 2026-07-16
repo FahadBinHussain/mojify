@@ -1965,7 +1965,7 @@ async function handleInputEvent(event) {
   const recentText = currentText.slice(-50);
   debugLog("Recent text for emote detection:", recentText);
 
-  const emotePattern = /:([a-zA-Z0-9_!]+):/g;
+  const emotePattern = /:([a-zA-Z0-9_!?]+):/g;
   let match;
 
 
@@ -2271,7 +2271,7 @@ setTimeout(() => {
 
 function mojifyApplyTextReplace(content) {
   if (!content || !emoteMapping) return content;
-  return content.replace(/:([a-zA-Z0-9_!]+):/g, (full, name) => {
+  return content.replace(/:([a-zA-Z0-9_!?]+):/g, (full, name) => {
     if (emoteMapping[full] || emoteMapping[name]) {
       return name;
     }
