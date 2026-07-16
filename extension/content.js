@@ -113,8 +113,8 @@
           event.stopImmediatePropagation();
           const selectedEmote = emoteElements[selectedEmoteIndex];
           if (selectedEmote && selectedEmote.key) {
-            pendingEmoteName = selectedEmote.key;
             resetDiscordState();
+            pendingEmoteName = selectedEmote.key;
             insertEmote(selectedEmote.key, active);
           }
         } else {
