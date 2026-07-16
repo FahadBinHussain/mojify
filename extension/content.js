@@ -1581,6 +1581,19 @@ async function insertEmoteFromSuggestion(emoteKey, inputElement) {
                 inputElement.dispatchEvent(event);
             });
 
+            // Insert emote name text (matching insertEmote behavior)
+            window.__mojifyLastUpload = Date.now();
+            if (getCurrentPlatform() === 'discord') {
+                chrome.storage.local.get(['sendEmoteNameWithMedia'], (result) => {
+                    if (result.sendEmoteNameWithMedia !== false) {
+                        const cleanName = emoteKey.replace(/^:+|:+$/g, '');
+                        setTimeout(() => {
+                            insertEmoteNameViaEditor(cleanName);
+                        }, 200);
+                    }
+                });
+            }
+
         } catch (emoteError) {
             debugLog("❌ Error inserting emote from suggestion:", emoteError);
         }
