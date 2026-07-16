@@ -774,10 +774,11 @@ async function insertEmoteFromDiscordInterceptor(emoteKey) {
         }
         window.__mojifyInserting = true;
         
-        // Store name BEFORE reset clears it
-        pendingEmoteName = emoteKey;
         // Clear the current buffer and minibar
         resetDiscordState();
+
+        // Store name AFTER reset (reset clears pendingEmoteName)
+        pendingEmoteName = emoteKey;
 
         // Insert the emote
         await insertEmote(emoteKey, discordEditor);
@@ -1581,15 +1582,21 @@ async function insertEmoteFromSuggestion(emoteKey, inputElement) {
                 inputElement.dispatchEvent(event);
             });
 
-            // Insert emote name text (matching insertEmote behavior)
+            // Insert emote name text (matching popup insertEmoteFromBase64 behavior)
             window.__mojifyLastUpload = Date.now();
             if (getCurrentPlatform() === 'discord') {
                 chrome.storage.local.get(['sendEmoteNameWithMedia'], (result) => {
                     if (result.sendEmoteNameWithMedia !== false) {
                         const cleanName = emoteKey.replace(/^:+|:+$/g, '');
-                        setTimeout(() => {
-                            insertEmoteNameViaEditor(cleanName);
-                        }, 200);
+                        let pendingEl = document.getElementById('mojify-pending-content');
+                        if (!pendingEl) {
+                            pendingEl = document.createElement('div');
+                            pendingEl.id = 'mojify-pending-content';
+                            pendingEl.style.display = 'none';
+                            document.body.appendChild(pendingEl);
+                        }
+                        pendingEl.textContent = cleanName;
+                        console.log('[Mojify] Set pending emote name for XHR interceptor:', cleanName);
                     }
                 });
             }
@@ -1618,6 +1625,7 @@ function simulateFileDrop(file, targetElement) {
         const result = targetElement.dispatchEvent(event);
         debugLog(`${eventType} event result:`, result);
     });
+    return true;
 }
 
 // Main emote insertion function with Discord Slate.js support
@@ -1716,6 +1724,7 @@ function insertEmoteNameViaEditor(emoteName) {
     if (!emoteName) return;
     const nameText = emoteName.replace(/^:+|:+$/g, '');
     if (!nameText) return;
+    const withColons = `:${nameText}:`;
 
     let el = document.getElementById('mojify-pending-content');
     if (!el) {
@@ -1724,8 +1733,8 @@ function insertEmoteNameViaEditor(emoteName) {
         el.style.display = 'none';
         document.body.appendChild(el);
     }
-    el.textContent = nameText;
-    console.log('[Mojify] Set pending emote name:', nameText);
+    el.textContent = withColons;
+    console.log('[Mojify] Set pending emote name:', withColons);
 }
 
 try {
