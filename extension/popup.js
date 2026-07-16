@@ -276,8 +276,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const emoteGrid = document.getElementById('emote-grid');
   const emoteCount = document.getElementById('emote-count');
   const noEmotesMessage = document.getElementById('no-emotes-message');
-  const loadMoreContainer = document.getElementById('load-more');
-  const loadMoreBtn = document.getElementById('load-more-btn');
+  const paginationContainer = document.getElementById('pagination');
+  const paginationPrevBtn = document.getElementById('pagination-prev');
+  const paginationNextBtn = document.getElementById('pagination-next');
+  const paginationInfo = document.getElementById('pagination-info');
   const searchInput = document.getElementById('search-emotes');
   const sortSelect = document.getElementById('emote-sort');
   const sortToolbar = document.querySelector('.sort-toolbar');
@@ -320,12 +322,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const recentGrid = document.getElementById('recent-grid');
   const recentEmptyState = document.getElementById('recent-empty-state');
   const recentCount = document.getElementById('recent-count');
-  const recentLoadMore = document.getElementById('recent-load-more');
-  const recentLoadMoreBtn = document.getElementById('recent-load-more-btn');
+  const recentPagination = document.getElementById('recent-pagination');
+  const recentPaginationPrev = document.getElementById('recent-pagination-prev');
+  const recentPaginationNext = document.getElementById('recent-pagination-next');
+  const recentPaginationInfo = document.getElementById('recent-pagination-info');
   const sendEmoteNameToggle = document.getElementById('send-emote-name-toggle');
 
   // Constants
-  const ITEMS_PER_PAGE = 30;
+  const ITEMS_PER_PAGE = 60;
   const RECENT_ITEMS_LIMIT = 150;
   const RECENT_ITEMS_INITIAL_RENDER = 48;
   const RECENT_ITEMS_PAGE_SIZE = 48;
@@ -442,7 +446,7 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>
     `;
     noEmotesMessage.style.display = 'none';
-    loadMoreContainer.classList.add('hidden');
+    paginationContainer.classList.add('hidden');
   }
 
   function getEmotePreviewUrl(emoteKey, emoteData = null) {
@@ -1423,7 +1427,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (total === 0) {
       recentEmptyState.classList.remove('hidden');
-      recentLoadMore?.classList.add('hidden');
+      recentPagination?.classList.add('hidden');
       return;
     }
 
@@ -1481,22 +1485,34 @@ document.addEventListener('DOMContentLoaded', () => {
       recentGrid.appendChild(button);
     });
 
-    const remaining = total - visibleRecentItemCount;
-    if (recentLoadMore && recentLoadMoreBtn) {
-      recentLoadMore.classList.toggle('hidden', remaining <= 0);
-      recentLoadMoreBtn.innerHTML = `
-        <i class="fas fa-chevron-down"></i>
-        <span>Load ${Math.min(RECENT_ITEMS_PAGE_SIZE, remaining)} More</span>
-      `;
+    const totalPages = Math.ceil(total / RECENT_ITEMS_PAGE_SIZE);
+    if (recentPagination && totalPages > 1) {
+      const currentRecentPage = Math.ceil(visibleRecentItemCount / RECENT_ITEMS_PAGE_SIZE);
+      recentPagination.classList.remove('hidden');
+      recentPaginationPrev.disabled = currentRecentPage <= 1;
+      recentPaginationNext.disabled = currentRecentPage >= totalPages;
+      recentPaginationInfo.textContent = `Page ${currentRecentPage} of ${totalPages}`;
+    } else if (recentPagination) {
+      recentPagination.classList.add('hidden');
     }
   }
 
-  recentLoadMoreBtn?.addEventListener('click', () => {
+  recentPaginationPrev?.addEventListener('click', () => {
+    visibleRecentItemCount = Math.max(
+      RECENT_ITEMS_PAGE_SIZE,
+      visibleRecentItemCount - RECENT_ITEMS_PAGE_SIZE
+    );
+    renderRecentGrid();
+    recentGrid.scrollIntoView({ block: 'start' });
+  });
+
+  recentPaginationNext?.addEventListener('click', () => {
     visibleRecentItemCount = Math.min(
       recentItems.length,
       visibleRecentItemCount + RECENT_ITEMS_PAGE_SIZE
     );
     renderRecentGrid();
+    recentGrid.scrollIntoView({ block: 'start' });
   });
 
   // Notification function
@@ -2492,7 +2508,7 @@ document.addEventListener('DOMContentLoaded', () => {
         emoteLibraryLoaded = true;
         emoteGrid.innerHTML = '';
         noEmotesMessage.style.display = 'flex';
-        loadMoreContainer.classList.add('hidden');
+        paginationContainer.classList.add('hidden');
         emoteCount.textContent = '0';
         activeChannelFilter = 'all';
         renderChannelFilterBar();
@@ -2503,7 +2519,7 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error('Error loading emotes:', error);
       emoteGrid.innerHTML = '';
       noEmotesMessage.style.display = 'flex';
-      loadMoreContainer.classList.add('hidden');
+      paginationContainer.classList.add('hidden');
       emoteCount.textContent = '0';
     }
   }
@@ -2594,7 +2610,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <p>${emptyMessage}</p>
           </div>
         `;
-        loadMoreContainer.classList.add('hidden');
+        paginationContainer.classList.add('hidden');
       }
       return;
     }
@@ -2604,7 +2620,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // If no search term, we'll display by channel in renderEmoteGrid
       displayedEmotes = [];
       // Always hide load more button in channel view
-      loadMoreContainer.classList.add('hidden');
+      paginationContainer.classList.add('hidden');
       renderEmoteGrid();
     } else {
       // If searching, filter all emotes
@@ -2959,7 +2975,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function searchAndRenderGiphy() {
-    loadMoreContainer.classList.add('hidden');
+    paginationContainer.classList.add('hidden');
     emoteGrid.innerHTML = '';
 
     if (searchTerm === '') {
@@ -3012,7 +3028,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function searchAndRenderKlipy() {
-    loadMoreContainer.classList.add('hidden');
+    paginationContainer.classList.add('hidden');
     emoteGrid.innerHTML = '';
 
     if (searchTerm === '') {
@@ -3064,7 +3080,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function searchAndRenderPixabay() {
-    loadMoreContainer.classList.add('hidden');
+    paginationContainer.classList.add('hidden');
     emoteGrid.innerHTML = '';
 
     if (searchTerm === '') {
@@ -3398,7 +3414,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // If no search term, ensure load more button is hidden
     if (searchTerm === '') {
-      loadMoreContainer.classList.add('hidden');
+      paginationContainer.classList.add('hidden');
     }
 
     // If no emotes match the search
@@ -3408,7 +3424,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <p>No emotes found for "${searchTerm}"</p>
         </div>
       `;
-      loadMoreContainer.classList.add('hidden');
+      paginationContainer.classList.add('hidden');
       return;
     }
 
@@ -3449,12 +3465,15 @@ document.addEventListener('DOMContentLoaded', () => {
       searchSection.appendChild(searchEmotes);
       emoteGrid.appendChild(searchSection);
 
-      // Update "Load More" button visibility
-      if (endIndex < displayedEmotes.length) {
-        loadMoreContainer.classList.remove('hidden');
-        loadMoreBtn.textContent = `Load More (${displayedEmotes.length - endIndex} remaining)`;
+      // Update pagination visibility
+      const totalPages = Math.ceil(displayedEmotes.length / ITEMS_PER_PAGE);
+      if (totalPages > 1) {
+        paginationContainer.classList.remove('hidden');
+        paginationPrevBtn.disabled = currentPage <= 1;
+        paginationNextBtn.disabled = currentPage >= totalPages;
+        paginationInfo.textContent = `Page ${currentPage} of ${totalPages}`;
       } else {
-        loadMoreContainer.classList.add('hidden');
+        paginationContainer.classList.add('hidden');
       }
     } else {
       const visibleChannels = getVisibleChannelsForSource();
@@ -3496,22 +3515,33 @@ document.addEventListener('DOMContentLoaded', () => {
       section.appendChild(channelEmotes);
       emoteGrid.appendChild(section);
 
-      if (endIndex < flattenedEntries.length) {
-        loadMoreContainer.classList.remove('hidden');
-        loadMoreBtn.textContent = `Load More (${flattenedEntries.length - endIndex} remaining)`;
+      if (endIndex < flattenedEntries.length || currentPage > 1) {
+        const totalPages = Math.ceil(flattenedEntries.length / ITEMS_PER_PAGE);
+        paginationContainer.classList.remove('hidden');
+        paginationPrevBtn.disabled = currentPage <= 1;
+        paginationNextBtn.disabled = currentPage >= totalPages;
+        paginationInfo.textContent = `Page ${currentPage} of ${totalPages}`;
       } else {
-        loadMoreContainer.classList.add('hidden');
+        paginationContainer.classList.add('hidden');
       }
     }
   }
 
-  // Load more emotes when button is clicked
-  loadMoreBtn.addEventListener('click', () => {
-    if (!isLocalLibraryTab()) {
-      return;
+  // Pagination controls
+  paginationPrevBtn.addEventListener('click', () => {
+    if (!isLocalLibraryTab()) return;
+    if (currentPage > 1) {
+      currentPage--;
+      renderEmoteGrid();
+      emoteGrid.scrollIntoView({ block: 'start' });
     }
+  });
+
+  paginationNextBtn.addEventListener('click', () => {
+    if (!isLocalLibraryTab()) return;
     currentPage++;
     renderEmoteGrid();
+    emoteGrid.scrollIntoView({ block: 'start' });
   });
 
   // Search functionality

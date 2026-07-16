@@ -44,6 +44,7 @@ html,
 body {
   width: var(--popup-width);
   height: var(--popup-height);
+  max-height: var(--popup-max-height);
   overflow: hidden;
 }
 
@@ -1474,13 +1475,43 @@ button:disabled {
 }
 
 /* ── Load More ──────────────────────────────── */
-.load-more {
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   margin-top: 4px;
-  text-align: center;
+  padding: 8px 0;
 }
 
-.load-more button {
-  width: auto;
+.pagination-btn {
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--border-active);
+}
+
+.pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.pagination-info {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 70px;
+  text-align: center;
 }
 
 /* ── Settings ───────────────────────────────── */
