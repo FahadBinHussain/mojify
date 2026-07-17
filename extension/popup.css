@@ -343,34 +343,24 @@ img {
 .recent-scroll {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
-.recent-summary-card {
+.recent-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface-1);
+  padding: 0 2px;
 }
 
-.recent-summary-label {
-  display: none;
-}
-
-.recent-summary-card h3 {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--text-primary);
+.recent-search-wrapper {
+  flex: 1;
+  min-width: 0;
 }
 
 .recent-summary-count {
   flex-shrink: 0;
-  padding: 4px 10px;
+  padding: 3px 9px;
   border-radius: var(--radius-full);
   background: var(--accent-dim);
   color: var(--accent);

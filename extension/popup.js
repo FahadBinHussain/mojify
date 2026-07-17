@@ -322,6 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const recentGrid = document.getElementById('recent-grid');
   const recentEmptyState = document.getElementById('recent-empty-state');
   const recentCount = document.getElementById('recent-count');
+  const recentSearchInput = document.getElementById('search-recent');
   const recentPagination = document.getElementById('recent-pagination');
   const recentPaginationPrev = document.getElementById('recent-pagination-prev');
   const recentPaginationNext = document.getElementById('recent-pagination-next');
@@ -393,6 +394,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let telegramImportCompletionHandled = false;
   let recentItems = [];
   let visibleRecentItemCount = RECENT_ITEMS_INITIAL_RENDER;
+  let recentSearchTerm = '';
   let favoriteEmotes = new Set();
   let sendEmoteNameWithMedia = true;
   let emoteLibraryLoaded = false;
@@ -1418,8 +1420,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!recentGrid || !recentEmptyState || !recentCount) return;
 
     recentGrid.innerHTML = '';
-    const total = recentItems.length;
-    recentCount.textContent = `${total} item${total === 1 ? '' : 's'}`;
+    const term = recentSearchTerm.toLowerCase();
+    const filtered = term
+      ? recentItems.filter((item) => (item.label || '').toLowerCase().includes(term))
+      : recentItems;
+    const total = filtered.length;
+    recentCount.textContent = total;
     visibleRecentItemCount = Math.min(
       Math.max(visibleRecentItemCount || RECENT_ITEMS_INITIAL_RENDER, RECENT_ITEMS_INITIAL_RENDER),
       total
@@ -1434,7 +1440,7 @@ document.addEventListener('DOMContentLoaded', () => {
     visibleRecentItemCount = Math.min(visibleRecentItemCount, total);
     recentEmptyState.classList.add('hidden');
 
-    recentItems.slice(0, visibleRecentItemCount).forEach((item) => {
+    filtered.slice(0, visibleRecentItemCount).forEach((item) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'recent-item';
@@ -1514,6 +1520,12 @@ document.addEventListener('DOMContentLoaded', () => {
     );
     renderRecentGrid();
     recentGrid.scrollIntoView({ block: 'start' });
+  });
+
+  recentSearchInput?.addEventListener('input', (e) => {
+    recentSearchTerm = e.target.value.trim();
+    visibleRecentItemCount = RECENT_ITEMS_INITIAL_RENDER;
+    renderRecentGrid();
   });
 
   // Notification function
