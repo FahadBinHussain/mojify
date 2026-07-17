@@ -1,6 +1,6 @@
 :root {
   --popup-width: 480px;
-  --popup-max-height: 600px;
+  --popup-height: 600px;
   --bg: #0a0e17;
   --surface-1: #111827;
   --surface-2: #1a2235;
@@ -43,8 +43,7 @@
 html,
 body {
   width: var(--popup-width);
-  max-height: var(--popup-max-height);
-  height: auto;
+  height: var(--popup-height);
   overflow: hidden;
 }
 
@@ -138,7 +137,7 @@ img {
   display: flex;
   flex-direction: column;
   width: 100%;
-  height: auto;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -290,14 +289,15 @@ img {
   display: flex;
   flex: 1;
   min-height: 0;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .tab-pane {
   display: none;
   flex: 1;
   min-height: 0;
-  overflow: visible;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 14px 14px 20px;
 }
 
@@ -305,6 +305,23 @@ img {
   display: flex;
   flex-direction: column;
   animation: pane-in 0.2s ease;
+}
+
+.tab-pane::-webkit-scrollbar {
+  width: 6px;
+}
+
+.tab-pane::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tab-pane::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border-radius: 3px;
+}
+
+.tab-pane::-webkit-scrollbar-thumb:hover {
+  background: var(--surface-hover);
 }
 
 @keyframes pane-in {
