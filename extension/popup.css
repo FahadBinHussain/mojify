@@ -996,9 +996,9 @@ img {
   display: none !important;
 }
 
-#emotes-tab[data-media-tab="twitch"] .emote-stats-compact .action-button,
-#emotes-tab[data-media-tab="discord"] .emote-stats-compact .action-button,
-#emotes-tab[data-media-tab="telegram"] .emote-stats-compact .action-button {
+#emotes-tab[data-media-tab="twitch"] #download-button,
+#emotes-tab[data-media-tab="discord"] #download-button,
+#emotes-tab[data-media-tab="telegram"] #download-button {
   display: none !important;
 }
 
