@@ -15,9 +15,7 @@
           <img src="icons/icon48.png" alt="Mojify" class="logo-png">
         </div>
         <div class="logo-text">
-          <span class="eyebrow">Universal Emote Deck</span>
           <h1>Mojify</h1>
-          <p class="header-subtitle">Search, insert, and sync your reaction library without leaving the page.</p>
         </div>
         <span class="version-chip">v1.0</span>
       </div>
@@ -104,9 +102,26 @@
                   <i class="fas fa-layer-group"></i>
                   Scope
                 </span>
-                <strong id="scope-current-label">All Channels</strong>
+                <strong id="scope-current-label">All Sources</strong>
                 <i class="fas fa-chevron-down scope-chevron"></i>
               </button>
+
+              <div class="emote-stats-compact">
+                <span class="stat-number-compact" id="emote-count">0</span>
+                <span class="stat-label-compact">items</span>
+                <button id="refresh-source-button" class="action-button hidden" type="button">
+                  <i class="fas fa-sync-alt"></i>
+                  <span id="refresh-source-label">Refresh</span>
+                </button>
+                <button id="stop-download-button" class="action-button hidden" type="button" style="color: var(--danger, #ef4444);">
+                  <i class="fas fa-stop"></i>
+                  <span>Stop</span>
+                </button>
+                <button id="download-button" class="action-button" type="button">
+                  <i class="fas fa-sync-alt"></i>
+                  <span>Refresh All</span>
+                </button>
+              </div>
             </div>
 
             <div class="channel-filter-bar" id="channel-filter-bar"></div>
@@ -188,27 +203,6 @@
                 </div>
                 <p class="discord-import-progress-note">Safe to close the popup. Progress will resume here when you reopen it.</p>
               </div>
-            </div>
-          </div>
-
-          <div class="emote-stats">
-            <div class="stat">
-              <span class="stat-number" id="emote-count">0</span>
-              <span class="stat-label">Emotes</span>
-            </div>
-            <div class="refresh-actions">
-              <button id="refresh-source-button" class="action-button hidden" type="button">
-                <i class="fas fa-sync-alt"></i>
-                <span id="refresh-source-label">Refresh</span>
-              </button>
-              <button id="stop-download-button" class="action-button hidden" type="button" style="color: var(--danger, #ef4444);">
-                <i class="fas fa-stop"></i>
-                <span>Stop</span>
-              </button>
-              <button id="download-button" class="action-button" type="button">
-                <i class="fas fa-sync-alt"></i>
-                <span>Refresh All</span>
-              </button>
             </div>
           </div>
 

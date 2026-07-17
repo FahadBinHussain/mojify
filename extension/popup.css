@@ -144,7 +144,7 @@ img {
 /* ── Header ─────────────────────────────────── */
 .header {
   position: relative;
-  padding: 14px 16px 12px;
+  padding: 8px 14px;
   background: var(--surface-1);
   border-bottom: 1px solid var(--border);
   overflow: hidden;
@@ -172,9 +172,9 @@ img {
 
 .logo-icon {
   flex-shrink: 0;
-  width: 44px;
-  height: 44px;
-  padding: 6px;
+  width: 28px;
+  height: 28px;
+  padding: 3px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-2);
@@ -202,9 +202,9 @@ img {
 }
 
 .logo-text h1 {
-  margin-top: 1px;
+  margin-top: 0;
   font-family: "Space Grotesk", "Inter", sans-serif;
-  font-size: 22px;
+  font-size: 16px;
   line-height: 1.1;
   letter-spacing: -0.03em;
   color: var(--text-primary);
@@ -961,30 +961,42 @@ img {
   color: var(--text-primary);
 }
 
-/* ── Emote Stats ────────────────────────────── */
+/* ── Emote Stats (compact inline) ────────────── */
 .emote-stats {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
+  display: none;
 }
 
-#emotes-tab[data-media-tab="giphy"] .emote-stats,
-#emotes-tab[data-media-tab="klipy"] .emote-stats,
-#emotes-tab[data-media-tab="pixabay"] .emote-stats {
+.emote-stats-compact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 12px;
+}
+
+.stat-number-compact {
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.stat-label-compact {
+  color: var(--text-tertiary);
+}
+
+.emote-stats-compact .action-button {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+#emotes-tab[data-media-tab="giphy"] .emote-stats-compact,
+#emotes-tab[data-media-tab="klipy"] .emote-stats-compact,
+#emotes-tab[data-media-tab="pixabay"] .emote-stats-compact {
   display: none !important;
 }
 
-#emotes-tab[data-media-tab="twitch"] .refresh-actions,
-#emotes-tab[data-media-tab="discord"] .refresh-actions,
-#emotes-tab[data-media-tab="telegram"] .refresh-actions {
-  justify-content: flex-end;
-}
-
-#emotes-tab[data-media-tab="twitch"] #download-button,
-#emotes-tab[data-media-tab="discord"] #download-button,
-#emotes-tab[data-media-tab="telegram"] #download-button {
+#emotes-tab[data-media-tab="twitch"] .emote-stats-compact .action-button,
+#emotes-tab[data-media-tab="discord"] .emote-stats-compact .action-button,
+#emotes-tab[data-media-tab="telegram"] .emote-stats-compact .action-button {
   display: none !important;
 }
 
