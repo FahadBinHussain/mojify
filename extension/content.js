@@ -431,7 +431,7 @@ function updateDiscordMinibar() {
         }
 
         // Trigger emote suggestions based on the buffer
-        if (discordBuffer.length > 1) {
+        if (discordBuffer.length > 0) {
             const query = discordBuffer.substring(1); // Remove the ':'
             debugLog("Discord interceptor showing suggestions for query:", query);
             showDiscordEmoteSuggestions(query).catch(error => {
