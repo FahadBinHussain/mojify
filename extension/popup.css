@@ -380,8 +380,8 @@ img {
 
 .recent-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 5px;
 }
 
 .recent-item {
@@ -391,7 +391,7 @@ img {
   align-items: stretch;
   gap: 0;
   min-width: 0;
-  padding: 8px;
+  padding: 5px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-1);
@@ -408,11 +408,11 @@ img {
 
 .recent-item-media {
   width: 100%;
-  height: 64px;
+  height: 48px;
   border-radius: var(--radius-sm);
   object-fit: contain;
   background: transparent;
-  padding: 6px;
+  padding: 4px;
 }
 
 .recent-item-label {
@@ -424,13 +424,13 @@ img {
   font-size: 10px;
   font-weight: 600;
   color: var(--text-secondary);
-  padding-top: 6px;
+  padding-top: 3px;
 }
 
 .recent-item-badge {
   position: absolute;
-  top: 14px;
-  right: 14px;
+  top: 4px;
+  right: 4px;
   padding: 2px 6px;
   border-radius: var(--radius-full);
   background: rgba(17, 24, 39, 0.8);
@@ -1210,12 +1210,12 @@ button:disabled {
 .emote-grid {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 10px;
 }
 
 /* ── Channel Section ────────────────────────── */
 .channel-section {
-  padding-top: 14px;
+  padding-top: 10px;
   border-top: 1px solid var(--border);
 }
 
@@ -1229,7 +1229,7 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding-bottom: 10px;
+  padding-bottom: 8px;
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -1290,10 +1290,10 @@ button:disabled {
 
 .favorite-toggle {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 24px;
-  height: 24px;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1342,8 +1342,8 @@ button:disabled {
 
 .channel-emotes {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 5px;
 }
 
 .channel-section.collapsed .channel-emotes {
@@ -1353,7 +1353,7 @@ button:disabled {
 .emote-item {
   position: relative;
   min-width: 0;
-  padding: 8px;
+  padding: 5px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-1);
@@ -1377,8 +1377,8 @@ button:disabled {
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 64px;
-  padding: 6px;
+  height: 48px;
+  padding: 4px;
   border-radius: var(--radius-sm);
   background: transparent;
 }
@@ -1390,7 +1390,7 @@ button:disabled {
 }
 
 .emote-details {
-  padding-top: 6px;
+  padding-top: 3px;
 }
 
 .emote-trigger {
@@ -1413,8 +1413,8 @@ button:disabled {
 
 .emote-loading-spinner {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 6px;
+  right: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
