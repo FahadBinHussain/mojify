@@ -271,7 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const refreshSourceButton = document.getElementById('refresh-source-button');
   const refreshSourceLabel = document.getElementById('refresh-source-label');
   const stopDownloadButton = document.getElementById('stop-download-button');
-  const emoteStats = document.querySelector('.emote-stats');
+  const emoteStats = document.querySelector('.emote-stats-compact');
   const emotesTabPane = document.getElementById('emotes-tab');
   const emoteGrid = document.getElementById('emote-grid');
   const emoteCount = document.getElementById('emote-count');
@@ -2548,7 +2548,7 @@ document.addEventListener('DOMContentLoaded', () => {
       count = countFromChannels;
     }
     emoteCount.textContent = count;
-    const statLabel = document.querySelector('.emote-stats .stat-label');
+    const statLabel = document.querySelector('.stat-label-compact');
     if (statLabel) {
       statLabel.textContent = getActiveLibraryItemUnit();
     }
