@@ -50,6 +50,7 @@
   // EARLY KEYDOWN INTERCEPTOR - added immediately, no conditions
   // This runs before any other code can interfere
   window.addEventListener('keydown', function mojifyEarlyIntercept(event) {
+    if (getCurrentPlatform() !== 'discord') return;
     if (event.key === ':' && discordState === 'NORMAL') {
       const active = document.activeElement;
       if (active && active.isContentEditable) {
