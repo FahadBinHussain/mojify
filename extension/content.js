@@ -1146,8 +1146,13 @@ function showEmoteSuggestions(query, inputElement) {
         const selection = window.getSelection();
         if (selection.rangeCount > 0) {
             const range = selection.getRangeAt(0);
+            const node = range.startContainer;
+            if (node.nodeType === Node.TEXT_NODE) {
+                currentText = node.textContent || '';
+            } else {
+                currentText = inputElement.textContent || '';
+            }
             cursorPos = range.startOffset;
-            currentText = range.startContainer.textContent || '';
         }
     } else {
         cursorPos = inputElement.selectionStart;
@@ -1163,7 +1168,8 @@ function showEmoteSuggestions(query, inputElement) {
                 startIndex: lastColonIndex,
                 endIndex: cursorPos,
                 inputElement: inputElement,
-                fullText: currentText
+                fullText: currentText,
+                textNode: inputElement.isContentEditable ? (window.getSelection().getRangeAt(0).startContainer) : null
             };
         }
     }
@@ -1456,7 +1462,12 @@ async function insertEmoteFromSuggestion(emoteKey, inputElement) {
                 const selection = window.getSelection();
                 if (selection.rangeCount > 0) {
                     const range = selection.getRangeAt(0);
-                    const textNode = range.startContainer;
+                    let textNode = range.startContainer;
+
+                    // Try to use the stored text node for correct indices
+                    if (currentPartialTextInfo.textNode && document.body.contains(currentPartialTextInfo.textNode)) {
+                        textNode = currentPartialTextInfo.textNode;
+                    }
 
                     if (textNode.nodeType === Node.TEXT_NODE) {
                         // Discord-specific handling - skip text deletion
@@ -2107,19 +2118,23 @@ function handleEmoteSuggestions(event, target, currentText) {
     if (getCurrentPlatform() === 'discord') {
       return;
     }
-    // Get cursor position
-    let cursorPos;
+    // Get cursor position and text before cursor
+    let textBeforeCursor;
     if (target.isContentEditable) {
       const selection = window.getSelection();
       if (selection.rangeCount === 0) return;
       const range = selection.getRangeAt(0);
-      cursorPos = range.startOffset;
+      const node = range.startContainer;
+      if (node.nodeType === Node.TEXT_NODE) {
+        textBeforeCursor = node.textContent.substring(0, range.startOffset);
+      } else {
+        textBeforeCursor = currentText.substring(0, range.startOffset);
+      }
     } else {
-      cursorPos = target.selectionStart;
+      textBeforeCursor = currentText.substring(0, target.selectionStart);
     }
 
     // Look for colon followed by text (incomplete emote)
-    const textBeforeCursor = currentText.substring(0, cursorPos);
     const lastColonIndex = textBeforeCursor.lastIndexOf(':');
 
     if (lastColonIndex !== -1) {
@@ -2128,9 +2143,9 @@ function handleEmoteSuggestions(event, target, currentText) {
       // Check if it's a valid emote query (no spaces, reasonable length)
       if (textAfterColon.length >= 0 && textAfterColon.length <= 20 && !textAfterColon.includes(' ')) {
         // Check if there's another colon after (complete emote)
-        const nextColonIndex = currentText.indexOf(':', lastColonIndex + 1);
+        const nextColonIndex = textBeforeCursor.indexOf(':', lastColonIndex + 1);
 
-        if (nextColonIndex === -1 || nextColonIndex >= cursorPos) {
+        if (nextColonIndex === -1 || nextColonIndex >= textBeforeCursor.length) {
           // Incomplete emote, show suggestions
           showEmoteSuggestions(textAfterColon, target);
           return;
