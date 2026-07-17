@@ -3492,17 +3492,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const emotesToShow = flattenedEntries.slice(startIndex, endIndex);
 
-      const sectionHeader = document.createElement('div');
-      sectionHeader.className = 'channel-header sorted-emote-header';
-      sectionHeader.innerHTML = `
-        <div class="channel-header-content">
-          <span class="channel-name">${activeChannelFilter === 'all'
-            ? getActiveLibraryAllLabel()
-            : activeScopeLabel}</span>
-          <span class="channel-emote-count">${flattenedEntries.length} ${getActiveLibraryItemUnit()}</span>
-        </div>
-      `;
-
       const channelEmotes = document.createElement('div');
       channelEmotes.className = 'channel-emotes';
 
@@ -3513,7 +3502,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       });
 
-      section.appendChild(sectionHeader);
       section.appendChild(channelEmotes);
       emoteGrid.appendChild(section);
 
