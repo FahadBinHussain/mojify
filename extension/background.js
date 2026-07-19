@@ -4445,6 +4445,13 @@ async function startMonitoringTab(tabId) {
         window.mojifyInputListener = async (event) => {
           // Only trigger on colon character to complete emote commands
           if (event.data === ':') {
+            // Skip auto-replace for a short window after the popup just
+            // dropped a file — `insertNameText` types `:name:` after the
+            // drop, and those synthetic `:` characters would otherwise
+            // trigger a second insert (Messenger/Facebook double-attach).
+            if (window.__mojifyLastUpload && Date.now() - window.__mojifyLastUpload < 1000) {
+              return;
+            }
             setTimeout(() => {
               chrome.runtime.sendMessage({
                 type: 'checkForEmotes',
