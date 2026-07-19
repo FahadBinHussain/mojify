@@ -2405,6 +2405,14 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       console.log("[Mojify] File insertion completed for:", trigger);
+
+      // Mark the upload moment so background.js's mojifyInputListener can
+      // ignore the synthetic `:` characters that `insertNameText` is about
+      // to type. Without this, typing `:name:` after the file drop retriggers
+      // detectAndReplaceEmotes, which inserts the same file a second time
+      // (Messenger/Facebook double-attach bug).
+      window.__mojifyLastUpload = Date.now();
+
       return withOptionalNameResult({ success: true }, inputField);
 
     } catch (error) {
