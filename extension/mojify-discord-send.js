@@ -14,7 +14,10 @@ if (!window.__mojifyFetchPatched) {
   }
 
   function isMessageSend(url, method) {
-    return method === 'POST' && /\/api\/v\d+\/channels\/[^/]+\/messages/.test(url);
+    // Anchor the regex: without the $, POST /channels/{id}/messages/{id}/ack
+    // (read receipts, fired constantly) also matched and CONSUMED the pending
+    // emote name, so the next real send had no name appended.
+    return method === 'POST' && /\/api\/v\d+\/channels\/[^/]+\/messages$/.test(url);
   }
 
   function appendToBody(body, pending) {

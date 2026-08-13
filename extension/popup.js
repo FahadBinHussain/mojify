@@ -2300,6 +2300,13 @@ document.addEventListener('DOMContentLoaded', () => {
           return { success: false, error: 'Discord message box not found' };
         }
 
+        // Set the pending name up front, before the attachment-signal wait:
+        // if a previous emote is still attached (not sent), the second
+        // insert's visibleCount may not increase (Discord replaces the
+        // pending upload), waitForDiscordAttachment times out, and the name
+        // never gets set -- leaving the next send without the emote name.
+        withOptionalNameResult({ success: true }, composer);
+
         composer.focus();
         if (typeof composer.click === 'function') composer.click();
         await sleep(120);
