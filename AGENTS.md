@@ -74,6 +74,33 @@ sets it WITHOUT colons (`.replace(/^:+|:+$/g, '')`), and
 `insertEmoteNameViaEditor` sets WITH colons. The XHR interceptor appends
 whatever is in the slot verbatim.
 
+## WhatsApp send path + wa-js bundle (updated 2026-08-13, v1.0.2)
+
+WhatsApp is NOT the drag/drop path — popup click → `sendWhatsAppInternalMedia`
+(popup.js) → `ensureWhatsAppInternalBridge` injects
+`extension/vendor/wppconnect-wa.js` into the page MAIN world (the wppconnect
+wa-js bundle that probes WhatsApp Web's webpack module store), waits up to 30s
+for `WPP.isReady` + `WPP.chat.sendFileMessage` + `getActiveChat`, then calls
+`WPP.chat.sendFileMessage(chatId, base64DataUrl, {type, filename, mimetype,
+caption, waitForAck: false})` with a 30s timeout. Animated GIFs are converted
+to MP4 first and sent with `isGif: true`.
+
+`waitForAck: false` means wa-js resolves as soon as the message is created in
+the store — the actual upload runs async inside WhatsApp's own pipeline, so
+the popup shows success while the bubble may still be spinning.
+
+Known breakage signature (reported 2026-08-13): every emote send "succeeds",
+bubble spins forever → "something went wrong / your message was not sent" →
+try again keeps failing → reload page → try again works. That = wa-js built a
+message incompatible with current WhatsApp Web internals; the store keeps a
+wedged media upload state until reload rebuilds it from IndexedDB. Fix =
+update `vendor/wppconnect-wa.js` from
+https://github.com/wppconnect-team/wa-js/releases (bumped 2026-07-01 build
+→ v4.5.0 on 2026-08-13). WA changes internals constantly, so the bundle WILL
+break again — when it does, first try a fresh wa-js release, then flip
+`waitForAck` to `true` for honest failure surfaced in the popup (it was kept
+`false` deliberately for speed).
+
 ## Git identity
 
 The repo's local `user.email` was the `your-email@example.com` placeholder

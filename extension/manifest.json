@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Mojify",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Replaces trigger words with 7TV emotes.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsOUw/YZE6RVqgao7valDaIzbh+nQrKIyJENgS4AxfUQvbXltmXCSermxi8DpnStvwAcBNKml3awiPf9rcUKr8qO/wIpgD6b4QkKfvP5s+iv92Gm0itlI1j6vHO/fY3GAhHjPIDS6RNX5e1VFIiU+eXPvMjJeLygc7C+ihtHWTr3QWhxOyX4sq+OQHxHb2bG3yV+1JxvI6Z/Edm6d2kB0EZiOSX/OuZ2+R20KPbYyyX7fYVltTGHRn2Rj5wGZjvrqsy4+gqbtGQS5xY+e6KnyioVNI5VcDXnjCThhAJW6Q+NWN9X7Yy48sknxSZL6o5OoGjyxCESmqvx3uOpc6n+2hwIDAQAB",
   "permissions": [
