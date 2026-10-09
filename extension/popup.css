@@ -2016,7 +2016,7 @@ select:focus {
 
 .channel-tree-source-children {
   display: none;
-  padding: 4px 0 0 20px;
+  padding: 0 0 0 20px;
 }
 
 .channel-tree-group.open > .channel-tree-source-children {
@@ -2024,11 +2024,12 @@ select:focus {
 }
 
 .channel-tree-node {
-  margin-bottom: 2px;
+  position: relative;
+  margin-bottom: 0;
 }
 
 .channel-tree-node + .channel-tree-node {
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .channel-tree-channel {
@@ -2137,6 +2138,147 @@ select:focus {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+/* ── Branch lines (source > channel > set) ────── */
+.channel-list {
+  --tree-row-h: 38px;
+  --tree-line: rgba(148, 163, 184, 0.26);
+}
+
+.channel-tree-source,
+.channel-tree-row {
+  position: relative;
+  height: var(--tree-row-h);
+  box-sizing: border-box;
+}
+
+/* root stub: source center → its children column */
+.channel-tree-group.open > .channel-tree-source::after {
+  content: '';
+  position: absolute;
+  left: 3px; /* +1px border = the -16px column of the nodes below */
+  top: 50%;
+  width: 1px;
+  height: 50%;
+  background: var(--tree-line);
+}
+
+/* vertical column beside every branch row (last one stops at its elbow) */
+.channel-tree-node::after {
+  content: '';
+  position: absolute;
+  left: -16px;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  background: var(--tree-line);
+}
+
+.channel-tree-node:last-child::after {
+  height: calc(var(--tree-row-h) / 2);
+}
+
+/* elbow into each row */
+.channel-tree-row::before {
+  content: '';
+  position: absolute;
+  left: -16px;
+  top: 50%;
+  width: 16px;
+  height: 1px;
+  background: var(--tree-line);
+}
+
+/* parent row hands its column down to its children (drops at x=0, where the
+   children column sits) */
+.channel-tree-node.has-children > .channel-tree-row::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 1px;
+  height: 50%;
+  background: var(--tree-line);
+}
+
+.channel-tree-children {
+  display: none;
+  position: relative;
+  padding-left: 16px;
+}
+
+.channel-tree-node.open > .channel-tree-children {
+  display: block;
+}
+
+@keyframes treeBranchIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.channel-tree-children.animate-in {
+  animation: treeBranchIn 0.18s ease;
+}
+
+/* motion: branch icons and chevrons never sit still */
+.channel-tree-node-icon {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.channel-tree-node.has-children > .channel-tree-row .channel-tree-node-icon {
+  color: var(--accent);
+}
+
+.channel-tree-channel:hover .channel-tree-node-icon {
+  transform: scale(1.18);
+}
+
+.channel-tree-channel-toggle {
+  transition: transform 0.15s ease;
+}
+
+.channel-tree-channel-main:hover .fa-chevron-right {
+  transform: rotate(90deg);
+}
+
+.channel-tree-channel-main:hover .fa-chevron-down {
+  transform: rotate(-90deg);
+}
+
+.channel-tree-source:hover .fa-chevron-down {
+  transform: rotate(-90deg);
+}
+
+.channel-tree-source:hover .fa-chevron-right {
+  transform: rotate(90deg);
+}
+
+.channel-tree-source:hover .channel-tree-source-icon {
+  transform: scale(1.18);
+}
+
+.channel-tree-source-icon {
+  transition: transform 0.15s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .channel-tree-children.animate-in,
+  .channel-tree-node-icon,
+  .channel-tree-channel-toggle,
+  .channel-tree-source-icon {
+    animation: none;
+    transition: none;
+  }
 }
 
 .delete-channel-btn,

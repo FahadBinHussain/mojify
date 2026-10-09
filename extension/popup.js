@@ -264,6 +264,10 @@ const emoteDB = {
 };
 
 document.addEventListener('DOMContentLoaded', () => {
+  // version chip reads the manifest so it can never go stale again
+  const versionChip = document.querySelector('.version-chip');
+  if (versionChip) versionChip.textContent = `v${chrome.runtime.getManifest().version}`;
+
   // DOM elements
   const channelIdsInput = document.getElementById('channel-ids');
   const saveButton = document.getElementById('save-button');
@@ -402,6 +406,8 @@ document.addEventListener('DOMContentLoaded', () => {
   let settingsPanelsDirty = true;
   let expandedChannelSetsKey = '';
   let scopeDrawerOpen = false;
+  const collapsedChannelTreeNodes = new Set();
+  let pendingBranchAnimKey = '';
   const channelEmoteSetCache = new Map();
   const emoteObjectUrlCache = new Map();
   const emoteBlobHydrationPromises = new Map();
@@ -4602,22 +4608,114 @@ document.addEventListener('DOMContentLoaded', () => {
       channelManagement.style.display = 'block';
       channelList.innerHTML = '';
 
-      const sourceGroups = new Map();
+      // ── Tree: source > channel/server > emote set ──
+      // Set-like records (7tv-set:*, discord:*:emojis, …) attach under their
+      // parent channel; plain records are the parent nodes themselves.
+      const parentRecords = new Map();
+      const childrenByKey = new Map();
       managedChannels.forEach((channel) => {
-        const sourceType = getChannelSourceType(channel);
-        if (!sourceGroups.has(sourceType)) sourceGroups.set(sourceType, []);
-        sourceGroups.get(sourceType).push(channel);
+        const ownKey = normalizeChannelIdentifier(channel.id);
+        const parentKey = normalizeChannelIdentifier(channel.parentChannelId || channel.platformChannelId);
+        const isChildNode = is7TVSetChannel(channel) || (Boolean(parentKey) && parentKey !== ownKey);
+        if (isChildNode && parentKey) {
+          if (!childrenByKey.has(parentKey)) childrenByKey.set(parentKey, []);
+          childrenByKey.get(parentKey).push(channel);
+        } else {
+          parentRecords.set(normalizeChannelIdentifier(channel.platformChannelId || channel.id), channel);
+        }
       });
+
+      const treeNodes = [];
+      const claimedKeys = new Set();
+      childrenByKey.forEach((children, key) => {
+        claimedKeys.add(key);
+        treeNodes.push({ key, record: parentRecords.get(key) || null, children });
+      });
+      parentRecords.forEach((record, key) => {
+        if (!claimedKeys.has(key)) treeNodes.push({ key, record, children: [] });
+      });
+
+      const countEmotes = (channel) => Object.keys(channel?.emotes || {}).length;
+      // Childless parents used to display their mediaCounts aggregate (old flat
+      // list) — keep that; parents WITH children count only their own records
+      // so the aggregate can't double up with the rows below it.
+      const nodeOwnCount = (node) => {
+        const record = node.record;
+        if (!record) return 0;
+        const raw = countEmotes(record);
+        if (raw > 0 || node.children.length > 0 || !record.mediaCounts) return raw;
+        return Object.values(record.mediaCounts).reduce((sum, n) => sum + (Number(n) || 0), 0);
+      };
+      const nodeTotal = (node) => node.children.reduce(
+        (sum, child) => sum + countEmotes(child),
+        nodeOwnCount(node)
+      );
+      // Discord server parents carry sourceType 'twitch' in storage, so the
+      // children decide which source group a branch lives in.
+      const nodeSource = (node) => getChannelSourceType(node.children[0] || node.record);
+
+      const sourceGroups = new Map();
+      treeNodes.forEach((node) => {
+        const sourceType = nodeSource(node);
+        if (!sourceGroups.has(sourceType)) sourceGroups.set(sourceType, []);
+        sourceGroups.get(sourceType).push(node);
+      });
+
+      const escapeRegExpLiteral = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Parent name = the part its children share ("xQc - Halloween…" → "xQc").
+      const deriveBranchName = (node) => {
+        const names = node.children.map((child) => String(child.username || '').trim()).filter(Boolean);
+        if (names.length === 0) return '';
+        if (names.length === 1) {
+          const dashIndex = names[0].indexOf(' - ');
+          return (dashIndex > 0 ? names[0].slice(0, dashIndex) : names[0]).trim();
+        }
+        let prefix = names[0];
+        names.slice(1).forEach((name) => {
+          let i = 0;
+          while (i < prefix.length && i < name.length &&
+            prefix[i].toLowerCase() === name[i].toLowerCase()) i += 1;
+          prefix = prefix.slice(0, i);
+        });
+        return prefix.replace(/[\s-]+$/, '').trim();
+      };
+      const getBranchName = (node) => {
+        const stored = node.record ? getChannelDisplayName(node.record) : '';
+        const storedIsId = !stored || /^\d{6,}$/.test(stored) ||
+          normalizeChannelIdentifier(stored) === normalizeChannelIdentifier(node.record?.id);
+        const derived = deriveBranchName(node);
+        if (derived && (!node.record || storedIsId)) return derived;
+        return stored || derived || 'Unknown channel';
+      };
+      const getChildLabel = (node, child, branchName) => {
+        if (child.emoteSetName) return String(child.emoteSetName);
+        const username = String(child.username || getChannelDisplayName(child));
+        if (branchName) {
+          const stripped = username.replace(new RegExp(`^${escapeRegExpLiteral(branchName)}\\s*-\\s*`, 'i'), '');
+          if (stripped && stripped !== username) return stripped;
+        }
+        return username;
+      };
+
+      const branchAnimKey = pendingBranchAnimKey;
+      pendingBranchAnimKey = '';
 
       const sourceOrder = ['twitch', 'discord', 'telegram'];
       const sourceLabels = { twitch: 'Twitch', discord: 'Discord', telegram: 'Telegram' };
       const sourceIcons = { twitch: 'fa-twitch', discord: 'fa-discord', telegram: 'fa-telegram' };
 
       for (const sourceType of sourceOrder) {
-        const groupChannels = sourceGroups.get(sourceType);
-        if (!groupChannels || groupChannels.length === 0) continue;
+        const groupNodes = sourceGroups.get(sourceType);
+        if (!groupNodes || groupNodes.length === 0) continue;
 
-        const groupTotal = groupChannels.reduce((sum, ch) => sum + (ch.emotes ? Object.keys(ch.emotes).length : 0), 0);
+        const groupTotal = groupNodes.reduce((sum, node) => sum + nodeTotal(node), 0);
+        const groupSets = groupNodes.reduce((sum, node) => sum + node.children.length, 0);
+        const unit = sourceType === 'twitch' ? 'emotes' : 'items';
+        const noun = sourceType === 'discord' ? 'server' : 'channel';
+        const metaParts = [`${groupNodes.length} ${noun}${groupNodes.length === 1 ? '' : 's'}`];
+        if (groupSets > 0) metaParts.push(`${groupSets} set${groupSets === 1 ? '' : 's'}`);
+        metaParts.push(`${groupTotal} ${unit}`);
+
         const group = document.createElement('div');
         group.className = 'channel-tree-group';
 
@@ -4626,7 +4724,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <i class="fas fa-chevron-down channel-tree-toggle-icon"></i>
             <i class="fas ${sourceIcons[sourceType] || 'fa-folder'} channel-tree-source-icon"></i>
             <span class="channel-tree-source-name">${escapeHtml(sourceLabels[sourceType] || sourceType)}</span>
-            <span class="channel-tree-source-meta">${groupChannels.length} channel${groupChannels.length === 1 ? '' : 's'} &middot; ${groupTotal} emotes</span>
+            <span class="channel-tree-source-meta">${metaParts.join(' &middot; ')}</span>
             <button class="delete-source-btn" type="button" data-source="${escapeHtml(sourceType)}" title="Delete all ${escapeHtml(sourceLabels[sourceType] || sourceType)} emotes">
               <i class="fas fa-trash"></i>
             </button>
@@ -4642,55 +4740,93 @@ document.addEventListener('DOMContentLoaded', () => {
           sourceRow.querySelector('.channel-tree-toggle-icon').className = `fas fa-chevron-${isOpen ? 'down' : 'right'} channel-tree-toggle-icon`;
         });
 
-        groupChannels.forEach((channel) => {
-          const rawEmoteCount = channel.emotes ? Object.keys(channel.emotes).length : 0;
-          const isSetChannel = is7TVSetChannel(channel);
-          const isParentNode = !isSetChannel && rawEmoteCount === 0 && channel.mediaCounts;
-          const emoteCount = isParentNode
-            ? Object.values(channel.mediaCounts).reduce((sum, n) => sum + (Number(n) || 0), 0)
-            : rawEmoteCount;
-          const canBrowseSets = sourceType === 'twitch' && !isSetChannel;
-          const setsKey = getChannelSetsLookupKey(channel);
+        groupNodes.forEach((node) => {
+          const record = node.record;
+          const hasChildren = node.children.length > 0;
+          const branchOpen = hasChildren && !collapsedChannelTreeNodes.has(node.key);
+          const branchName = hasChildren ? getBranchName(node) : '';
+          const emoteCount = nodeTotal(node);
+          const isChildRecord = Boolean(record) && is7TVSetChannel(record);
+          const canBrowseSets = Boolean(record) && sourceType === 'twitch' && !isChildRecord;
+          const setsKey = record ? getChannelSetsLookupKey(record) : '';
           const isExpanded = Boolean(setsKey && expandedChannelSetsKey === setsKey);
+          const showBadge = Boolean(record) && !hasChildren && !isChildRecord && record.emoteSetName;
+          const iconName = hasChildren || !isChildRecord
+            ? (sourceType === 'discord' ? 'fa-server' : 'fa-user')
+            : 'fa-cube';
+          const displayName = hasChildren
+            ? branchName
+            : (isChildRecord
+              ? getChildLabel(node, record, getBranchName(node))
+              : getChannelDisplayName(record));
+          const animateIn = hasChildren && branchOpen && branchAnimKey === node.key;
 
           const channelNode = document.createElement('div');
-          channelNode.className = 'channel-tree-node';
+          channelNode.className = `channel-tree-node${hasChildren ? ' has-children' : ''}${branchOpen ? ' open' : ''}`;
           channelNode.innerHTML = `
-            <div class="channel-tree-channel">
+            <div class="channel-tree-channel channel-tree-row">
               <div class="channel-tree-channel-main">
-                <i class="fas fa-chevron-${isExpanded ? 'down' : 'right'} channel-tree-channel-toggle"></i>
-                <span class="channel-tree-channel-name">${escapeHtml(getChannelDisplayName(channel))}</span>
-                <span class="channel-tree-channel-count">${emoteCount} ${sourceType === 'twitch' ? 'emotes' : 'items'}</span>
+                ${hasChildren ? `<i class="fas fa-chevron-${branchOpen ? 'down' : 'right'} channel-tree-channel-toggle"></i>` : ''}
+                <i class="fas ${iconName} channel-tree-node-icon"></i>
+                <span class="channel-tree-channel-name">${escapeHtml(displayName)}</span>
+                <span class="channel-tree-channel-count">${emoteCount} ${unit}</span>
               </div>
+              ${record ? `
               <div class="channel-tree-channel-actions">
-                <button class="refresh-channel-btn" type="button" data-channel-id="${escapeHtml(channel.id)}" title="Refresh">
+                <button class="refresh-channel-btn" type="button" data-channel-id="${escapeHtml(record.id)}" title="Refresh">
                   <i class="fas fa-sync-alt"></i>
                 </button>
                 ${canBrowseSets ? `
-                  <button class="view-channel-sets-btn" type="button" data-channel-id="${escapeHtml(channel.id)}" title="Browse Sets">
-                    <i class="fas fa-layer-group"></i>
-                  </button>
-                ` : ''}
-                <button class="delete-channel-btn" type="button" data-channel-id="${escapeHtml(channel.id)}" title="Remove">
+                <button class="view-channel-sets-btn" type="button" data-channel-id="${escapeHtml(record.id)}" title="Browse Sets">
+                  <i class="fas fa-layer-group"></i>
+                </button>` : ''}
+                <button class="delete-channel-btn" type="button" data-channel-id="${escapeHtml(record.id)}" title="Remove">
                   <i class="fas fa-trash"></i>
                 </button>
-              </div>
+              </div>` : ''}
             </div>
-            ${channel.emoteSetName && !isSetChannel ? `
-              <div class="channel-tree-set">
-                <i class="fas fa-cube channel-tree-set-icon"></i>
-                <span class="channel-tree-set-name">${escapeHtml(channel.emoteSetName)}</span>
-                <span class="channel-tree-set-count">${emoteCount} emotes</span>
-                <span class="channel-tree-set-badge">Active</span>
-              </div>
-            ` : ''}
+            ${showBadge ? `
+            <div class="channel-tree-set">
+              <i class="fas fa-cube channel-tree-set-icon"></i>
+              <span class="channel-tree-set-name">${escapeHtml(record.emoteSetName)}</span>
+              <span class="channel-tree-set-count">${emoteCount} ${unit}</span>
+              <span class="channel-tree-set-badge">Active</span>
+            </div>` : ''}
+            ${hasChildren ? `
+            <div class="channel-tree-children${animateIn ? ' animate-in' : ''}">
+              ${node.children.map((child) => `
+              <div class="channel-tree-node channel-tree-leaf">
+                <div class="channel-tree-channel channel-tree-row">
+                  <div class="channel-tree-channel-main">
+                    <i class="fas fa-cube channel-tree-node-icon"></i>
+                    <span class="channel-tree-channel-name">${escapeHtml(getChildLabel(node, child, branchName))}</span>
+                    <span class="channel-tree-channel-count">${countEmotes(child)} ${unit}</span>
+                  </div>
+                  <div class="channel-tree-channel-actions">
+                    <button class="refresh-channel-btn" type="button" data-channel-id="${escapeHtml(child.id)}" title="Refresh">
+                      <i class="fas fa-sync-alt"></i>
+                    </button>
+                    <button class="delete-channel-btn" type="button" data-channel-id="${escapeHtml(child.id)}" title="Remove">
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>`).join('')}
+            </div>` : ''}
             <div class="channel-set-panel ${isExpanded ? '' : 'hidden'}"></div>
           `;
 
           const channelMain = channelNode.querySelector('.channel-tree-channel-main');
           channelMain.addEventListener('click', () => {
+            if (hasChildren) {
+              if (collapsedChannelTreeNodes.has(node.key)) collapsedChannelTreeNodes.delete(node.key);
+              else collapsedChannelTreeNodes.add(node.key);
+              pendingBranchAnimKey = collapsedChannelTreeNodes.has(node.key) ? '' : node.key;
+              updateChannelManagement();
+              return;
+            }
             if (!canBrowseSets) return;
-            const lookupKey2 = getChannelSetsLookupKey(channel);
+            const lookupKey2 = getChannelSetsLookupKey(record);
             expandedChannelSetsKey = expandedChannelSetsKey === lookupKey2 ? '' : lookupKey2;
             updateChannelManagement();
           });
@@ -4698,7 +4834,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (isExpanded && canBrowseSets) {
             const panel = channelNode.querySelector('.channel-set-panel');
             const toggleButton = channelNode.querySelector('.view-channel-sets-btn');
-            loadChannelEmoteSets(channel, panel, toggleButton);
+            loadChannelEmoteSets(record, panel, toggleButton);
           }
 
           childrenContainer.appendChild(channelNode);

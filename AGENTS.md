@@ -209,6 +209,33 @@ Rule: the chips row is never hidden — only `.sort-toolbar` and
 `#emotes-tab[data-media-tab="giphy|klipy|pixabay"]`. If a new provider tab
 needs extra controls hidden, add a control, not its container.
 
+## Active Channels tree (v1.1.0)
+
+`updateChannelManagement()` (popup.js) renders `source > channel/server >
+emote set` with branch lines. Grouping is display-only — storage is never
+rewritten:
+
+- a record is a **child** when `is7TVSetChannel()` or its `parentChannelId`
+  differs from its own id → bucketed under `normalize(parentChannelId ||
+  platformChannelId)`;
+- plain records are **parent nodes**, keyed by `platformChannelId || id`;
+- a bucket with no plain record gets a synthesized parent (xQc's five sets
+  have no standalone xQc record — node name is derived from the children's
+  shared username prefix, single child splits on `" - "`);
+- **a node's source group comes from its children, not its own record**: the
+  six Discord server parent records carry `sourceType: 'twitch'` in storage
+  (import-time default). Trusting them would park every Discord branch under
+  Twitch. If that storage default is ever fixed at the source, keep the
+  children-first rule anyway — it also survives orphans.
+
+Branch geometry lives in popup.css under "Branch lines" and depends on
+`--tree-row-h: 38px` (elbow at row center, last child's column stops at
+`calc(var(--tree-row-h) / 2)`). Keep new row heights on that var instead of
+raw px, or the connector lines drift off-center.
+
+Collapse state = the `collapsedChannelTreeNodes` Set in popup.js — in-memory
+on purpose (resets open when the popup closes; nothing to migrate).
+
 ## Git identity
 
 The repo's local `user.email` was the `your-email@example.com` placeholder
