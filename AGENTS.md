@@ -135,11 +135,43 @@ chrome.storage.local.get(['emoteMapping','channels'])   // the listing side
 blobs 0 + mapping > 0 = the media is gone, the listing isn't → recovery is
 Refresh All (re-downloads from saved sources), not a re-import.
 
-Related known issue (not yet fixed): the master backup/restore in
-`options.js` reads/writes `EmoteExtensionDB`/`emotes` — a database nothing
-else uses — so backups contain no media and restores can never bring media
-back. Everything else (popup.js, background.js) uses `MojifyEmotes` with
-`emoteBlobs` + `emoteMetadata`.
+Related: the master backup/restore used to touch `EmoteExtensionDB`/`emotes`,
+a database nothing else reads — that is why restores never brought media back.
+Fixed in v1.0.7, see "Master backup is a listing, not a media archive" below.
+
+## Master backup is a listing, not a media archive (v1.0.7)
+
+`options.js` no longer touches any IndexedDB. Backup v3.0 = apiKeys +
+`chrome.storage.local` (which holds `channels` with per-emote source URLs,
+`emoteMapping`, `triggerToStorageKey`) + localStorage, plus a `data.media`
+block that says `included: false`.
+
+Media is deliberately not embedded: `MojifyEmotes.emoteBlobs` was measured at
+**1.83 GB / 4264 files** (1985 png, 2279 gif). A JSON file cannot carry that
+(base64 → ~2.4 GB string, and `JSON.parse` would blow the page up).
+
+So a restore's contract is: storage back instantly, then `startMediaRedownload()`
+sets the one-shot `manualRefresh` flag and messages `redownloadMissingMedia`,
+which is a background action that maps the stored `channels` listing into
+source objects (`buildDownloadSourcesFromStoredChannels`) and hands them to
+`downloadEmotes({ sources })`. It must go through that action — bare
+`downloadEmotes` only knows `channelIds` (Twitch), which most setups leave
+empty, so it would bail with "No 7TV sources configured". The pipeline only
+fetches media missing from IndexedDB, so restoring onto a profile that already
+has the files costs nothing. Discord/Telegram media still needs the popup's
+Refresh All with those sites open, and the restore status message says exactly
+that.
+
+Restore also deletes `skipNextDownload` / `lastRestoreTime` / `manualRefresh` /
+`downloadInProgress` out of the incoming payload, because those flags gate the
+re-download and a backup taken mid-download must not trip them.
+
+v2.0 backups (with the `indexedDBEmotes` array) still restore fine: that array
+was always empty, so it is ignored with a console warning, never written.
+
+If a future change makes the library small again (say, <100 MB of media),
+embedding blobs becomes possible — until then, do not "fix" this by adding
+them to the JSON.
 
 ## 7tv media CDN needs cookies (v1.0.6)
 

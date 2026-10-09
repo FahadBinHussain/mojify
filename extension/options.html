@@ -144,7 +144,7 @@
           <div class="section-head">
             <span class="section-kicker">Safety</span>
             <h2>Backup &amp; Restore</h2>
-            <p>One JSON exports everything — emotes, channels, sources, provider keys, settings, and minibar positions.</p>
+            <p>One JSON exports everything — the emote listing, channels, sources, provider keys, settings, and minibar positions. Media files themselves stay in IndexedDB (~1.8 GB) and are re-downloaded when you restore.</p>
           </div>
 
           <div class="backup-actions">
@@ -203,7 +203,7 @@
           <span class="section-kicker">Included</span>
           <h2>What gets backed up</h2>
           <ul class="support-list">
-            <li>Emote blobs &amp; metadata (IndexedDB)</li>
+            <li>Full emote listing + source URLs</li>
             <li>Channel &amp; server sources</li>
             <li>Provider API keys</li>
             <li>Settings &amp; preferences</li>
@@ -214,7 +214,8 @@
         <div class="side-block info-block">
           <span class="section-kicker">Note</span>
           <h2>Local by default</h2>
-          <p>Everything stays in <code>chrome.storage.local</code> and IndexedDB. The exported JSON is self-contained and can be moved between browsers, profiles, or machines.</p>
+          <p>Everything stays in <code>chrome.storage.local</code> and IndexedDB. The exported JSON holds the listing, sources, and keys, so it can be moved between browsers, profiles, or machines.</p>
+          <p>Media files are not embedded — restoring re-downloads them from your sources, so the JSON stays small and portable.</p>
         </div>
       </aside>
     </main>

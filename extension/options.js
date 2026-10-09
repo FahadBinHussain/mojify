@@ -1,78 +1,18 @@
 // Options page logic
-// Single master backup/restore: everything (apiKeys, chromeStorage, indexedDBEmotes, localStorage, sourceLinks)
+// Single master backup/restore: everything (apiKeys, chromeStorage, localStorage)
 // No separate Transfer/Source Links panels — everything lives in one master JSON.
-
-/* ═══════════════════════════════════════════════
-   emoteDB wrapper (mirrors popup.js for consistency)
-   ═══════════════════════════════════════════════ */
-const emoteDB = (function () {
-  const DB_NAME = 'EmoteExtensionDB';
-  const STORE = 'emotes';
-  const DB_VERSION = 1;
-  let db = null;
-
-  async function ensureOpen() {
-    if (db) return db;
-    return new Promise((resolve, reject) => {
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onerror = () => reject(req.error);
-      req.onsuccess = () => { db = req.result; resolve(db); };
-      req.onupgradeneeded = (e) => {
-        const d = e.target.result;
-        if (!d.objectStoreNames.contains(STORE)) {
-          d.createObjectStore(STORE, { keyPath: 'id', autoIncrement: true });
-        }
-      };
-    });
-  }
-
-  async function getAllEmotes() {
-    const d = await ensureOpen();
-    return new Promise((resolve, reject) => {
-      const tx = d.transaction([STORE], 'readonly');
-      const store = tx.objectStore(STORE);
-      const req = store.getAll();
-      req.onsuccess = () => resolve(req.result || []);
-      req.onerror = () => reject(req.error);
-    });
-  }
-
-  async function clearAllEmotes() {
-    const d = await ensureOpen();
-    return new Promise((resolve, reject) => {
-      const tx = d.transaction([STORE], 'readwrite');
-      const store = tx.objectStore(STORE);
-      const req = store.clear();
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
-  }
-
-  async function saveEmotes(emotes) {
-    await clearAllEmotes();
-    const d = await ensureOpen();
-    const tx = d.transaction([STORE], 'readwrite');
-    const store = tx.objectStore(STORE);
-    for (const emote of emotes) {
-      const clone = { ...emote };
-      delete clone.id; // let autoIncrement assign
-      store.add(clone);
-    }
-    return new Promise((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  }
-
-  return { getAllEmotes, clearAllEmotes, saveEmotes };
-})();
+//
+// Media blobs are NOT embedded: they live in the `MojifyEmotes` IndexedDB
+// (`emoteBlobs` + `emoteMetadata`, popup.js/background.js) and this library is
+// ~1.8 GB — a JSON file cannot carry that. The backup stores the full listing
+// instead (channels, per-emote source URLs, emoteMapping, triggerToStorageKey)
+// and a restore re-downloads the media through the normal background pipeline.
 
 /* ═══════════════════════════════════════════════
    Master Backup & Restore
    ═══════════════════════════════════════════════ */
 async function createBackup() {
   const chromeStorage = await new Promise((resolve) => chrome.storage.local.get(null, resolve));
-  const indexedDBEmotes = await emoteDB.getAllEmotes();
   const localStorageData = { ...localStorage };
 
   // remove runtime / transient keys
@@ -88,13 +28,17 @@ async function createBackup() {
 
   return {
     type: 'mojify-backup',
-    version: '2.0',
+    version: '3.0',
     exportedAt: new Date().toISOString(),
     data: {
       apiKeys: chromeStorage.apiKeys || {},
       chromeStorage,
-      indexedDBEmotes,
-      localStorage: localStorageData
+      localStorage: localStorageData,
+      media: {
+        included: false,
+        emotesListed: Object.keys(chromeStorage.emoteMapping || {}).length,
+        reason: 'Media blobs stay in IndexedDB; a restore re-downloads them from the source URLs stored above.'
+      }
     }
   };
 }
@@ -144,12 +88,19 @@ async function restoreBackup(raw) {
     const store = { ...data.chromeStorage };
     // avoid overwriting the just-restored apiKeys with stale empty defaults
     if (data.apiKeys) delete store.apiKeys;
+    // these gate the re-download below — a restore must never trip them
+    delete store.skipNextDownload;
+    delete store.lastRestoreTime;
+    delete store.manualRefresh;
+    delete store.downloadInProgress;
     await new Promise((resolve) => chrome.storage.local.set(store, resolve));
   }
 
-  // ── IndexedDB emotes ──
-  if (Array.isArray(data.indexedDBEmotes)) {
-    await emoteDB.saveEmotes(data.indexedDBEmotes);
+  // ── Legacy v2.0 media section: written from a database nothing reads ──
+  // (it was always empty; the media was never in any backup). Loud, not silent.
+  const legacyRecords = Array.isArray(data.indexedDBEmotes) ? data.indexedDBEmotes.length : 0;
+  if (legacyRecords > 0) {
+    console.warn(`[Mojify] ignoring ${legacyRecords} legacy emote records from backup v2.0 (wrong database)`);
   }
 
   // ── localStorage ──
@@ -161,7 +112,50 @@ async function restoreBackup(raw) {
 
   // refresh UI inputs after restore
   loadApiKeys();
-  showStatus('Restore completed successfully. Reload the extension if needed.', 'success');
+
+  const listed = Object.keys((data.chromeStorage && data.chromeStorage.emoteMapping) || {}).length;
+  startMediaRedownload();
+  showStatus(
+    `Restore complete — ${listed} emotes listed. Media files are not stored in backups, ` +
+    'so 7TV/Twitch media is re-downloading now (it keeps going if you close this page). ' +
+    'Discord/Telegram media needs the popup\'s Refresh All with those sites open.' +
+    (legacyRecords > 0 ? ` (${legacyRecords} legacy media records skipped — old format).` : ''),
+    'success',
+    20000
+  );
+}
+
+// Kick the normal background download pipeline. It only re-fetches media that
+// is missing from IndexedDB, so restoring a backup onto a profile that already
+// has the files costs nothing. The background derives the source list from the
+// restored channel listing (bare downloadEmotes only knows Twitch channelIds,
+// which most setups leave empty).
+function startMediaRedownload() {
+  // `manualRefresh` is the background's one-shot "don't skip this run" flag
+  // (background.js removes it once honored).
+  chrome.storage.local.set({ manualRefresh: true }, () => {
+    chrome.runtime.sendMessage({ action: 'redownloadMissingMedia' }, (response) => {
+      if (chrome.runtime.lastError) {
+        showStatus(
+          `Restore done, but the media re-download could not start: ${chrome.runtime.lastError.message}. ` +
+          'Open the popup and click Refresh All.',
+          'error',
+          20000
+        );
+        return;
+      }
+      if (!response || response.success === false) {
+        showStatus(
+          `Restore done, but the media re-download failed: ${(response && response.error) || 'unknown error'}. ` +
+          'Open the popup and click Refresh All.',
+          'error',
+          20000
+        );
+      } else if (response.result && response.result.message === 'All emotes up to date') {
+        showStatus('Restore complete — every media file was already present, nothing to re-download.', 'success');
+      }
+    });
+  });
 }
 
 async function handleRestoreFile(file) {
@@ -189,13 +183,13 @@ async function restoreFromPaste() {
 /* ═══════════════════════════════════════════════
    Status helper
    ═══════════════════════════════════════════════ */
-function showStatus(message, type = 'info') {
+function showStatus(message, type = 'info', durationMs = 5000) {
   const el = document.getElementById('status');
   if (!el) return;
   el.textContent = message;
   el.className = type;
   el.style.display = 'block';
-  setTimeout(() => { el.style.display = 'none'; }, 5000);
+  setTimeout(() => { el.style.display = 'none'; }, durationMs);
 }
 
 /* ═══════════════════════════════════════════════

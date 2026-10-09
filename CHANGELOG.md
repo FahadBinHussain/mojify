@@ -18,12 +18,14 @@ The format is inspired by Keep a Changelog, and this project follows practical s
 
 - Emotes workspace is positioned as a command deck with provider tabs, sorting, and scoped browsing.
 - README now documents source support, insertion targets, privacy model, and release workflow.
+- Backup is now v3.0: it stores the full emote listing (channels, per-emote source URLs, `emoteMapping`, `triggerToStorageKey`) instead of the empty `indexedDBEmotes` section. Media blobs (~1.8 GB) are not embedded — a restore re-downloads them from the stored source URLs, and the options page now says so.
 
 ### Fixed
 
 - Source provider chips (All/Twitch/Discord/Telegram/Giphy/Klipy/Pixabay) no longer vanish when switching to the Giphy, Klipy, or Pixabay tab — only sort, scope, and local stats hide there now.
 - Emote count no longer falls back to the stale `emoteMapping` listing, and the Emotes grid no longer renders a blank card when IndexedDB media is missing: it now shows how many items are listed versus present, with a "run Refresh All" instruction.
 - Media downloads send cookies (`credentials: 'include'`): `cdn.7tv.app` stalls on cookie-less GETs from the extension, which produced the "Timed out after 30000ms" failures during Refresh All.
+- Master restore no longer writes media into a database nothing reads: the `EmoteExtensionDB` wrapper in `options.js` is gone, and a restore now re-downloads media through the normal background pipeline instead of silently losing it.
 
 ### Known Limitations
 

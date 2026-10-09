@@ -864,6 +864,48 @@ async function publishDownloadProgress(progress = {}) {
   });
 }
 
+// Map stored `channels` records to the source shapes downloadEmotes() accepts.
+// Used by the restore path (options.js → redownloadMissingMedia): a backup
+// carries the listing only, so the media must be rebuilt from whatever sources
+// those channels point at. Discord/Telegram media is not handled by
+// downloadEmotes (they import through their own flows) and is skipped here.
+function buildDownloadSourcesFromStoredChannels(channels) {
+  const sources = [];
+  const seen = new Set();
+
+  (channels || []).forEach((channel) => {
+    if (!channel || typeof channel !== 'object') return;
+
+    const id = String(channel.id || '').trim();
+    if (!id || /^(discord|telegram):/i.test(id)) return;
+
+    const isSetChannel = /^7tv-set:/i.test(id) || Boolean(channel.isEmoteSet) || Boolean(channel.emoteSetId);
+    if (isSetChannel) {
+      const setId = String(channel.emoteSetId || id.replace(/^7tv-set:/i, '')).trim();
+      if (!setId || seen.has(`set:${setId}`)) return;
+      seen.add(`set:${setId}`);
+      sources.push({
+        type: '7tv-set',
+        channelId: String(channel.parentChannelId || channel.platformChannelId || '').trim(),
+        setId,
+        setName: channel.emoteSetName || channel.username || setId,
+        username: channel.baseUsername || channel.username || '',
+        sevenTvUserId: channel.sevenTvUserId || '',
+        activeSetId: channel.activeSetId || ''
+      });
+      return;
+    }
+
+    const twitchChannelId = String(channel.platformChannelId || id).trim();
+    if (!/^\d+$/.test(twitchChannelId) && !/^[0-9A-Z]{26}$/.test(twitchChannelId)) return;
+    if (seen.has(`channel:${twitchChannelId}`)) return;
+    seen.add(`channel:${twitchChannelId}`);
+    sources.push({ type: 'twitch-channel', channelId: twitchChannelId });
+  });
+
+  return sources;
+}
+
 async function downloadEmotes(options = {}) {
   // Check if already downloading
   if (downloadState.isDownloading) {
@@ -4772,6 +4814,20 @@ function handleRuntimeMessage(request, sender, sendResponse) {
     downloadEmotes(request.options || {})
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'redownloadMissingMedia') {
+    (async () => {
+      const { channels } = await chrome.storage.local.get(['channels']);
+      const sources = buildDownloadSourcesFromStoredChannels(channels);
+      if (sources.length === 0) {
+        sendResponse({ success: false, error: 'No 7TV or Twitch sources found in the stored channel listing' });
+        return;
+      }
+      const result = await downloadEmotes({ sources });
+      sendResponse({ success: true, sources: sources.length, result });
+    })().catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
 
