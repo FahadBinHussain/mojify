@@ -283,7 +283,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const searchInput = document.getElementById('search-emotes');
   const sortSelect = document.getElementById('emote-sort');
   const sortToolbar = document.querySelector('.sort-toolbar');
-  const workspaceControls = document.getElementById('workspace-controls');
   const scopeToggle = document.getElementById('scope-toggle');
   const scopeCurrentLabel = document.getElementById('scope-current-label');
   const channelFilterBar = document.getElementById('channel-filter-bar');
@@ -912,9 +911,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function updateSortToolbarVisibility() {
     const showLocalControls = isLocalLibraryTab();
-    if (workspaceControls) {
-      workspaceControls.classList.toggle('hidden', !showLocalControls);
-    }
+    // Source chips (All/Twitch/.../Pixabay) stay visible on every media tab so
+    // it's always possible to switch back — only the local-library-only controls
+    // hide here; .emote-stats-compact is hidden by CSS for giphy/klipy/pixabay.
     if (sortToolbar) {
       sortToolbar.classList.toggle('hidden', !showLocalControls);
     }

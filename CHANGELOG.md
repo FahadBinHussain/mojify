@@ -19,6 +19,10 @@ The format is inspired by Keep a Changelog, and this project follows practical s
 - Emotes workspace is positioned as a command deck with provider tabs, sorting, and scoped browsing.
 - README now documents source support, insertion targets, privacy model, and release workflow.
 
+### Fixed
+
+- Source provider chips (All/Twitch/Discord/Telegram/Giphy/Klipy/Pixabay) no longer vanish when switching to the Giphy, Klipy, or Pixabay tab — only sort, scope, and local stats hide there now.
+
 ### Known Limitations
 
 - WhatsApp Web media insertion remains experimental because the site applies stricter trusted-event and media-format checks.

@@ -103,6 +103,21 @@ break again — when it does, first try a fresh wa-js release, then flip
 `waitForAck` to `true` for honest failure surfaced in the popup (it was kept
 `false` deliberately for speed).
 
+## Media-tab toolbar visibility (v1.0.4)
+
+`updateSortToolbarVisibility()` (popup.js) used to hide the whole
+`#workspace-controls` wrapper whenever `isLocalLibraryTab()` was false, i.e.
+on Giphy/Klipy/Pixabay. That wrapper also contains the `.media-tabs` source
+chips (All/Twitch/Discord/Telegram/Giphy/Klipy/Pixabay), so selecting an
+external provider made every chip disappear and there was no way back short
+of reopening the popup.
+
+Rule: the chips row is never hidden — only `.sort-toolbar` and
+`#scope-toggle` are toggled by `isLocalLibraryTab()`, and
+`.emote-stats-compact` is hidden by the CSS attribute selectors on
+`#emotes-tab[data-media-tab="giphy|klipy|pixabay"]`. If a new provider tab
+needs extra controls hidden, add a control, not its container.
+
 ## Git identity
 
 The repo's local `user.email` was the `your-email@example.com` placeholder
