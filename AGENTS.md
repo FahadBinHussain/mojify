@@ -141,6 +141,27 @@ else uses — so backups contain no media and restores can never bring media
 back. Everything else (popup.js, background.js) uses `MojifyEmotes` with
 `emoteBlobs` + `emoteMetadata`.
 
+## 7tv media CDN needs cookies (v1.0.6)
+
+`fetchBlobWithTimeout()` in `background.js` defaults to
+`credentials: 'include'`. Without it, `cdn.7tv.app` (Cloudflare) answers
+HEAD requests normally but never sends the body of a cookie-less GET from the
+extension — the request sits there until the abort fires. That is what showed
+up as hundreds of `Timed out after 30000ms` failures on Refresh All while a
+normal web page could download the very same file.
+
+One-line check from any extension page:
+
+```js
+await fetch(url, { credentials: 'include' }) // resolves, 200
+await fetch(url)                              // hangs until abort
+```
+
+If a future provider starts timing out like this, test both forms before
+blaming rate limits — HEAD success + GET hang is the cookie stall signature.
+Individual emotes are also large (7TV `4x.gif` is routinely 2-3 MB), so keep
+media timeouts at 30s+ even with cookies on.
+
 ## Media-tab toolbar visibility (v1.0.4)
 
 `updateSortToolbarVisibility()` (popup.js) used to hide the whole

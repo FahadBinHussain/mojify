@@ -95,7 +95,10 @@ async function fetchBlobWithTimeout(url, options = {}, timeoutMs = 15000) {
   });
 
   const requestPromise = (async () => {
-    const fetchOptions = Object.assign({}, options, { signal: controller.signal });
+    // cdn.7tv.app (Cloudflare) stalls indefinitely on cookie-less GETs from the
+    // extension — headers come back fine, the body never does, which showed up
+    // as "Timed out after 30000ms" storms on Refresh All. Send cookies.
+    const fetchOptions = Object.assign({ credentials: 'include' }, options, { signal: controller.signal });
     const response = await fetch(url, fetchOptions);
 
     if (!response.ok) {
