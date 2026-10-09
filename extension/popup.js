@@ -2566,13 +2566,10 @@ document.addEventListener('DOMContentLoaded', () => {
         return total + Object.keys(channel?.emotes || {}).length;
       }, 0);
 
-    // For specific source tabs, only count from channels — don't fall back to total
-    let count;
-    if (sourceType === 'all') {
-      count = countFromChannels || emoteDataMap.size || Object.keys(allEmotes).length;
-    } else {
-      count = countFromChannels;
-    }
+    // Count only what the grid can actually render: local IndexedDB assets.
+    // emoteMapping/channels can outlive the blobs, so falling back to them
+    // would show a count with an empty grid.
+    const count = countFromChannels;
     emoteCount.textContent = count;
     const statLabel = document.querySelector('.stat-label-compact');
     if (statLabel) {
@@ -2628,17 +2625,7 @@ document.addEventListener('DOMContentLoaded', () => {
       : Object.keys(allEmotes);
     if (emoteKeys.length === 0) {
       if (isLocalLibraryTab()) {
-        const emptyMessage = activeMediaTab === 'all'
-          ? 'No emotes, stickers, or media imported yet'
-          : activeMediaTab === 'discord' ? 'No Discord emojis or stickers imported yet'
-          : activeMediaTab === 'telegram' ? 'No Telegram stickers imported yet'
-          : 'No emotes loaded';
-        emoteGrid.innerHTML = `
-          <div class="no-emotes-message" style="grid-column: 1 / -1;">
-            <p>${emptyMessage}</p>
-          </div>
-        `;
-        paginationContainer.classList.add('hidden');
+        renderLibraryEmptyState();
       }
       return;
     }
@@ -3430,6 +3417,35 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // Render the emote grid
+  // One place for the "nothing to show" state on the local library tabs.
+  // When the emote listing (emoteMapping/channels) is non-empty but IndexedDB
+  // holds no assets, say that out loud instead of rendering a blank grid.
+  function renderLibraryEmptyState() {
+    paginationContainer.classList.add('hidden');
+
+    const listedCount = Object.keys(allEmotes).length;
+    if (listedCount > 0 && emoteDataMap.size === 0) {
+      emoteGrid.innerHTML = `
+        <div class="no-emotes-message library-missing-assets" style="grid-column: 1 / -1;">
+          <p>${listedCount} ${getActiveLibraryItemUnit()} listed, but the media files are missing from local storage</p>
+          <p class="empty-subtitle wide">Run <strong>Refresh All</strong> on the Emotes tab to re-download them from your saved sources.</p>
+        </div>
+      `;
+      return;
+    }
+
+    const emptyMessage = activeMediaTab === 'all'
+      ? 'No emotes, stickers, or media imported yet'
+      : activeMediaTab === 'discord' ? 'No Discord emojis or stickers imported yet'
+      : activeMediaTab === 'telegram' ? 'No Telegram stickers imported yet'
+      : 'No emotes loaded';
+    emoteGrid.innerHTML = `
+      <div class="no-emotes-message" style="grid-column: 1 / -1;">
+        <p>${emptyMessage}</p>
+      </div>
+    `;
+  }
+
   function renderEmoteGrid(force = false) {
     if (!force && !isTabActive('emotes')) {
       emoteGridDirty = true;
@@ -3509,6 +3525,12 @@ document.addEventListener('DOMContentLoaded', () => {
       renderChannelFilterBar();
       const activeScopeLabel = getScopeLabel(visibleChannels, visibleChannelGroups);
       const { flattenedEntries } = getScopedChannelEntries(visibleChannels, sortMode);
+
+      if (flattenedEntries.length === 0 && isLocalLibraryTab()) {
+        renderLibraryEmptyState();
+        return;
+      }
+
       clampCurrentPageToItemCount(flattenedEntries.length);
       const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
       const endIndex = startIndex + ITEMS_PER_PAGE;

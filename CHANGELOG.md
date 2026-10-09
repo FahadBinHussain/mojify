@@ -22,6 +22,7 @@ The format is inspired by Keep a Changelog, and this project follows practical s
 ### Fixed
 
 - Source provider chips (All/Twitch/Discord/Telegram/Giphy/Klipy/Pixabay) no longer vanish when switching to the Giphy, Klipy, or Pixabay tab — only sort, scope, and local stats hide there now.
+- Emote count no longer falls back to the stale `emoteMapping` listing, and the Emotes grid no longer renders a blank card when IndexedDB media is missing: it now shows how many items are listed versus present, with a "run Refresh All" instruction.
 
 ### Known Limitations
 

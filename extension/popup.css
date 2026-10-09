@@ -1229,6 +1229,20 @@ button:disabled {
   line-height: 1.5;
 }
 
+.empty-subtitle.wide {
+  max-width: 420px;
+}
+
+/* Listing survived but the IndexedDB media is gone — make it unmissable. */
+.no-emotes-message.library-missing-assets {
+  border-style: solid;
+  border-color: var(--danger, #ef4444);
+}
+
+.no-emotes-message.library-missing-assets p:first-of-type {
+  color: var(--danger, #ef4444);
+}
+
 .emote-grid {
   display: flex;
   flex-direction: column;

@@ -103,6 +103,44 @@ break again — when it does, first try a fresh wa-js release, then flip
 `waitForAck` to `true` for honest failure surfaced in the popup (it was kept
 `false` deliberately for speed).
 
+## Count vs grid consistency + empty IndexedDB (v1.0.5)
+
+Symptom reported 2026-10-09: popup showed `2530` in the counter while the
+Emotes grid was blank.
+
+Two compounding causes:
+
+1. `updateEmoteCount()` fell back to `Object.keys(allEmotes).length`
+   (`emoteMapping` in chrome.storage) when the channel-derived count was 0.
+   The listing survives independently of IndexedDB, so it kept reporting the
+   old total after the media was gone.
+2. `ensureEmoteLibraryLoaded()` finishes with `renderEmoteGrid(true)`, which
+   overwrote the empty-state message from `filterAndDisplayEmotes()` with a
+   bare `.channel-section` containing zero items.
+
+Fix: the count only reflects channel entries that have IndexedDB assets, and
+`renderLibraryEmptyState()` is the single place that renders "nothing to
+show" — including a loud branch when `emoteMapping` is non-empty but
+`emoteDataMap` is empty ("N items listed, but the media files are missing…
+Run Refresh All").
+
+Diagnosis when this recurs (any extension page, e.g. popup opened as a tab):
+
+```js
+indexedDB.databases()                                   // expect MojifyEmotes@v5
+// then count stores emoteBlobs + emoteMetadata
+chrome.storage.local.get(['emoteMapping','channels'])   // the listing side
+```
+
+blobs 0 + mapping > 0 = the media is gone, the listing isn't → recovery is
+Refresh All (re-downloads from saved sources), not a re-import.
+
+Related known issue (not yet fixed): the master backup/restore in
+`options.js` reads/writes `EmoteExtensionDB`/`emotes` — a database nothing
+else uses — so backups contain no media and restores can never bring media
+back. Everything else (popup.js, background.js) uses `MojifyEmotes` with
+`emoteBlobs` + `emoteMetadata`.
+
 ## Media-tab toolbar visibility (v1.0.4)
 
 `updateSortToolbarVisibility()` (popup.js) used to hide the whole
