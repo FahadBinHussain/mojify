@@ -1,265 +1,196 @@
-# Mojify
+<p align="center">
+  <img src="extension/icons/icon128.png" width="104" alt="Mojify logo">
+</p>
+
+<h1 align="center">Mojify</h1>
 
 <p align="center">
-  <img src="extension/icons/icon128.png" alt="Mojify logo" width="96" height="96">
+  bring twitch/7tv emotes to any website — channel sync, media providers, popup deck<br>
+  <b>mv3 browser extension</b> · <b>local-first library</b> · <b>adapter-based insertion</b>
 </p>
 
 <p align="center">
-  <strong>A universal emote deck for the web.</strong><br>
-  Search, import, cache, and insert Twitch, 7TV, Discord, Telegram, and reaction media from one browser extension.
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/FahadBinHussain/mojify" alt="MIT license"></a>
+  <a href="https://github.com/FahadBinHussain/mojify/releases/latest"><img src="https://img.shields.io/github/v/release/FahadBinHussain/mojify" alt="latest release"></a>
+  <a href="https://github.com/FahadBinHussain/mojify/actions/workflows/release-extension.yml"><img src="https://github.com/FahadBinHussain/mojify/actions/workflows/release-extension.yml/badge.svg" alt="release workflow"></a>
+  <img src="https://img.shields.io/badge/manifest-mv3-0f172a" alt="manifest v3">
+  <img src="https://img.shields.io/badge/browser-chromium-4285f4" alt="chromium browsers">
+  <img src="https://img.shields.io/badge/storage-local--first-72e5ff" alt="local first storage">
 </p>
 
-<p align="center">
-  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-38d9ff?style=for-the-badge"></a>
-  <img alt="Chrome Manifest V3" src="https://img.shields.io/badge/Chrome-MV3-0f172a?style=for-the-badge&logo=googlechrome&logoColor=white">
-  <img alt="Local first" src="https://img.shields.io/badge/storage-local--first-72e5ff?style=for-the-badge">
-  <img alt="Status" src="https://img.shields.io/badge/status-active--development-1d4ed8?style=for-the-badge">
-</p>
+<table align="center">
+  <tr>
+    <td align="center" width="33%"><b>📺 twitch + 7tv sync</b><br>add channels once — mojify pulls<br>their active 7tv emote sets</td>
+    <td align="center" width="33%"><b>🎮 discord + telegram import</b><br>grab server emoji/stickers or a<br>public sticker set by link</td>
+    <td align="center" width="33%"><b>🔍 fast popup deck</b><br>search, recents, favorites,<br>provider tabs and set filters</td>
+  </tr>
+  <tr>
+    <td align="center"><b>⌨️ :emote: minibar</b><br>type a trigger near any composer<br>and get inline suggestions</td>
+    <td align="center"><b>🧩 adapter insertion</b><br>per-site paths for messenger, discord,<br>telegram, facebook, instagram</td>
+    <td align="center"><b>💾 local-first</b><br>blobs cached in indexeddb with<br>backup/restore, no tracking backend</td>
+  </tr>
+</table>
 
----
-
-## What Is Mojify?
-
-Mojify is a browser extension for people who live in emotes. It builds a local reaction library from Twitch/7TV channels, Discord servers, and media providers, then makes that library available through a fast popup, a typing minibar, and platform-specific insertion adapters.
-
-It is designed around three ideas:
-
-- **Own your reaction library.** Emotes are cached locally in IndexedDB so browsing stays fast after import.
-- **Move faster than platform pickers.** Search, recent items, favorites, provider tabs, and channel/set filters keep the right emote close.
-- **Respect the weird web.** Messenger, Discord, WhatsApp, Telegram, Facebook, and Instagram DMs all behave differently, so Mojify uses adapter-based insertion paths instead of pretending one method works everywhere.
-
-## Highlights
-
-- **Twitch and 7TV imports**: Add Twitch usernames or channel IDs, resolve them, and download their active 7TV emote sets.
-- **7TV set browsing**: View available emote sets for a channel and download alternate sets into Mojify.
-- **Discord server import**: Import custom emojis and stickers from the Discord server open in your browser.
-- **Telegram set import**: Import public Telegram sticker and custom emoji sets by `t.me/addstickers/...` link or short name.
-- **Reaction media tabs**: Search Giphy, Klipy, and Pixabay when API keys are configured.
-- **Smart minibar**: Type `:emote:` on supported pages and get quick suggestions near the composer.
-- **Recent and favorites**: Keep frequently used reactions one click away.
-- **Local-first storage**: Metadata and blobs live in the browser profile, with backup and restore support.
-- **MV3 extension architecture**: Service worker, content script, popup UI, options page, and release workflow.
-
-## Product Preview
+## preview
 
 <table>
   <tr>
     <td width="50%">
-      <strong>Instant insertion</strong><br>
+      <b>instant insertion</b><br>
       <img src="https://i.postimg.cc/BQdczFyK/animation.gif" alt="Mojify insertion preview" width="100%">
     </td>
     <td width="50%">
-      <strong>Smart suggestions</strong><br>
+      <b>smart suggestions</b><br>
       <img src="https://i.postimg.cc/s29DdZK2/Animation.gif" alt="Mojify suggestion preview" width="100%">
     </td>
   </tr>
 </table>
 
-## Supported Sources
+## supported sources
 
-| Source | What Mojify imports | Notes |
+| source | what gets imported | notes |
 | --- | --- | --- |
-| Twitch + 7TV | Channel emotes and 7TV emote sets | Usernames require Twitch credentials; numeric IDs can be used directly. |
-| Discord Web | Server custom emojis and stickers | Import works from the active Discord server tab. |
-| Telegram | Public sticker and custom emoji sets | Requires a Telegram bot token; static image and WebM video stickers import directly, and animated TGS stickers require the optional native lossless helper. |
-| Giphy | Search results | Requires a Giphy API key. |
-| Klipy | Search results | Requires a Klipy API key. |
-| Pixabay | Search results | Requires a Pixabay API key. |
+| twitch + 7tv | channel emotes and 7tv emote sets | usernames need twitch credentials; numeric ids work directly |
+| discord web | server custom emojis and stickers | import runs from the server tab you have open |
+| telegram | public sticker + custom emoji sets | needs a bot token; `.tgs` animated stickers need the optional native helper |
+| giphy / klipy / pixabay | search results | one api key each, configured in settings |
 
-## Comparison
+## insertion targets
 
-`✅` means the tool is built around that capability. `partial` means it has a related feature, but
-not the same workflow or depth. `-` means it is not the point of that tool.
+| target | status | notes |
+| --- | --- | --- |
+| messenger | ✅ | site-specific insertion handling |
+| discord web | ✅ | local media insertion (separate from discord import) |
+| facebook | ✅ | depends on composer shape |
+| telegram web | ✅ | depends on composer shape |
+| instagram dm | ✅ | attaches through the hidden media file input; a dm chat must be open |
+| whatsapp web | ⚠️ experimental | whatsapp changes often and has strict media handling |
 
-| Capability | Mojify | [7TV](https://7tv.app/) | [BetterTTV](https://betterttv.com/) | [FrankerFaceZ](https://www.frankerfacez.com/) | Discord built-in emoji/stickers | Giphy/Tenor-style pickers |
+composers break without warning — if one stops working, open a bug with the
+platform, browser version and console error.
+
+## comparison
+
+`✅` = the tool is built around that capability, `partial` = related feature but
+not the same workflow, `-` = not the point of that tool.
+
+| capability | mojify | [7tv](https://7tv.app/) | [betterttv](https://betterttv.com/) | [frankerfacez](https://www.frankerfacez.com/) | discord built-in | giphy/tenor-style pickers |
 | --- | --- | --- | --- | --- | --- | --- |
-| Twitch/7TV emote import into a personal library | ✅ | partial | partial | partial | - | - |
-| Twitch/YouTube/Kick chat rendering and channel emote management | - | ✅ | ✅ | ✅ | - | - |
-| Discord server emoji/sticker import | ✅ | - | - | - | ✅ | - |
-| Telegram sticker/custom emoji set import | ✅ | - | - | - | - | - |
-| Local-first cache in the browser profile | ✅ | partial | partial | partial | partial | partial |
-| Search, recents, favorites, and provider tabs | ✅ | ✅ | ✅ | ✅ | partial | ✅ |
-| Giphy/Klipy/Pixabay reaction search | ✅ | - | - | - | partial | ✅ |
-| Insert reactions into Messenger, Facebook, Telegram, Discord, WhatsApp, and Instagram Web | partial | - | - | - | partial | partial |
-| Adapter-based insertion for weird composers | ✅ | - | - | - | - | - |
-| Backup/restore of personal reaction library | ✅ | partial | partial | partial | partial | - |
-| Chat moderation and platform customization | - | partial | ✅ | ✅ | ✅ | - |
+| twitch/7tv emote import into a personal library | ✅ | partial | partial | partial | - | - |
+| twitch/youtube/kick chat rendering + channel emote management | - | ✅ | ✅ | ✅ | - | - |
+| discord server emoji/sticker import | ✅ | - | - | - | ✅ | - |
+| telegram sticker/custom emoji set import | ✅ | - | - | - | - | - |
+| local-first cache in the browser profile | ✅ | partial | partial | partial | partial | partial |
+| search, recents, favorites, provider tabs | ✅ | ✅ | ✅ | ✅ | partial | ✅ |
+| giphy/klipy/pixabay reaction search | ✅ | - | - | - | partial | ✅ |
+| insert into messenger, facebook, telegram, discord, whatsapp, instagram | partial | - | - | - | partial | partial |
+| adapter-based insertion for weird composers | ✅ | - | - | - | - | - |
+| backup/restore of the personal library | ✅ | partial | partial | partial | partial | - |
+| chat moderation and platform customization | - | partial | ✅ | ✅ | ✅ | - |
 
-The mature emote extensions are better at their home turf: rendering and managing Twitch-style
-chat emotes. Discord's own picker is also better inside Discord, especially for Nitro and server
-permissions. Mojify is aimed at a different workflow: collect reaction media once, keep it local,
-and use adapter-specific insertion on the messy social web.
+the mature emote extensions win at their home turf: rendering and managing
+twitch-style chat emotes, and discord's own picker beats everything inside
+discord. mojify aims elsewhere — collect reaction media once, keep it local,
+then insert it on the messy social web where pickers don't reach.
 
-The biggest gaps are reliable WhatsApp media insertion, channel-owner management, Twitch chat
-rendering, and import progress/resume polish. Those are worth treating as real backlog items,
-not pretending the table is already won.
+honest gaps: whatsapp insertion is still unreliable, there's no channel-owner
+management or twitch chat rendering, and import progress/resume needs polish.
 
-## Supported Insertion Targets
+## install
 
-| Target | Status | Notes |
-| --- | --- | --- |
-| Messenger | Supported | Uses site-specific insertion handling. |
-| Discord Web | Supported | Local media insertion and Discord imports are separate features. |
-| Facebook | Supported | Depends on composer shape. |
-| Telegram Web | Supported | Depends on composer shape. |
-| WhatsApp Web | Experimental | WhatsApp changes often and has stricter media handling. |
-| Instagram DM | Supported | Attaches via the hidden media file input; a DM chat must be open. |
+1. clone or download this repo
+2. open `chrome://extensions/` (or `edge://extensions/`), enable **developer mode**
+3. **load unpacked** → pick the `extension/` directory
 
-If a platform changes its composer, Mojify may need an adapter update. Please open a bug with the platform, browser version, and console error.
+every push also publishes a `Mojify-<version>.zip` + `.crx` on
+[releases](https://github.com/FahadBinHussain/mojify/releases/latest) — grab
+those if you'd rather not clone.
 
-## Install From Source
+## first run
 
-1. Clone or download this repository.
-2. Open Chrome or a Chromium browser.
-3. Go to `chrome://extensions/`.
-4. Enable `Developer mode`.
-5. Click `Load unpacked`.
-6. Select the `extension` directory.
+1. open the mojify popup → **settings**
+2. add twitch usernames or numeric channel ids and save — downloads start
+   automatically
+3. open the **emotes** tab and search or browse your local library
 
-## First Run
+**discord import:** open the server in a normal tab → mojify popup → discord
+provider → **import open server**.
 
-1. Open the Mojify extension popup.
-2. Go to `Settings`.
-3. Add Twitch usernames or numeric channel IDs.
-4. Save the list. Mojify starts downloading automatically.
-5. Open the `Emotes` tab and search or browse your local library.
+**telegram import:** settings → **open api key settings** → add a bot token →
+emotes tab → telegram provider → paste `t.me/addstickers/UtyaDuck` or the short
+name → **import set**.
 
-For Discord imports:
+### optional native tgs helper
 
-1. Open Discord Web in a normal browser tab.
-2. Navigate to the server you want to import.
-3. Open Mojify and switch to the Discord provider.
-4. Click `Import Open Server`.
-
-For Telegram imports:
-
-1. Open `Settings`, then `Open API Key Settings`.
-2. Add a Telegram bot token.
-3. Open the `Emotes` tab and switch to the Telegram provider.
-4. Paste a public set link like `t.me/addstickers/UtyaDuck` or the short name.
-5. Click `Import Set`.
-
-### Optional Native TGS Helper
-
-Animated Telegram `.tgs` stickers are Lottie/vector files. Mojify downloads the
-source long enough to convert it, then stores only the WebM result used for
-insertion.
-
-For the best local output, install the Native Messaging helper. It renders the
-animation frame-by-frame at the source frame rate in a local Chromium renderer
-and encodes those frames with ffmpeg/libvpx-vp9 lossless mode. If the helper is
-not installed or a conversion fails, Mojify skips animated TGS stickers so
-lower-quality browser conversions do not mix into the library.
-
-Requirements on Windows:
+animated telegram `.tgs` stickers are lottie files. without the helper mojify
+skips them (no low-quality browser conversions in the library); with it, a
+local chromium renders every frame and ffmpeg/libvpx-vp9 encodes lossless webm.
 
 ```powershell
 scoop install nodejs ffmpeg
-```
-
-Install the helper for Chrome and Edge:
-
-```powershell
 powershell -ExecutionPolicy Bypass -File native\telegram-tgs-host\install-native-host.ps1 -Browser Both
-```
-
-Verify the helper:
-
-```powershell
 node native\telegram-tgs-host\mojify-native-host.js --self-test
 ```
 
-Reload the unpacked extension after installing because native messaging is a
-Chrome extension manifest permission.
+reload the unpacked extension afterwards — native messaging is a manifest
+permission.
 
-## Repository Layout
+## repo layout
 
-```text
-Mojify/
-├── extension/                 # Chrome MV3 extension
-│   ├── background.js          # Service worker, imports, downloads, insertion adapters
-│   ├── content.js             # Page integration and minibar behavior
-│   ├── popup.html             # Main extension interface
-│   ├── popup.css              # Popup visual system
-│   ├── popup.js               # Popup state, search, import, and grid logic
-│   ├── options.*              # Provider key management
-│   ├── vendor/                # Small bundled browser-side libraries
-│   └── icons/                 # Extension icons
-├── native/
-│   └── telegram-tgs-host/     # Optional Native Messaging helper for lossless TGS conversion
-├── web/                       # Companion Twitch lookup web app
-├── desktop/                   # Desktop experiments and Tauri prototype
-├── .github/                   # Release workflow and community templates
-├── docs/                      # Architecture and project notes
-├── CHANGELOG.md
-├── CONTRIBUTING.md
-├── SECURITY.md
-└── README.md
-```
+| path | what |
+| --- | --- |
+| `extension/` | mv3 extension, plain js, no build step |
+| `native/telegram-tgs-host/` | optional native messaging helper for lossless tgs conversion |
+| `web/` | companion twitch lookup web app (`pnpm install && pnpm dev`) |
+| `desktop/` | desktop experiments and tauri prototype |
+| `docs/` | architecture and project notes |
+| `.github/` | release workflow + issue/pr templates |
 
-## Development
+## development
 
-This repo is intentionally lightweight at the extension layer. Most checks can be run directly with Node syntax validation:
+no build step — edit `extension/*.js` raw, bump `version` in
+`extension/manifest.json` in the same change, then
+`pwsh tools/reload-extension.ps1`. checks:
 
 ```bash
 node --check extension/background.js
 node --check extension/content.js
 node --check extension/popup.js
 node --check extension/options.js
-node --check native/telegram-tgs-host/mojify-native-host.js
 node native/telegram-tgs-host/mojify-native-host.js --self-test
 ```
 
-For the companion web app:
+every push runs `.github/workflows/release-extension.yml`: it packs the
+extension into a zip + crx (signed with the `MOJIFY_EXTENSION_PEM_B64` secret)
+and publishes a github release named after the manifest version — that's what
+the release badge up top reports.
 
-```bash
-cd web
-pnpm install
-pnpm dev
-```
+## privacy
 
-## Release Artifacts
+- emote metadata, blobs, provider keys and settings live in browser-local
+  storage only
+- no tracking backend for extension usage
+- provider api keys are optional and stored locally on the options page
+- discord imports read only the discord web server tab you have open
+- site adapters run only on the pages they insert into
 
-The GitHub workflow in `.github/workflows/release-extension.yml` packages the `extension` directory as a ZIP and CRX artifact. It expects a `MOJIFY_EXTENSION_PEM_B64` secret for CRX signing.
+## contributing
 
-## Privacy Model
+focused contributions welcome: bug fixes, provider import improvements, platform
+adapter fixes, ui polish, docs, performance. start with
+[CONTRIBUTING.md](CONTRIBUTING.md), then use the templates in `.github/`.
 
-- Mojify stores emote metadata, blobs, provider keys, and settings in browser-local storage.
-- Mojify does not run a tracking backend for extension usage.
-- Provider API keys are optional and stored locally through the options page.
-- Discord imports read the currently open Discord Web server context to discover server media.
-- Site insertion adapters only run in the browser context needed to place media into composers.
+## security
 
-## Contributing
+no exploit details in public issues — see [SECURITY.md](SECURITY.md) for
+responsible reporting.
 
-Mojify is friendly to focused contributions: bug fixes, provider import improvements, platform adapter fixes, UI polish, docs, and performance work.
-
-Start with [CONTRIBUTING.md](CONTRIBUTING.md), then open an issue or pull request using the templates in `.github/`.
-
-## Security
-
-Please do not publish exploit details in public issues. Read [SECURITY.md](SECURITY.md) for responsible reporting guidance.
-
-## Roadmap Themes
-
-- More reliable platform-specific media insertion.
-- Better import progress and resumability.
-- Cleaner provider plug-in boundaries.
-- Stronger performance with very large local emote libraries.
-- Better docs for extension architecture and release flow.
-
-## License
-
-Mojify is released under the [MIT License](LICENSE).
-
-## Acknowledgements
-
-- 7TV and the Twitch emote community for the reaction culture Mojify builds around.
-- Discord, Giphy, Klipy, and Pixabay for media ecosystems that make reaction libraries richer.
-- Browser extension APIs for making local-first user tools possible.
-
-## Contributors
+## contributors
 
 <a href="https://github.com/FahadBinHussain/mojify/graphs/contributors">
   <img src="https://contrib.rocks/image?repo=FahadBinHussain/mojify" alt="Contributors" />
 </a>
+
+## license
+
+[MIT](LICENSE)
