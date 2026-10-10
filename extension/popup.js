@@ -1707,6 +1707,7 @@ document.addEventListener('DOMContentLoaded', () => {
       else if (currentUrl.includes('facebook.com')) currentPlatform = 'facebook';
       else if (currentUrl.includes('telegram.org')) currentPlatform = 'telegram';
       else if (currentUrl.includes('web.whatsapp.com')) currentPlatform = 'whatsapp';
+      else if (currentUrl.includes('instagram.com')) currentPlatform = 'instagram';
 
       // Show platform-specific warnings
       showPlatformWarning(currentPlatform, currentUrl);
@@ -1732,6 +1733,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <li><code>facebook.com</code></li>
               <li><code>telegram.org</code></li>
               <li><code>web.whatsapp.com</code></li>
+              <li><code>instagram.com</code></li>
             </ul>
           </div>
         `;
@@ -1823,7 +1825,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="diagnostic-header">
                   <h3>Insertion Failed</h3>
                   <p>Error: ${error}</p>
-                  <p>Make sure you're on a supported platform (Messenger, Discord, Facebook, Telegram, or WhatsApp) and try clicking in the message input field first</p>
+                  <p>Make sure you're on a supported platform (Messenger, Discord, Facebook, Telegram, WhatsApp, or Instagram) and try clicking in the message input field first</p>
                   <p>You can try reloading the page and trying again</p>
                 </div>
               `;
@@ -2352,6 +2354,149 @@ document.addEventListener('DOMContentLoaded', () => {
         return { success: false, error: 'Discord did not accept the media' };
       };
 
+      // Instagram attaches media through a hidden file input
+      // (accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg") — the same input the
+      // composer's "Add Photo or Video" button feeds after the system
+      // picker. Every route is verified against Instagram's attachment
+      // signal; no route reports success blindly.
+      const findInstagramComposer = () => {
+        const selectors = ['[contenteditable="true"][role="textbox"]', '[contenteditable="true"]', 'textarea'];
+        for (const selector of selectors) {
+          const matches = Array.from(document.querySelectorAll(selector)).filter(isVisible);
+          if (matches.length > 0) return matches[matches.length - 1];
+        }
+        return null;
+      };
+
+      const findInstagramMediaInput = () => {
+        const inputs = Array.from(document.querySelectorAll('input[type="file"]'))
+          .filter((input) => !input.disabled && /image|\.png|\.jpe?g|\.gif/i.test(input.accept || ''));
+        if (inputs.length === 0) return null;
+        const scoreInput = (input) => {
+          const accept = String(input.accept || '').toLowerCase();
+          let score = 0;
+          if (accept.includes('.png')) score += 4;
+          if (input.multiple) score += 2;
+          return score;
+        };
+        return inputs.sort((a, b) => scoreInput(b) - scoreInput(a))[0];
+      };
+
+      const getInstagramAttachmentSignal = (fileName = '') => {
+        const lowerFileName = String(fileName || '').toLowerCase();
+        const removeLabels = Array.from(document.querySelectorAll('[aria-label]'))
+          .map((el) => el.getAttribute('aria-label') || '')
+          .filter((label) => /^remove attachment/i.test(label));
+        const blobImgs = Array.from(document.querySelectorAll('img'))
+          .filter((img) => (img.src || '').startsWith('blob:')).length;
+        return {
+          removeCount: removeLabels.length,
+          hasFilename: Boolean(lowerFileName && removeLabels.some((label) => label.toLowerCase().includes(lowerFileName))),
+          blobImgs
+        };
+      };
+
+      const waitForInstagramAttachment = async (fileName, beforeSignal, timeoutMs = 4500) => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          const signal = getInstagramAttachmentSignal(fileName);
+          if (
+            signal.hasFilename ||
+            signal.removeCount > (beforeSignal?.removeCount || 0) ||
+            signal.blobImgs > (beforeSignal?.blobImgs || 0)
+          ) {
+            return true;
+          }
+          await sleep(120);
+        }
+        // Hidden-tab timer throttling can clamp sleep(120) well past the
+        // timeout window — never report failure without one last look.
+        const finalSignal = getInstagramAttachmentSignal(fileName);
+        return finalSignal.hasFilename ||
+          finalSignal.removeCount > (beforeSignal?.removeCount || 0) ||
+          finalSignal.blobImgs > (beforeSignal?.blobImgs || 0);
+      };
+
+      const insertFileOnInstagram = async (file) => {
+        const composer = findInstagramComposer();
+        const mediaInput = findInstagramMediaInput();
+        if (!composer && !mediaInput) {
+          return { success: false, error: 'Open a direct message chat first' };
+        }
+        if (composer) composer.focus();
+
+        // Route 1: hidden media file input (proven live: assignment +
+        // input/change events is exactly what the attach button produces)
+        if (mediaInput) {
+          try {
+            const beforeSignal = getInstagramAttachmentSignal(file.name);
+            assignFilesToInput(mediaInput, file);
+            if (await waitForInstagramAttachment(file.name, beforeSignal)) {
+              // Gate background mojifyInputListener before insertNameText
+              // types its synthetic `:` (Messenger double-insert note).
+              window.__mojifyLastUpload = Date.now();
+              return withOptionalNameResult({ success: true, method: 'instagram-file-input' }, composer);
+            }
+          } catch (inputError) {
+            console.warn('[Mojify] Instagram file input route failed:', inputError);
+          }
+        }
+
+        // Route 2: paste event on the composer ("Type message or paste image...")
+        if (composer) {
+          try {
+            const beforeSignal = getInstagramAttachmentSignal(file.name);
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+            composer.dispatchEvent(new ClipboardEvent('paste', {
+              bubbles: true,
+              cancelable: true,
+              clipboardData: dataTransfer
+            }));
+            if (await waitForInstagramAttachment(file.name, beforeSignal)) {
+              window.__mojifyLastUpload = Date.now();
+              return withOptionalNameResult({ success: true, method: 'instagram-paste-event' }, composer);
+            }
+          } catch (pasteError) {
+            console.warn('[Mojify] Instagram paste route failed:', pasteError);
+          }
+        }
+
+        // Route 3: drag/drop sequence on the composer
+        if (composer) {
+          try {
+            const beforeSignal = getInstagramAttachmentSignal(file.name);
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+            const rect = composer.getBoundingClientRect();
+            const x = Math.round(rect.left + rect.width / 2);
+            const y = Math.round(rect.top + rect.height / 2);
+            for (const eventType of ['dragenter', 'dragover', 'drop']) {
+              const event = new DragEvent(eventType, {
+                bubbles: true,
+                cancelable: true,
+                dataTransfer,
+                clientX: x,
+                clientY: y,
+                screenX: x,
+                screenY: y
+              });
+              if (eventType !== 'dragenter') event.preventDefault();
+              composer.dispatchEvent(event);
+              await sleep(80);
+            }
+            if (await waitForInstagramAttachment(file.name, beforeSignal)) {
+              window.__mojifyLastUpload = Date.now();
+              return withOptionalNameResult({ success: true, method: 'instagram-drop-event' }, composer);
+            }
+          } catch (dropError) {
+            console.warn('[Mojify] Instagram drop route failed:', dropError);
+          }
+        }
+
+        return { success: false, error: 'Instagram did not accept the media' };
+      };
+
       // Create File directly from base64 (faster - no blob conversion)
       const base64 = base64Data.split(',')[1];
       const mimeMatch = base64Data.match(/data:([^;]+)/);
@@ -2370,6 +2515,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (/discord(app)?\.com$/i.test(window.location.hostname)) {
         return await insertFileOnDiscord(file);
+      }
+
+      if (/instagram\.com$/i.test(window.location.hostname)) {
+        return await insertFileOnInstagram(file);
       }
 
       // Find input field
@@ -5835,6 +5984,7 @@ document.addEventListener('DOMContentLoaded', () => {
         else if (currentUrl.includes('facebook.com')) currentPlatform = 'facebook';
         else if (currentUrl.includes('telegram.org')) currentPlatform = 'telegram';
         else if (currentUrl.includes('web.whatsapp.com')) currentPlatform = 'whatsapp';
+        else if (currentUrl.includes('instagram.com')) currentPlatform = 'instagram';
 
         showPlatformWarning(currentPlatform, currentUrl);
       }

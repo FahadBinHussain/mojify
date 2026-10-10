@@ -1598,8 +1598,19 @@ async function insertEmoteIntoMessenger(tabId, emoteUrl, emoteTrigger) {
   console.log(`[Mojify] Attempting to insert emote ${emoteTrigger} into tab ${tabId} using drag and drop`);
 
   try {
-    // Get the emote blob from IndexedDB
-    const emoteData = await emoteDB.getEmote(emoteTrigger);
+    // Get the emote blob from IndexedDB. emoteMapping/auto-replace passes
+    // trigger-style keys (':pepe:'), but IndexedDB stores under storage keys
+    // (7tv:...) — resolve via triggerToStorageKey first (same as the getEmote
+    // message handler), else the lookup always misses and auto-replace
+    // silently inserts nothing on every platform.
+    let emoteData = await emoteDB.getEmote(emoteTrigger);
+    if (!emoteData) {
+      const stored = await chrome.storage.local.get(['triggerToStorageKey']);
+      const storageKey = stored.triggerToStorageKey?.[emoteTrigger];
+      if (storageKey) {
+        emoteData = await emoteDB.getEmote(storageKey);
+      }
+    }
 
     if (!emoteData || !emoteData.blob) {
       throw new Error(`Emote ${emoteTrigger} not found in cache. Please download emotes first.`);
@@ -1628,10 +1639,177 @@ async function insertEmoteIntoMessenger(tabId, emoteUrl, emoteTrigger) {
 }
 
 // Injected function for drag and drop emote insertion
-function insertEmoteWithDragDrop(imageBlob, emoteTrigger, emoteUrl) {
+async function insertEmoteWithDragDrop(imageBlob, emoteTrigger, emoteUrl) {
   console.log("Mojify: Starting drag and drop insertion for:", emoteTrigger);
 
   try {
+    // Instagram attaches media through the DM composer's hidden file input;
+    // the legacy drag events below are a blind-firing path, so Instagram gets
+    // its own verified branch here. Inlined because chrome.scripting
+    // serializes only THIS function — no helpers outside it exist in the page.
+    if (window.location.hostname.includes('instagram.com')) {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const extensionByMime = {
+        'image/gif': 'gif',
+        'image/webp': 'webp',
+        'image/png': 'png',
+        'image/jpeg': 'jpg',
+        'image/jpg': 'jpg'
+      };
+      const extension = extensionByMime[(imageBlob.type || '').toLowerCase()] || 'png';
+      const safeName = String(emoteTrigger || 'mojify').replace(/[^a-zA-Z0-9_!-]/g, '_').slice(0, 48) || 'mojify';
+      const file = new File([imageBlob], `${safeName}.${extension}`, { type: imageBlob.type || 'image/png' });
+
+      const isVisible = (element) => {
+        if (!element) return false;
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+      };
+
+      const findComposer = () => {
+        const selectors = ['[contenteditable="true"][role="textbox"]', '[contenteditable="true"]', 'textarea'];
+        for (const selector of selectors) {
+          const matches = Array.from(document.querySelectorAll(selector)).filter(isVisible);
+          if (matches.length > 0) return matches[matches.length - 1];
+        }
+        return null;
+      };
+
+      const findMediaInput = () => {
+        const inputs = Array.from(document.querySelectorAll('input[type="file"]'))
+          .filter((input) => !input.disabled && /image|\.png|\.jpe?g|\.gif/i.test(input.accept || ''));
+        if (inputs.length === 0) return null;
+        const score = (input) => {
+          const accept = String(input.accept || '').toLowerCase();
+          let value = 0;
+          if (accept.includes('.png')) value += 4;
+          if (input.multiple) value += 2;
+          return value;
+        };
+        return inputs.sort((a, b) => score(b) - score(a))[0];
+      };
+
+      const getAttachmentSignal = (fileName) => {
+        const lowerFileName = String(fileName || '').toLowerCase();
+        const removeLabels = Array.from(document.querySelectorAll('[aria-label]'))
+          .map((el) => el.getAttribute('aria-label') || '')
+          .filter((label) => /^remove attachment/i.test(label));
+        const blobImgs = Array.from(document.querySelectorAll('img'))
+          .filter((img) => (img.src || '').startsWith('blob:')).length;
+        return {
+          removeCount: removeLabels.length,
+          hasFilename: Boolean(lowerFileName && removeLabels.some((label) => label.toLowerCase().includes(lowerFileName))),
+          blobImgs
+        };
+      };
+
+      const waitForAttachment = async (fileName, beforeSignal, timeoutMs = 4500) => {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          const signal = getAttachmentSignal(fileName);
+          if (
+            signal.hasFilename ||
+            signal.removeCount > (beforeSignal?.removeCount || 0) ||
+            signal.blobImgs > (beforeSignal?.blobImgs || 0)
+          ) {
+            return true;
+          }
+          await sleep(120);
+        }
+        // Hidden-tab timer throttling can clamp sleep(120) well past the
+        // timeout window — never report failure without one last look.
+        const finalSignal = getAttachmentSignal(fileName);
+        return finalSignal.hasFilename ||
+          finalSignal.removeCount > (beforeSignal?.removeCount || 0) ||
+          finalSignal.blobImgs > (beforeSignal?.blobImgs || 0);
+      };
+
+      const composer = findComposer();
+      const mediaInput = findMediaInput();
+      if (!composer && !mediaInput) {
+        console.log("[Mojify] Instagram: no composer or media input (open a DM chat first)");
+        return false;
+      }
+      if (composer) composer.focus();
+
+      // Route 1: assign to the hidden media input
+      if (mediaInput) {
+        try {
+          const beforeSignal = getAttachmentSignal(file.name);
+          const dataTransfer = new DataTransfer();
+          dataTransfer.items.add(file);
+          mediaInput.value = '';
+          const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files');
+          if (descriptor?.set) descriptor.set.call(mediaInput, dataTransfer.files);
+          else mediaInput.files = dataTransfer.files;
+          mediaInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+          mediaInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+          if (await waitForAttachment(file.name, beforeSignal)) {
+            console.log("[Mojify] Instagram media input route succeeded");
+            return true;
+          }
+        } catch (inputError) {
+          console.warn("[Mojify] Instagram media input route failed:", inputError);
+        }
+      }
+
+      // Route 2: paste event on the composer
+      if (composer) {
+        try {
+          const beforeSignal = getAttachmentSignal(file.name);
+          const dataTransfer = new DataTransfer();
+          dataTransfer.items.add(file);
+          composer.dispatchEvent(new ClipboardEvent('paste', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: dataTransfer
+          }));
+          if (await waitForAttachment(file.name, beforeSignal)) {
+            console.log("[Mojify] Instagram paste route succeeded");
+            return true;
+          }
+        } catch (pasteError) {
+          console.warn("[Mojify] Instagram paste route failed:", pasteError);
+        }
+      }
+
+      // Route 3: drag/drop sequence on the composer
+      if (composer) {
+        try {
+          const beforeSignal = getAttachmentSignal(file.name);
+          const dataTransfer = new DataTransfer();
+          dataTransfer.items.add(file);
+          const rect = composer.getBoundingClientRect();
+          const x = Math.round(rect.left + rect.width / 2);
+          const y = Math.round(rect.top + rect.height / 2);
+          for (const eventType of ['dragenter', 'dragover', 'drop']) {
+            const event = new DragEvent(eventType, {
+              bubbles: true,
+              cancelable: true,
+              dataTransfer,
+              clientX: x,
+              clientY: y,
+              screenX: x,
+              screenY: y
+            });
+            if (eventType !== 'dragenter') event.preventDefault();
+            composer.dispatchEvent(event);
+            await sleep(80);
+          }
+          if (await waitForAttachment(file.name, beforeSignal)) {
+            console.log("[Mojify] Instagram drop route succeeded");
+            return true;
+          }
+        } catch (dropError) {
+          console.warn("[Mojify] Instagram drop route failed:", dropError);
+        }
+      }
+
+      console.log("[Mojify] Instagram did not accept the media");
+      return false;
+    }
+
     // Find messenger input field
     const inputSelectors = [
       '[contenteditable="true"][role="textbox"]',
@@ -4473,7 +4651,8 @@ async function startMonitoringTab(tabId) {
       'discordapp.com',
       'facebook.com',
       'telegram.org',
-      'web.whatsapp.com'
+      'web.whatsapp.com',
+      'instagram.com'
     ];
 
     const isSupported = supportedSites.some(site => tab.url.includes(site));

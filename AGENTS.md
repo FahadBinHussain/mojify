@@ -103,6 +103,94 @@ break again — when it does, first try a fresh wa-js release, then flip
 `waitForAck` to `true` for honest failure surfaced in the popup (it was kept
 `false` deliberately for speed).
 
+## Instagram send path (v1.2.0)
+
+Instagram DMs (`instagram.com/direct`) attach media through a **hidden file
+input** (`input[type=file]`, `accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg"`,
+`multiple` — class names are obfuscated and change, filter by accept, not
+class). That is the same input the composer's "Add Photo or Video" button
+feeds after the system picker. The proven insert route:
+
+1. find the input (accept contains an image extension; there is usually a
+   decoy `.json` input on the page — accept filtering skips it);
+2. `assignFilesToInput` = `value=''` + `HTMLInputElement.prototype.files`
+   setter + synthetic `input` + `change` events (React needs both);
+3. **verify** before reporting success: the attachment signal is
+   `aria-label="Remove attachment: <filename>"` (label includes the exact
+   filename) plus the count of `blob:`-src preview images. No route reports
+   success blindly — if all three routes (file input → paste event →
+   drag/drop on the composer) time out (~4.5s each), the popup shows
+   "Instagram did not accept the media". The wait loop ends with one final
+   post-timeout signal check: in a hidden tab Chromium clamps `sleep(120)`
+   to ~60s, so a poll-only loop would exit blind and falsely fail (observed
+   as the paste route getting credit for the file-input route's attachment).
+
+The composer itself is `div[contenteditable="true"][role="textbox"].notranslate`
+and stays present after attaching (its placeholder says "Type message or
+paste image..." — paste is a real Instagram feature, hence route 2). No
+separate caption input exists in the DOM; emote name text (the
+`sendEmoteNameWithMedia` setting, on by default) is typed into the same
+composer, so it rides along as the image caption if Instagram sends it that
+way.
+
+Three copies of this logic exist, deliberately (same pattern as Discord):
+`content.js` `insertFileOnInstagram` (insertEmote flow),
+`popup.js` `insertFileOnInstagram` inside `insertEmoteFromBase64` (the
+popup-click flow, uses the shared `assignFilesToInput`/`isVisible`/`sleep`
+helpers), and `background.js`'s `insertEmoteWithDragDrop` which has the
+Instagram branch **fully inlined** — `chrome.scripting.executeScript`
+serializes only the function it is given, so no top-level helper references
+are allowed inside it. When changing the signal or routes, change all three.
+
+The `:name:` auto-replace path is the shared machinery (background
+`startMonitoringTab` site list → `mojifyInputListener` on `event.data === ':'`
+→ `detectAndReplaceEmotes` → `insertEmoteWithDragDrop`), and the popup path
+sets `window.__mojifyLastUpload` before `insertNameText` so the synthetic
+colons don't double-insert (same Messenger gate).
+
+Key resolution (v1.2.1): `emoteMapping`/auto-replace passes trigger-style
+keys (`:pepe:`), but IndexedDB keys are storage keys (`7tv:7tv-set:...`).
+`insertEmoteIntoMessenger` now falls back to `triggerToStorageKey` when the
+direct `getEmote(trigger)` misses — without it the auto-replace deleted the
+typed text and inserted nothing on every platform. Keep that resolution if
+this function is ever rewritten; the `getEmote` message handler
+(`request.action === 'getEmote'`) resolves the same way.
+
+### Testing Instagram insert without sending anything
+
+- Never press Enter in a DM composer during automated tests — Enter sends.
+  Typing text and attaching media are both local until the user hits Send.
+- Auto-replace test (real machinery end to end): focus the composer, type
+  `:emote_name:` **character by character** (CDP per-char input events, or
+  `Input.insertText` per char) — a single insertText of the whole string
+  produces one `input` event whose `data` is the whole string, which the
+  `event.data === ':'` gate ignores. Then check the Remove-attachment label
+  appeared and the `:name:` text is gone. Two environment gotchas found
+  2026-10-10: CDP `Input.dispatchKeyEvent` is **dropped entirely** on a
+  `visibilityState: 'hidden'` tab (no events fire at all), and
+  `execCommand('insertText')` inserts but Instagram's controlled editor
+  synchronously wipes the text. Workaround that works hidden: write the
+  `:name:` text into the composer directly, then dispatch the trigger
+  `InputEvent('input', {data: ':'})` from a throwaway dummy element outside
+  the React tree — the document-level `mojifyInputListener` sees it while
+  Instagram's handlers (target-based, no state change) leave the text alone.
+- The harness's `cdp(method, **params)` takes keyword params only — passing
+  a dict positionally lands in `session_id` and fails with "Message may
+  have string 'sessionId' property".
+- Two Instagram-specific test facts: a real typing insert persists the
+  attachment as an unsent **draft**, so a page reload RESTORES it (a
+  "clean reload" does not clear test attachments — remove them via the
+  control instead), and that remove control is a bare 9×9
+  `svg[aria-label="Remove attachment"]` with no `click()` method and no
+  button ancestor — dispatch a `pointerdown/mousedown/pointerup/mouseup/
+  click` sequence on it. The bare label resolves to the svg; the
+  `Remove attachment: <filename>` labels are the preview images.
+- The popup cannot be end-to-end tested when it is open as a TAB (its own
+  chrome-extension URL is the active tab, so the "unsupported platform"
+  gate trips by design). The injected `insertEmoteFromBase64` can be
+  extracted from popup.js source and evaluated directly in the Instagram
+  page to test the exact code the toolbar popup would run.
+
 ## Count vs grid consistency + empty IndexedDB (v1.0.5)
 
 Symptom reported 2026-10-09: popup showed `2530` in the counter while the

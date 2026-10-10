@@ -26,7 +26,7 @@ It is designed around three ideas:
 
 - **Own your reaction library.** Emotes are cached locally in IndexedDB so browsing stays fast after import.
 - **Move faster than platform pickers.** Search, recent items, favorites, provider tabs, and channel/set filters keep the right emote close.
-- **Respect the weird web.** Messenger, Discord, WhatsApp, Telegram, and Facebook all behave differently, so Mojify uses adapter-based insertion paths instead of pretending one method works everywhere.
+- **Respect the weird web.** Messenger, Discord, WhatsApp, Telegram, Facebook, and Instagram DMs all behave differently, so Mojify uses adapter-based insertion paths instead of pretending one method works everywhere.
 
 ## Highlights
 
@@ -80,7 +80,7 @@ not the same workflow or depth. `-` means it is not the point of that tool.
 | Local-first cache in the browser profile | ✅ | partial | partial | partial | partial | partial |
 | Search, recents, favorites, and provider tabs | ✅ | ✅ | ✅ | ✅ | partial | ✅ |
 | Giphy/Klipy/Pixabay reaction search | ✅ | - | - | - | partial | ✅ |
-| Insert reactions into Messenger, Facebook, Telegram, Discord, and WhatsApp Web | partial | - | - | - | partial | partial |
+| Insert reactions into Messenger, Facebook, Telegram, Discord, WhatsApp, and Instagram Web | partial | - | - | - | partial | partial |
 | Adapter-based insertion for weird composers | ✅ | - | - | - | - | - |
 | Backup/restore of personal reaction library | ✅ | partial | partial | partial | partial | - |
 | Chat moderation and platform customization | - | partial | ✅ | ✅ | ✅ | - |
@@ -103,6 +103,7 @@ not pretending the table is already won.
 | Facebook | Supported | Depends on composer shape. |
 | Telegram Web | Supported | Depends on composer shape. |
 | WhatsApp Web | Experimental | WhatsApp changes often and has stricter media handling. |
+| Instagram DM | Supported | Attaches via the hidden media file input; a DM chat must be open. |
 
 If a platform changes its composer, Mojify may need an adapter update. Please open a bug with the platform, browser version, and console error.
 
