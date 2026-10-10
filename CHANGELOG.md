@@ -9,6 +9,7 @@ The format is inspired by Keep a Changelog, and this project follows practical s
 ### Added
 
 - Active Channels tree: every source now branches `platform > channel/server > emote set` with connector lines, per-branch expand/collapse, and counts at each level (`Twitch > xQc > Halloween Emotes 2026`), for Discord the same (`Discord > server > Emojis/Stickers`).
+- Emote sets render inside a bordered nested box under their channel (brighter accent lines, 32px indent, parent rows styled as group headers) so sets can't read as siblings of their parent.
 - Discord server media import for custom emojis and stickers.
 - Parent/child scope browsing for Twitch channels, 7TV sets, Discord emojis, and Discord stickers.
 - Recent item pagination for larger recent histories.

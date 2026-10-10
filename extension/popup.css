@@ -2143,7 +2143,8 @@ select:focus {
 /* ── Branch lines (source > channel > set) ────── */
 .channel-list {
   --tree-row-h: 38px;
-  --tree-line: rgba(148, 163, 184, 0.26);
+  --tree-line: rgba(56, 189, 248, 0.32);
+  --tree-line-strong: rgba(56, 189, 248, 0.55);
 }
 
 .channel-tree-source,
@@ -2165,7 +2166,7 @@ select:focus {
 }
 
 /* vertical column beside every branch row (last one stops at its elbow) */
-.channel-tree-node::after {
+.channel-tree-source-children > .channel-tree-node::after {
   content: '';
   position: absolute;
   left: -16px;
@@ -2175,12 +2176,12 @@ select:focus {
   background: var(--tree-line);
 }
 
-.channel-tree-node:last-child::after {
+.channel-tree-source-children > .channel-tree-node:last-child::after {
   height: calc(var(--tree-row-h) / 2);
 }
 
 /* elbow into each row */
-.channel-tree-row::before {
+.channel-tree-source-children > .channel-tree-node > .channel-tree-row::before {
   content: '';
   position: absolute;
   left: -16px;
@@ -2190,26 +2191,55 @@ select:focus {
   background: var(--tree-line);
 }
 
-/* parent row hands its column down to its children (drops at x=0, where the
-   children column sits) */
+/* parent row hands its column down to its children box (2px stub = the
+   box's border-left, aligned at x=10) */
 .channel-tree-node.has-children > .channel-tree-row::after {
   content: '';
   position: absolute;
-  left: 0;
+  left: 10px;
   top: 50%;
-  width: 1px;
+  width: 2px;
   height: 50%;
-  background: var(--tree-line);
+  background: var(--tree-line-strong);
 }
 
+/* set level: a bordered nested box so sets can't read as siblings */
 .channel-tree-children {
   display: none;
   position: relative;
-  padding-left: 16px;
+  margin-left: 10px;
+  padding: 4px 0 4px 20px;
+  background: rgba(56, 189, 248, 0.05);
+  border-left: 2px solid var(--tree-line-strong);
+  border-radius: 0 8px 8px 0;
+}
+
+.channel-tree-children > .channel-tree-node > .channel-tree-row::before {
+  content: '';
+  position: absolute;
+  left: -20px;
+  top: 50%;
+  width: 20px;
+  height: 1px;
+  background: var(--tree-line-strong);
 }
 
 .channel-tree-node.open > .channel-tree-children {
   display: block;
+}
+
+/* parent rows read as group headers, set rows as items */
+.channel-tree-node.has-children > .channel-tree-row {
+  background: rgba(56, 189, 248, 0.06);
+}
+
+.channel-tree-node.has-children > .channel-tree-row:hover {
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.channel-tree-children .channel-tree-channel-name {
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 
 @keyframes treeBranchIn {

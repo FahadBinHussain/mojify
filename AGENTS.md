@@ -233,8 +233,28 @@ Branch geometry lives in popup.css under "Branch lines" and depends on
 `calc(var(--tree-row-h) / 2)`). Keep new row heights on that var instead of
 raw px, or the connector lines drift off-center.
 
+Level geometry (v1.1.1): level 1 draws a 1px column at `row.left - 16` (=
+the source row's 20px padding minus 4, matching the root stub at `left:3px`
++ its 1px border). Level 2 is NOT lines-only — it is a bordered box
+(`.channel-tree-children`: `margin-left:10px`, `border-left:2px`, `padding
+20px`) so sets can't read as siblings of their channel; the parent row's
+`::after` stub is `left:10px; width:2px` and must stay flush with that
+border. Both stay aligned only if margin, border, and stub move together.
+
 Collapse state = the `collapsedChannelTreeNodes` Set in popup.js — in-memory
 on purpose (resets open when the popup closes; nothing to migrate).
+
+## Verifying popup UI via browser-use screenshots (learned v1.1.1)
+
+The popup opened as a tab is usually a BACKGROUND tab → Chromium pauses its
+rendering → `capture_screenshot()` returns a stale frame (byte-identical PNG,
+old version badge) even though `js()` probes show the new DOM. `switch_tab()`
+alone only moves the harness marker; call `activate_tab(targetId)` to actually
+foreground the tab, then confirm freshness before trusting the image (file
+length/timestamp of `~\.config\browser-harness\tmp\shot.png` changed, or the
+DOM probe printed right before the capture matches the expected version).
+`document.hasFocus()` can read true while `visibilityState` is still `'hidden'`
+for a beat after activation — re-probe rather than assuming.
 
 ## Git identity
 
