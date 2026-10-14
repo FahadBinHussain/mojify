@@ -243,6 +243,30 @@ function getCachedEmotePreviewSrc(cachedEmote) {
   return '';
 }
 
+// Resolve a preview src for a trigger key. Discord/Telegram emotes have no
+// IndexedDB blob and no triggerToStorageKey entry — their emoteMapping value IS
+// the CDN URL — so when getEmote() misses, fall back to that raw URL. Without
+// this the minibar and suggestion bar render blank tiles for those emotes.
+async function getCachedEmotePreviewSrcForKey(emoteKey) {
+  let cachedEmote = null;
+  try {
+    cachedEmote = await emoteDB.getEmote(emoteKey);
+  } catch (error) {
+    debugLog("Error loading emote data for", emoteKey, error);
+  }
+
+  const previewSrc = getCachedEmotePreviewSrc(cachedEmote);
+  if (previewSrc) return previewSrc;
+
+  return await new Promise((resolve) => {
+    chrome.storage.local.get(['emoteMapping'], (result) => {
+      if (chrome.runtime.lastError) return resolve('');
+      const mapped = result.emoteMapping && result.emoteMapping[emoteKey];
+      resolve(typeof mapped === 'string' && mapped.startsWith('http') ? mapped : '');
+    });
+  });
+}
+
 // Load emote mapping from storage - retry mechanism
 function loadEmoteMapping() {
   try {
@@ -601,9 +625,10 @@ async function showDiscordEmoteSuggestions(query) {
     const emotesData = await Promise.all(emotePromises);
 
     // Render all emotes at once
-    emotesData.forEach(({ key: emoteKey, data: cachedEmote }, index) => {
-        // Only render if we have valid emote data
-        if (!cachedEmote) return;
+    emotesData.forEach(async ({ key: emoteKey, data: cachedEmote }, index) => {
+        // Resolve the preview src — falls back to the emoteMapping CDN URL when
+        // getEmote() misses (Discord/Telegram emotes have no local blob).
+        const previewSrc = await getCachedEmotePreviewSrcForKey(emoteKey);
 
         const emoteItem = document.createElement('div');
         emoteItem.style.cssText = `
@@ -626,7 +651,6 @@ async function showDiscordEmoteSuggestions(query) {
             object-fit: contain;
         `;
 
-        const previewSrc = getCachedEmotePreviewSrc(cachedEmote);
         if (previewSrc) {
             emoteImg.src = previewSrc;
         }
@@ -1397,10 +1421,10 @@ function showEmoteSuggestions(query, inputElement) {
             object-fit: contain;
         `;
 
-        // Load emote preview if available
+        // Load emote preview if available — falls back to the emoteMapping CDN
+        // URL when getEmote() misses (Discord/Telegram emotes have no local blob).
         if (typeof emoteDB !== 'undefined') {
-            emoteDB.getEmote(emoteKey).then(cachedEmote => {
-                const previewSrc = getCachedEmotePreviewSrc(cachedEmote);
+            getCachedEmotePreviewSrcForKey(emoteKey).then(previewSrc => {
                 if (previewSrc) {
                     emoteImg.src = previewSrc;
                 }

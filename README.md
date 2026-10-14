@@ -37,11 +37,11 @@
   <tr>
     <td width="50%">
       <b>instant insertion</b><br>
-      <img src="https://i.postimg.cc/BQdczFyK/animation.gif" alt="Mojify insertion preview" width="100%">
+      <video src="mojify-messenger-60.mp4" alt="Mojify insertion preview" width="100%" autoplay loop muted playsinline></video>
     </td>
     <td width="50%">
       <b>smart suggestions</b><br>
-      <img src="https://i.postimg.cc/s29DdZK2/Animation.gif" alt="Mojify suggestion preview" width="100%">
+      <video src="mojify-deck-60.mp4" alt="Mojify suggestion preview" width="100%" autoplay loop muted playsinline></video>
     </td>
   </tr>
 </table>
