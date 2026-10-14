@@ -16,3 +16,4 @@ native/telegram-tgs-host/mojify-native-host.exe
 
 python/.env.dev
 **/.env.local
+/.env

@@ -10,6 +10,34 @@ same edit), reload with `pwsh tools/reload-extension.ps1` — it opens
 Reloader (`start msedge http://reload.extensions`) is JS-only and never
 re-reads the manifest; the manual button on `edge://extensions` is fallback.
 
+## Test channels — these only, never random DMs
+
+Every insert / auto-replace / send-path test runs in the dedicated test
+chats below. The real URLs live in `.env` at the repo root — gitignored,
+with `.env.example` documenting the variable names — because this is a
+public repo: thread IDs, channel IDs and phone numbers never go into
+tracked files.
+
+| platform | variable | state |
+|---|---|---|
+| messenger | `MOJIFY_TEST_MESSENGER_URL` | set |
+| facebook | `MOJIFY_TEST_FACEBOOK_URL` | empty — ask the user for a target before any facebook test |
+| discord | `MOJIFY_TEST_DISCORD_URL` | set (test server / channel) |
+| telegram | `MOJIFY_TEST_TELEGRAM_URL` | empty — ask the user for a target before any telegram test |
+| whatsapp | `MOJIFY_TEST_WHATSAPP_URL` | set (own contact, "Fahad Bin Hussain") |
+| instagram | `MOJIFY_TEST_INSTAGRAM_URL` | set (own thread) |
+
+Read them with `Get-Content .env` before any test run (the env-sync
+restore flow may also materialize `.env.local` with the same vars — it
+overrides). WhatsApp links use international digits:
+`web.whatsapp.com/send?phone=` + number — a BD local `019…` drops the
+leading `0` and takes the `880` country prefix. facebook.com and
+messenger.com are separate detection branches (same for discordapp.com =
+discord), so passing a messenger test does not cover facebook.
+
+Never press Enter / Send outside these chats, and never invent another
+conversation to test in — if a platform's variable is empty, ask.
+
 ## Messenger double-insert gotcha
 
 When an emote is clicked in the popup on `messenger.com` / `facebook.com`,
