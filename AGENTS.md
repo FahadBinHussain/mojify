@@ -434,16 +434,31 @@ matching the guild, and otherwise threw
 (`batchRefreshDiscordServers`, used by Refresh All) had always auto-opened, so
 the two behaved differently. Both now go through the same helpers:
 
-- `resolveDiscordGuildTab(serverId, serverName)` — reuses ANY open tab with
-  that guild (background tabs included; the active tab is irrelevant) and
-  otherwise opens one in the background (`active: false`), waits for load, then
-  POLLS (500ms, 20s cap) until the URL actually routes to
-  `/channels/<serverId>`, and only then settles 1.5s for the webpack store to
-  fill in. Every failure path closes the tab when we opened it.
-- `refreshDiscordServer(serverId, serverName)` — resolve + import + close the
-  tab only if we opened it. Wired to the `refreshDiscordServer` message.
-- `importDiscordServerEmojis(tabId, { expectedGuildId, expectedGuildName })` —
-  the guild id comes from the caller, never from the URL.
+- `resolveDiscordGuildTab(serverId, serverName)` — picks the tab to run the
+  import in, in this order: (1) a tab already on the exact guild, (2) **ANY
+  booted Discord tab** — Discord's client can read any guild by id with its
+  session token, so opening a second tab is pointless, (3) no Discord tab at
+  all → open one in the background and wait for boot. Background tabs are fine;
+  the active tab is irrelevant. Every failure path closes a tab only if we
+  opened it.
+
+### "Use my already open Discord tab" — the v1.3.4 fix
+
+v1.3.2/v1.3.3 only reused a tab already sitting on the **target guild**. With
+any other Discord tab open (say FMHY) and the target being GAZA GUILD, it opened
+a FRESH background tab for the target. A brand-new tab has not booted Discord's
+client yet, so `readDiscordToken()` came back empty and the API answered 401 —
+surfacing as "the session token was unavailable and the page had no guild data
+yet". The user's reaction: "use my already open discord tab".
+
+The correct model: **one booted Discord tab can serve every guild.** Step 2
+above is the whole fix. Do not "optimise" it back to an exact-URL match.
+
+Verified live with browser-use against the user's real Edge: clicked refresh on
+PEAK (a guild in their list) from the popup opened as a tab; Discord tab count
+stayed 1 before and after, and the row went to 71 items. GAZA GUILD still
+reports 404 — that is correct, it is genuinely not in the account's server list
+(confirmed from the guild rail DOM).
 
 ### The v1.3.2 false positives — read this before touching the URL checks
 

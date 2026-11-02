@@ -3877,20 +3877,37 @@ async function waitForTabLoaded(tabId, timeoutMs = 15000) {
   });
 }
 
-// Find or open a tab that has the given Discord guild. Reuses ANY open tab
-// (background included) — a matching tab does not have to be active — and
-// otherwise opens one in the background. Returns { tabId, openedByUs } or
-// throws a loud, specific error naming why the server could not be reached.
+// Find a Discord tab to run the import in, or open one.
+//
+// Order matters — this is the "use my already open Discord tab" contract:
+//  1. a tab already sitting on the exact guild,
+//  2. ANY booted Discord tab. Discord's client can read any guild by id with
+//     its session token, so there is no reason to open a second tab. Opening a
+//     FRESH tab for the target guild used to fail: a brand-new tab has not
+//     booted Discord's client yet, so the token read came back empty and the
+//     API answered 401 — reported as "the session token was unavailable".
+//  3. no Discord tab at all → open one in the background and wait for boot.
 async function resolveDiscordGuildTab(serverId, serverName = '') {
   const label = serverName || serverId;
 
   const allTabs = await chrome.tabs.query({});
-  const match = allTabs.find((tab) => {
+  const discordTabs = allTabs.filter((tab) => (
+    tab?.id && !tab.discarded && /discord(?:app)?\.com\/channels\//i.test(String(tab.url || ''))
+  ));
+
+  const exact = discordTabs.find((tab) => {
     const tabMatch = String(tab?.url || '').match(/discord(?:app)?\.com\/channels\/(\d+)/i);
-    return tabMatch && tabMatch[1] === String(serverId) && tab?.id;
+    return tabMatch && tabMatch[1] === String(serverId);
   });
-  if (match) {
-    return { tabId: match.id, openedByUs: false };
+  if (exact) {
+    return { tabId: exact.id, openedByUs: false };
+  }
+
+  // Prefer a tab that finished loading — a still-loading tab has not booted its
+  // client either. A complete tab on any channel can serve any guild.
+  const booted = discordTabs.find((tab) => tab.status === 'complete') || discordTabs[0];
+  if (booted) {
+    return { tabId: booted.id, openedByUs: false };
   }
 
   const tab = await new Promise((resolve) => {
