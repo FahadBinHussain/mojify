@@ -1580,10 +1580,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     notification.classList.remove('hidden');
 
-    setTimeout(() => {
+    // Errors linger (10s) — a 3s flash is not enough to read "server not found
+    // — you may not be a member" before it disappears.
+    clearTimeout(showToast.hideTimer);
+    showToast.hideTimer = setTimeout(() => {
       notification.classList.add('hidden');
       notification.className = 'notification hidden';
-    }, 3000);
+    }, type === 'error' ? 10000 : 3000);
   }
 
   // Custom modal confirmation function
@@ -4679,8 +4682,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (source.site === 'discord') {
         await refreshDiscordChannelSource(channel);
-      } else {
-        const restoreSources = {
+      } else {        const restoreSources = {
           twitchChannels: source.site === 'twitch' && source.type === 'channel' ? [source] : [],
           sevenTvSets: source.site === '7tv' && source.type === 'emote-set' ? [source] : [],
           telegramSets: source.site === 'telegram' && source.type === 'sticker-set' ? [source] : [],
@@ -4709,26 +4711,28 @@ document.addEventListener('DOMContentLoaded', () => {
     const serverId = cleanString(channel.discordGuildId || channel.guildId || channel.id);
     const serverName = channel.discordGuildName || channel.guildName || channel.username || serverId || 'Discord server';
 
-    const tabs = await new Promise((resolve) => {
-      chrome.tabs.query({ active: true, currentWindow: true }, resolve);
-    });
-    const activeTab = tabs[0];
-    const activeGuildMatch = String(activeTab?.url || '').match(/discord(?:app)?\.com\/channels\/([^/]+)/i);
-
-    if (!activeTab?.id || !activeGuildMatch || activeGuildMatch[1] !== serverId) {
-      throw new Error(`Open ${serverName} in Discord first, then refresh this row`);
+    if (!serverId) {
+      throw new Error('This Discord record has no server id saved — delete and re-import the server');
     }
 
     discordImportCompletionHandled = false;
     setDiscordImportUiActive(`Refreshing Discord media from ${serverName}...`);
     startDiscordImportPolling();
 
+    // The background finds ANY open tab with this server (active or not) and
+    // opens one in the background if none exists — no manual "open it first".
     const response = await sendBackgroundMessage({
-      action: 'importDiscordServerEmojis',
-      tabId: activeTab.id
+      action: 'refreshDiscordServer',
+      serverId,
+      serverName
     });
 
     if (!response?.success) {
+      // Claim the completion slot before throwing: the polling loop would
+      // otherwise keep running and could surface a stale success toast.
+      stopDiscordImportPolling();
+      resetDiscordImportUi();
+      discordImportCompletionHandled = true;
       throw new Error(response?.error || `Discord refresh failed for ${serverName}`);
     }
   }

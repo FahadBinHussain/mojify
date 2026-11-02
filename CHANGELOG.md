@@ -33,6 +33,7 @@ The format is inspired by Keep a Changelog, and this project follows practical s
 - Refreshing Discord no longer looks servers up on 7TV (`7TV lookup failed: <guild id>: HTTP error! status: 404`): the 7TV download pipeline used to overwrite a Discord server's parent record with a `sourceType: 'twitch'` one, and the guild id leaked into `channelIds` where the Twitch refresh fed it to the 7TV API. Stored records are now healed from their children on startup, the download path refuses to overwrite non-Twitch records, and Discord/Telegram ids are filtered out of every Twitch source list (refresh-all, refresh-source, refresh-channel, restore).
 - Deleting all Discord or Telegram sources no longer wipes the whole library: an empty `channelIds` was treated as a full clear, but those platforms never live in that list. The cleanup now only runs when the channel listing is empty too.
 - Refresh All now refreshes each Discord server once — the parent, Emojis set, and Stickers set records all resolve to the same server and used to be imported three times.
+- Refreshing a Discord row auto-opens the server again: the row's refresh button now finds any open Discord tab with that server (background tabs included) and opens one in the background when none exists, instead of refusing with "open the server first". A server that cannot be reached fails loudly and specifically — "was not found — you may not be a member of it, or the id is wrong", or "did not finish loading — server not found or Discord is unreachable".
 
 ### Known Limitations
 

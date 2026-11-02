@@ -3506,7 +3506,7 @@ async function extractDiscordGuildFromTab(tabId) {
   return result.result;
 }
 
-async function importDiscordServerEmojis(tabId) {
+async function importDiscordServerEmojis(tabId, { expectedGuildId = '', expectedGuildName = '' } = {}) {
   if (discordImportState.isImporting) {
     throw new Error('A Discord import is already in progress');
   }
@@ -3540,7 +3540,7 @@ async function importDiscordServerEmojis(tabId) {
 
     const tab = await chrome.tabs.get(tabId);
     if (!tab?.url || !/discord(app)?\.com\/channels\//.test(tab.url)) {
-      throw new Error('Open a Discord server in Discord web first');
+      throw new Error('The Discord tab is not on a server channel — server not found');
     }
 
     const guildData = await extractDiscordGuildFromTab(tabId);
@@ -3558,11 +3558,20 @@ async function importDiscordServerEmojis(tabId) {
     discordImportState.total = guildItems.length;
 
     if (!guildId) {
-      throw new Error('Could not determine the current Discord server');
+      throw new Error(`Discord server "${guildName}" was not found — the page did not expose a server id (are you logged in?)`);
+    }
+
+    // A freshly opened /channels/<id> URL that resolves to a DIFFERENT guild
+    // means Discord redirected us (not a member, deleted server, bad id).
+    if (expectedGuildId && guildId !== String(expectedGuildId)) {
+      throw new Error(
+        `Discord server "${expectedGuildName || expectedGuildId}" (${expectedGuildId}) was not found — ` +
+        `Discord landed on "${guildName}" (${guildId}) instead. You may not be a member of that server, or the saved id is stale.`
+      );
     }
 
     if (guildItems.length === 0) {
-      throw new Error('This Discord server has no custom emojis or stickers to import');
+      throw new Error(`Discord server "${guildName}" has no custom emojis or stickers to import`);
     }
 
     const foundParts = [];
@@ -3839,6 +3848,82 @@ function waitForTabLoaded(tabId, timeoutMs = 15000) {
   });
 }
 
+// Find or open a tab that has the given Discord guild. Reuses ANY open tab
+// (background included) — a matching tab does not have to be active — and
+// otherwise opens one in the background. Returns { tabId, openedByUs } or
+// throws a loud, specific error naming why the server could not be reached.
+async function resolveDiscordGuildTab(serverId, serverName = '') {
+  const label = serverName || serverId;
+
+  const allTabs = await chrome.tabs.query({});
+  const match = allTabs.find((tab) => {
+    const tabMatch = String(tab?.url || '').match(/discord(?:app)?\.com\/channels\/(\d+)/i);
+    return tabMatch && tabMatch[1] === String(serverId) && tab?.id;
+  });
+  if (match) {
+    return { tabId: match.id, openedByUs: false };
+  }
+
+  const tab = await new Promise((resolve) => {
+    chrome.tabs.create({ url: `https://discord.com/channels/${serverId}`, active: false }, resolve);
+  });
+  if (!tab?.id) {
+    throw new Error(`Could not open a Discord tab for "${label}" — the browser refused to create the tab`);
+  }
+
+  const loaded = await waitForTabLoaded(tab.id, 15000);
+  if (!loaded) {
+    try { chrome.tabs.remove(tab.id); } catch {}
+    throw new Error(`Discord did not finish loading "${label}" in time — server not found or Discord is unreachable`);
+  }
+
+  // Discord's SPA hydrates the guild after the load event; the import reads its
+  // webpack store, so give the store a moment to populate.
+  await new Promise((r) => setTimeout(r, 2500));
+
+  const loadedTab = await chrome.tabs.get(tab.id).catch(() => null);
+  const landedUrl = String(loadedTab?.url || '');
+  if (/discord(?:app)?\.com\/(login|register)/i.test(landedUrl)) {
+    try { chrome.tabs.remove(tab.id); } catch {}
+    throw new Error(`Discord is not signed in — sign in to Discord in this browser, then refresh "${label}" again`);
+  }
+  const landedMatch = landedUrl.match(/discord(?:app)?\.com\/channels\/(\d+)/i);
+  if (!landedMatch || landedMatch[1] !== String(serverId)) {
+    try { chrome.tabs.remove(tab.id); } catch {}
+    throw new Error(`Discord server "${label}" (${serverId}) was not found — you may not be a member of it, or the id is wrong`);
+  }
+
+  return { tabId: tab.id, openedByUs: true };
+}
+
+async function refreshDiscordServer(serverId, serverName = '') {
+  try {
+    const { tabId, openedByUs } = await resolveDiscordGuildTab(serverId, serverName);
+
+    try {
+      return await importDiscordServerEmojis(tabId, {
+        expectedGuildId: serverId,
+        expectedGuildName: serverName
+      });
+    } finally {
+      if (openedByUs) {
+        try { chrome.tabs.remove(tabId); } catch {}
+      }
+    }
+  } catch (error) {
+    // Record the failure so the popup's polling loop sees the error instead of
+    // a stale "completed" state from a previous run.
+    await updateDiscordImportProgress({
+      inProgress: false,
+      completed: false,
+      error: error.message || `Discord refresh failed for ${serverName || serverId}`,
+      guildId: serverId,
+      guildName: serverName
+    });
+    throw error;
+  }
+}
+
 async function batchRefreshDiscordServers(serverIds) {
   const results = { refreshed: 0, skipped: 0, errors: [] };
 
@@ -3860,42 +3945,8 @@ async function batchRefreshDiscordServers(serverIds) {
     statusText: `Refreshing ${serverIds.length} Discord server${serverIds.length === 1 ? '' : 's'}...`
   });
 
-  const allTabs = await chrome.tabs.query({});
-  const openGuildTabs = new Map();
-  for (const tab of allTabs) {
-    const match = String(tab?.url || '').match(/discord(?:app)?\.com\/channels\/(\d+)/i);
-    if (match && tab.id) {
-      openGuildTabs.set(match[1], tab.id);
-    }
-  }
-
   for (let i = 0; i < serverIds.length; i++) {
     const serverId = String(serverIds[i]);
-    let tabId = openGuildTabs.get(serverId);
-    let openedByUs = false;
-
-    if (!tabId) {
-      const tab = await new Promise((resolve) => {
-        chrome.tabs.create({ url: `https://discord.com/channels/${serverId}`, active: false }, resolve);
-      });
-      if (!tab?.id) {
-        results.skipped++;
-        results.errors.push(`Could not open tab for server ${serverId}`);
-        continue;
-      }
-      tabId = tab.id;
-      openedByUs = true;
-
-      const loaded = await waitForTabLoaded(tabId, 15000);
-      if (!loaded) {
-        try { chrome.tabs.remove(tabId); } catch {}
-        results.skipped++;
-        results.errors.push(`Tab did not load for server ${serverId}`);
-        continue;
-      }
-
-      await new Promise((r) => setTimeout(r, 1500));
-    }
 
     await updateDiscordImportProgress({
       inProgress: true,
@@ -3905,20 +3956,12 @@ async function batchRefreshDiscordServers(serverIds) {
     });
 
     try {
-      const response = await new Promise((resolve, reject) => {
-        importDiscordServerEmojis(tabId)
-          .then((result) => resolve(result))
-          .catch((error) => reject(error));
-      });
+      const response = await refreshDiscordServer(serverId);
       if (response?.success) results.refreshed++;
       else results.skipped++;
     } catch (error) {
       results.skipped++;
       results.errors.push(error.message || `Failed for server ${serverId}`);
-    } finally {
-      if (openedByUs) {
-        try { chrome.tabs.remove(tabId); } catch {}
-      }
     }
   }
 
@@ -5221,6 +5264,13 @@ function handleRuntimeMessage(request, sender, sendResponse) {
   if (request.action === 'batchRefreshDiscordServers') {
     batchRefreshDiscordServers(request.serverIds || [])
       .then((result) => sendResponse({ success: true, ...result }))
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'refreshDiscordServer') {
+    refreshDiscordServer(request.serverId, request.serverName || '')
+      .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }

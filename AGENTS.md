@@ -426,6 +426,46 @@ Also deduped: a guild's three records all resolve to one server id, so Refresh
 All used to import each server three times (`batchRefreshDiscordServers` now
 dedupes server-side too, and Telegram sets dedupe by `setName`).
 
+## Discord refresh auto-opens the server (v1.3.2)
+
+The per-row refresh button used to demand an already-open, ACTIVE Discord tab
+matching the guild, and otherwise threw
+`Open <server> in Discord first, then refresh this row`. The batch path
+(`batchRefreshDiscordServers`, used by Refresh All) had always auto-opened, so
+the two behaved differently. Both now go through the same helpers:
+
+- `resolveDiscordGuildTab(serverId, serverName)` — reuses ANY open tab with
+  that guild (background tabs included; the active tab is irrelevant) and
+  otherwise opens one in the background (`active: false`), waits for load, then
+  waits a further 2.5s because Discord's SPA hydrates the guild after the load
+  event and the import reads its webpack store. After the wait it re-reads the
+  tab URL and throws a specific error per failure mode: login/register page →
+  "Discord is not signed in"; a different guild or `@me` → "was not found — you
+  may not be a member of it, or the id is wrong"; no load at all → "did not
+  finish loading — server not found or Discord is unreachable". Every failure
+  path closes the tab when we opened it.
+- `refreshDiscordServer(serverId, serverName)` — resolve + import + close the
+  tab only if we opened it. Wired to the `refreshDiscordServer` message.
+- `importDiscordServerEmojis(tabId, { expectedGuildId, expectedGuildName })` —
+  when the resolved guild id differs from the expected one, it throws
+  `Discord server "<name>" (<id>) was not found — Discord landed on "<other>"
+  (<other id>) instead. You may not be a member of that server, or the saved id
+  is stale.` This is the loud "server not found" the user asked for.
+
+Two supporting fixes, keep both:
+
+- `refreshDiscordServer` records its failure into `discordImportProgress`
+  (`inProgress: false, completed: false, error`). Without it the popup's polling
+  loop would keep running and could surface a stale success toast over the error.
+- `refreshDiscordChannelSource` (popup) stops polling, resets the import UI, and
+  sets `discordImportCompletionHandled = true` before throwing, for the same
+  reason. `showToast` now holds errors for 10s instead of 3s so the message is
+  actually readable.
+
+Not changed on purpose: the popup's "Import Open Server" button still targets
+the active tab only — it is explicitly the "import what I'm looking at" action,
+not the refresh path.
+
 ## Git identity
 
 The repo's local `user.email` was the `your-email@example.com` placeholder
