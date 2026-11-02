@@ -34,6 +34,7 @@ The format is inspired by Keep a Changelog, and this project follows practical s
 - Deleting all Discord or Telegram sources no longer wipes the whole library: an empty `channelIds` was treated as a full clear, but those platforms never live in that list. The cleanup now only runs when the channel listing is empty too.
 - Refresh All now refreshes each Discord server once — the parent, Emojis set, and Stickers set records all resolve to the same server and used to be imported three times.
 - Refreshing a Discord row auto-opens the server again: the row's refresh button now finds any open Discord tab with that server (background tabs included) and opens one in the background when none exists, instead of refusing with "open the server first". A server that cannot be reached fails loudly and specifically — "was not found — you may not be a member of it, or the id is wrong", or "did not finish loading — server not found or Discord is unreachable".
+- Refreshing a Discord row no longer fails for signed-in members: the resolver sampled the tab URL once after a fixed 2.5s wait, but a freshly opened background Discord tab boots its SPA afterwards and parks on `/channels/@me` first, so a member looked like a stranger ("but im logged in"). It now polls until the guild actually routes, resolves the guild from the id it was given instead of the URL, maps 403/401/404 to their real causes ("not a member" / "session expired" / "server deleted"), and `waitForTabLoaded` no longer misreports an already-complete cached tab as a load timeout.
 
 ### Known Limitations
 

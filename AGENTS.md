@@ -426,7 +426,7 @@ Also deduped: a guild's three records all resolve to one server id, so Refresh
 All used to import each server three times (`batchRefreshDiscordServers` now
 dedupes server-side too, and Telegram sets dedupe by `setName`).
 
-## Discord refresh auto-opens the server (v1.3.2)
+## Discord refresh auto-opens the server (v1.3.2, false positives fixed v1.3.3)
 
 The per-row refresh button used to demand an already-open, ACTIVE Discord tab
 matching the guild, and otherwise threw
@@ -437,20 +437,42 @@ the two behaved differently. Both now go through the same helpers:
 - `resolveDiscordGuildTab(serverId, serverName)` — reuses ANY open tab with
   that guild (background tabs included; the active tab is irrelevant) and
   otherwise opens one in the background (`active: false`), waits for load, then
-  waits a further 2.5s because Discord's SPA hydrates the guild after the load
-  event and the import reads its webpack store. After the wait it re-reads the
-  tab URL and throws a specific error per failure mode: login/register page →
-  "Discord is not signed in"; a different guild or `@me` → "was not found — you
-  may not be a member of it, or the id is wrong"; no load at all → "did not
-  finish loading — server not found or Discord is unreachable". Every failure
-  path closes the tab when we opened it.
+  POLLS (500ms, 20s cap) until the URL actually routes to
+  `/channels/<serverId>`, and only then settles 1.5s for the webpack store to
+  fill in. Every failure path closes the tab when we opened it.
 - `refreshDiscordServer(serverId, serverName)` — resolve + import + close the
   tab only if we opened it. Wired to the `refreshDiscordServer` message.
 - `importDiscordServerEmojis(tabId, { expectedGuildId, expectedGuildName })` —
-  when the resolved guild id differs from the expected one, it throws
-  `Discord server "<name>" (<id>) was not found — Discord landed on "<other>"
-  (<other id>) instead. You may not be a member of that server, or the saved id
-  is stale.` This is the loud "server not found" the user asked for.
+  the guild id comes from the caller, never from the URL.
+
+### The v1.3.2 false positives — read this before touching the URL checks
+
+v1.3.2 sampled the tab URL ONCE after a fixed 2.5s wait and inferred the outcome
+from that single sample. That produced false failures for signed-in members: a
+freshly opened BACKGROUND Discord tab boots its SPA after the load event and
+parks on `/channels/@me` first. The user hit exactly this ("but im logged in").
+
+Rules that came out of it:
+
+- **Never derive the guild id from the URL when the caller knows it.** The id
+  comes in as `expectedGuildId` and is passed to the injected function through
+  `chrome.scripting.executeScript`'s `args` (the `func` is serialized, so it has
+  no closure access). The URL path is only a fallback for the "import whatever
+  server I'm looking at" flow, which has no id to pass.
+- **Poll for the expected state, never single-sample.** One URL read after a
+  fixed delay is a race with Discord's boot.
+- **A 403 is not "not found".** The API status is mapped to the real cause:
+  403 → signed in but not a member, 401 → session expired, 404 → server deleted
+  / wrong id. The old code reported a bare `Discord API responded with 403`.
+- **`waitForTabLoaded` needs the already-complete fast path** and is now
+  `async`. `chrome.tabs.create` resolves before navigation finishes, so a cached
+  Discord page can fire `status: 'complete'` BEFORE the `onUpdated` listener
+  attaches — the wait then times out and reports a load failure for a healthy
+  tab. It checks `tab.status === 'complete'` first.
+- **Do not gate the import on `/channels/<id>` in the tab URL.**
+  `importDiscordServerEmojis` only rejects non-Discord pages now; a hydrating tab
+  sitting on `/channels/@me` is fine because the guild is resolved from the
+  passed id.
 
 Two supporting fixes, keep both:
 

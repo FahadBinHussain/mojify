@@ -3160,17 +3160,28 @@ async function publishTelegramImportLibrarySnapshot({
   });
 }
 
-async function extractDiscordGuildFromTab(tabId) {
+async function extractDiscordGuildFromTab(tabId, { expectedGuildId = '', expectedGuildName = '' } = {}) {
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
     world: 'MAIN',
-    func: async () => {
+    args: [String(expectedGuildId || ''), String(expectedGuildName || '')],
+    func: async (expectedGuildId, expectedGuildName) => {
+      // The guild id must NOT be read from the URL when the caller already knows
+      // it: a freshly opened (especially background) Discord tab sits on
+      // /channels/@me while its SPA boots, which made a logged-in member look
+      // like "not a server page". Only fall back to the path for the
+      // "import whatever server I'm looking at" flow, which has no id to pass.
       const pathMatch = window.location.pathname.match(/^\/channels\/([^/]+)/);
-      if (!pathMatch || pathMatch[1] === '@me') {
-        return { error: 'Open a Discord server, not direct messages' };
-      }
+      const pathGuildId = pathMatch && pathMatch[1] !== '@me' ? pathMatch[1] : '';
+      const guildId = expectedGuildId || pathGuildId;
+      const label = expectedGuildName || guildId;
 
-      const guildId = pathMatch[1];
+      if (!guildId) {
+        if (pathMatch && pathMatch[1] === '@me') {
+          return { error: 'Discord is showing direct messages — open a server first' };
+        }
+        return { error: 'Could not determine which Discord server to read — no server id was supplied and the page is not on a server' };
+      }
 
       const getWebpackRequire = () => {
         try {
@@ -3367,7 +3378,8 @@ async function extractDiscordGuildFromTab(tabId) {
         ));
 
         const guild = guildStore?.getGuild?.(guildId);
-        const guildName = guild?.name || document.title.replace(/\s*\|\s*Discord\s*$/i, '').trim() || 'Discord Server';
+        const guildName = guild?.name || expectedGuildName ||
+          document.title.replace(/\s*\|\s*Discord\s*$/i, '').trim() || 'Discord Server';
         let emojis = normalizeEmojiList(guild?.emojis);
         let stickers = normalizeStickerList(guild?.stickers);
 
@@ -3457,7 +3469,7 @@ async function extractDiscordGuildFromTab(tabId) {
             if (fallbackGuild) {
               return fallbackGuild;
             }
-            return { error: 'Discord session token not found and guild data was unavailable from the current Discord page.' };
+            return { error: `Could not read "${expectedGuildName || guildId}" from Discord — the session token was unavailable and the page had no guild data yet. Open that server in a Discord tab once, then refresh again.` };
           }
         }
 
@@ -3466,7 +3478,16 @@ async function extractDiscordGuildFromTab(tabId) {
           if (fallbackGuild) {
             return fallbackGuild;
           }
-          return { error: `Discord API responded with ${response.status}` };
+          if (response.status === 403) {
+            return { error: `Discord refused access to "${expectedGuildName || guildId}" (403) — you are signed in, but you are not a member of that server` };
+          }
+          if (response.status === 401) {
+            return { error: `Discord session expired while reading "${expectedGuildName || guildId}" (401) — reload Discord in this browser, then refresh again` };
+          }
+          if (response.status === 404) {
+            return { error: `Discord server "${expectedGuildName || guildId}" (${guildId}) does not exist (404) — it may have been deleted, or the saved id is wrong` };
+          }
+          return { error: `Discord API responded with ${response.status} while reading "${expectedGuildName || guildId}"` };
         }
 
         const guild = await response.json();
@@ -3539,11 +3560,19 @@ async function importDiscordServerEmojis(tabId, { expectedGuildId = '', expected
     });
 
     const tab = await chrome.tabs.get(tabId);
-    if (!tab?.url || !/discord(app)?\.com\/channels\//.test(tab.url)) {
-      throw new Error('The Discord tab is not on a server channel — server not found');
+    const tabUrl = String(tab?.url || '');
+    // Only reject pages that cannot be Discord at all. Do NOT require
+    // /channels/<id> here: a background tab that is still hydrating sits on
+    // /channels/@me, and the extraction below resolves the guild from the id we
+    // were given, not from the URL.
+    if (!/discord(?:app)?\.com\//i.test(tabUrl)) {
+      throw new Error(`The Discord tab is not on a Discord page (${tabUrl || 'no url'}) — open Discord in this browser and try again`);
     }
 
-    const guildData = await extractDiscordGuildFromTab(tabId);
+    const guildData = await extractDiscordGuildFromTab(tabId, {
+      expectedGuildId: expectedGuildId || '',
+      expectedGuildName: expectedGuildName || ''
+    });
     guildId = String(guildData.guildId || '').trim();
     guildName = guildData.guildName || 'Discord Server';
     const guildEmojis = Array.isArray(guildData.emojis) ? guildData.emojis.filter((emoji) => emoji?.id) : [];
@@ -3558,16 +3587,7 @@ async function importDiscordServerEmojis(tabId, { expectedGuildId = '', expected
     discordImportState.total = guildItems.length;
 
     if (!guildId) {
-      throw new Error(`Discord server "${guildName}" was not found — the page did not expose a server id (are you logged in?)`);
-    }
-
-    // A freshly opened /channels/<id> URL that resolves to a DIFFERENT guild
-    // means Discord redirected us (not a member, deleted server, bad id).
-    if (expectedGuildId && guildId !== String(expectedGuildId)) {
-      throw new Error(
-        `Discord server "${expectedGuildName || expectedGuildId}" (${expectedGuildId}) was not found — ` +
-        `Discord landed on "${guildName}" (${guildId}) instead. You may not be a member of that server, or the saved id is stale.`
-      );
+      throw new Error(`Discord server "${guildName}" was not found — no server id was supplied and the page is not on a server (are you signed in?)`);
     }
 
     if (guildItems.length === 0) {
@@ -3829,7 +3849,16 @@ async function importDiscordServerEmojis(tabId, { expectedGuildId = '', expected
   }
 }
 
-function waitForTabLoaded(tabId, timeoutMs = 15000) {
+async function waitForTabLoaded(tabId, timeoutMs = 15000) {
+  // Fast path: the tab may already be complete. `chrome.tabs.create` resolves
+  // before the navigation finishes, so a cached page can fire its 'complete'
+  // event BEFORE the listener below is attached — the wait then times out and
+  // reports a load failure for a tab that is actually fine.
+  const current = await chrome.tabs.get(tabId).catch(() => null);
+  if (current?.status === 'complete') {
+    return true;
+  }
+
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       chrome.tabs.onUpdated.removeListener(listener);
@@ -3874,26 +3903,41 @@ async function resolveDiscordGuildTab(serverId, serverName = '') {
   const loaded = await waitForTabLoaded(tab.id, 15000);
   if (!loaded) {
     try { chrome.tabs.remove(tab.id); } catch {}
-    throw new Error(`Discord did not finish loading "${label}" in time — server not found or Discord is unreachable`);
+    throw new Error(`Discord did not finish loading "${label}" in time — Discord may be unreachable, check your connection`);
   }
 
-  // Discord's SPA hydrates the guild after the load event; the import reads its
-  // webpack store, so give the store a moment to populate.
-  await new Promise((r) => setTimeout(r, 2500));
+  // A background Discord tab boots its SPA after the load event and only then
+  // routes /channels/<id>. Poll for the guild to actually appear instead of
+  // sampling the URL once — one sample produced false "not found" / "not signed
+  // in" errors for members whose tab was simply still hydrating.
+  const deadline = Date.now() + 20000;
+  let lastUrl = '';
+  while (Date.now() < deadline) {
+    const currentTab = await chrome.tabs.get(tab.id).catch(() => null);
+    if (!currentTab) break;
+    lastUrl = String(currentTab.url || '');
 
-  const loadedTab = await chrome.tabs.get(tab.id).catch(() => null);
-  const landedUrl = String(loadedTab?.url || '');
-  if (/discord(?:app)?\.com\/(login|register)/i.test(landedUrl)) {
-    try { chrome.tabs.remove(tab.id); } catch {}
-    throw new Error(`Discord is not signed in — sign in to Discord in this browser, then refresh "${label}" again`);
-  }
-  const landedMatch = landedUrl.match(/discord(?:app)?\.com\/channels\/(\d+)/i);
-  if (!landedMatch || landedMatch[1] !== String(serverId)) {
-    try { chrome.tabs.remove(tab.id); } catch {}
-    throw new Error(`Discord server "${label}" (${serverId}) was not found — you may not be a member of it, or the id is wrong`);
+    if (/discord(?:app)?\.com\/(login|register)/i.test(lastUrl)) {
+      try { chrome.tabs.remove(tab.id); } catch {}
+      throw new Error(`Discord is not signed in — sign in to Discord in this browser, then refresh "${label}" again`);
+    }
+
+    const currentMatch = lastUrl.match(/discord(?:app)?\.com\/channels\/(\d+)/i);
+    if (currentMatch && currentMatch[1] === String(serverId)) {
+      // Routed to the guild. Discord's stores may still be filling in, so give
+      // the webpack store a short settle window before the import reads it.
+      await new Promise((r) => setTimeout(r, 1500));
+      return { tabId: tab.id, openedByUs: true };
+    }
+
+    await new Promise((r) => setTimeout(r, 500));
   }
 
-  return { tabId: tab.id, openedByUs: true };
+  try { chrome.tabs.remove(tab.id); } catch {}
+  if (/discord(?:app)?\.com\/channels\/@me/i.test(lastUrl)) {
+    throw new Error(`Discord server "${label}" (${serverId}) was not found — you may not be a member of it, or the saved id is wrong`);
+  }
+  throw new Error(`Discord server "${label}" (${serverId}) did not open — Discord stayed on ${lastUrl || 'an unexpected page'}`);
 }
 
 async function refreshDiscordServer(serverId, serverName = '') {
