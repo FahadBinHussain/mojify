@@ -864,6 +864,101 @@ async function publishDownloadProgress(progress = {}) {
   });
 }
 
+// A channel record's own `sourceType` can be stale: older 7TV download runs
+// overwrote whatever record sat at that id with `sourceType: 'twitch'`, which
+// is how Discord guild parents ended up looking like Twitch channels — and
+// then got resolved against the 7TV API as if their snowflake were a Twitch
+// user id. Discord/Telegram parents name the real platform on their children,
+// so when the record itself says nothing useful the listing decides.
+function resolveChannelSourceType(channel, allChannels = []) {
+  const own = channel?.sourceType || 'twitch';
+  if (own !== 'twitch' || !channel) return own;
+  if (channel.discordGuildId || channel.discordGuildName) return 'discord';
+  if (channel.telegramStickerSetName) return 'telegram';
+
+  const ownKeys = [channel.id, channel.platformChannelId]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+  if (ownKeys.length === 0) return own;
+
+  const child = (allChannels || []).find((candidate) => {
+    if (!candidate || candidate === channel) return false;
+    const candidateType = candidate.sourceType || 'twitch';
+    if (candidateType === 'twitch') return false;
+    const parentKey = String(candidate.parentChannelId || candidate.platformChannelId || '').trim().toLowerCase();
+    return Boolean(parentKey) && ownKeys.includes(parentKey);
+  });
+
+  return child ? (child.sourceType || 'twitch') : own;
+}
+
+// Older runs wrote Discord/Telegram parents back as `sourceType: 'twitch'`
+// (see resolveChannelSourceType) and let their ids leak into `channelIds`.
+// Repair both from the children. Idempotent — safe on every startup.
+async function healMisclassifiedChannelRecords() {
+  const stored = await chrome.storage.local.get(['channels', 'channelIds']);
+  const storedChannels = Array.isArray(stored.channels) ? stored.channels : [];
+  if (storedChannels.length === 0) return { healed: 0, removedChannelIds: 0 };
+
+  const channels = storedChannels.map((channel) => ({ ...channel }));
+  let healed = 0;
+
+  channels.forEach((channel) => {
+    const resolvedType = resolveChannelSourceType(channel, channels);
+    if (resolvedType === 'twitch' || resolvedType === (channel.sourceType || 'twitch')) return;
+
+    const ownKey = String(channel.id || channel.platformChannelId || '').trim().toLowerCase();
+    const child = channels.find((candidate) => {
+      if (!candidate || candidate === channel) return false;
+      const parentKey = String(candidate.parentChannelId || candidate.platformChannelId || '').trim().toLowerCase();
+      return Boolean(ownKey) && parentKey === ownKey && (candidate.sourceType || 'twitch') === resolvedType;
+    });
+
+    channel.sourceType = resolvedType;
+
+    if (resolvedType === 'discord') {
+      const guildId = String(child?.discordGuildId || channel.discordGuildId || channel.id || '').trim();
+      const guildName = String(child?.discordGuildName || channel.discordGuildName || '').trim();
+      if (guildId) channel.discordGuildId = guildId;
+      if (guildName) channel.discordGuildName = guildName;
+      if (guildId && !channel.discordGuildLink) channel.discordGuildLink = `https://discord.com/channels/${guildId}`;
+      if (guildName && /^\d{6,}$/.test(String(channel.username || '').trim())) channel.username = guildName;
+    }
+
+    if (resolvedType === 'telegram') {
+      if (!channel.telegramStickerSetName && child?.telegramStickerSetName) channel.telegramStickerSetName = child.telegramStickerSetName;
+      if (!channel.telegramStickerSetTitle && child?.telegramStickerSetTitle) channel.telegramStickerSetTitle = child.telegramStickerSetTitle;
+      if (!channel.telegramStickerSetLink && child?.telegramStickerSetLink) channel.telegramStickerSetLink = child.telegramStickerSetLink;
+    }
+
+    healed += 1;
+  });
+
+  const nonTwitchIds = new Set();
+  channels.forEach((channel) => {
+    if (resolveChannelSourceType(channel, channels) === 'twitch') return;
+    [channel.id, channel.platformChannelId].forEach((value) => {
+      const id = String(value || '').trim();
+      if (id) nonTwitchIds.add(id);
+    });
+  });
+
+  const storedChannelIds = Array.isArray(stored.channelIds) ? stored.channelIds : [];
+  const cleanedChannelIds = storedChannelIds.filter((id) => !nonTwitchIds.has(String(id || '').trim()));
+  const removedChannelIds = storedChannelIds.length - cleanedChannelIds.length;
+
+  if (healed === 0 && removedChannelIds === 0) return { healed: 0, removedChannelIds: 0 };
+
+  const payload = { channels };
+  if (removedChannelIds > 0) {
+    payload.channelIds = cleanedChannelIds;
+  }
+
+  await chrome.storage.local.set(payload);
+  warnDownload('healed-misclassified-channels', { healed, removedChannelIds, channelIds: cleanedChannelIds });
+  return { healed, removedChannelIds };
+}
+
 // Map stored `channels` records to the source shapes downloadEmotes() accepts.
 // Used by the restore path (options.js → redownloadMissingMedia): a backup
 // carries the listing only, so the media must be rebuilt from whatever sources
@@ -872,12 +967,17 @@ async function publishDownloadProgress(progress = {}) {
 function buildDownloadSourcesFromStoredChannels(channels) {
   const sources = [];
   const seen = new Set();
+  const listing = Array.isArray(channels) ? channels : [];
 
-  (channels || []).forEach((channel) => {
+  listing.forEach((channel) => {
     if (!channel || typeof channel !== 'object') return;
 
     const id = String(channel.id || '').trim();
     if (!id || /^(discord|telegram):/i.test(id)) return;
+
+    // A Discord guild parent stores a bare snowflake as its id, so shape alone
+    // cannot tell it apart from a Twitch channel — the listing decides.
+    if (resolveChannelSourceType(channel, listing) !== 'twitch') return;
 
     const isSetChannel = /^7tv-set:/i.test(id) || Boolean(channel.isEmoteSet) || Boolean(channel.emoteSetId);
     if (isSetChannel) {
@@ -990,6 +1090,18 @@ async function downloadEmotes(options = {}) {
       await chrome.storage.local.remove(['manualRefresh']);
     }
 
+    // Twitch auto-download only: drop ids owned by non-Twitch records (Discord
+    // guild snowflakes leak into channelIds; they must never hit the 7TV API).
+    const channelRecords = await chrome.storage.local.get(['channels']);
+    const nonTwitchOwnedIds = new Set();
+    (Array.isArray(channelRecords.channels) ? channelRecords.channels : []).forEach((channel) => {
+      if (resolveChannelSourceType(channel, channelRecords.channels) === 'twitch') return;
+      [channel.id, channel.platformChannelId].forEach((value) => {
+        const id = String(value || '').trim();
+        if (id) nonTwitchOwnedIds.add(id);
+      });
+    });
+
     const downloadSources = isTargetedDownload
       ? requestedSources
         .map((source) => ({
@@ -1005,15 +1117,22 @@ async function downloadEmotes(options = {}) {
       : (channelIds || [])
         .map((channelId) => String(channelId || '').trim())
         .filter(Boolean)
+        .filter((channelId) => !nonTwitchOwnedIds.has(channelId))
         .map((channelId) => ({ type: 'twitch-channel', channelId }));
 
     if (downloadSources.length === 0) {
       downloadState.isDownloading = false;
+      const droppedNonTwitch = !isTargetedDownload
+        && (channelIds || []).length > 0
+        && nonTwitchOwnedIds.size > 0;
+      const error = droppedNonTwitch
+        ? 'No Twitch sources to download — the saved channel IDs belong to Discord/Telegram sources'
+        : 'No 7TV sources configured';
       await chrome.storage.local.set({
         downloadInProgress: false,
-        downloadProgress: { error: "No 7TV sources configured" }
+        downloadProgress: { error }
       });
-      return { success: false, error: "No 7TV sources configured" };
+      return { success: false, error };
     }
 
     const seenSourceKeys = new Set();
@@ -1055,8 +1174,11 @@ async function downloadEmotes(options = {}) {
     const globalEmoteMapping = existing.emoteMapping || {};
     const globalTriggerToStorageKey = existing.triggerToStorageKey || {};
     const channelsById = new Map();
-    // Load ALL existing channels first (not just current ones)
-    (existing.channels || []).forEach((channel) => {
+    // Load ALL existing channels first (not just current ones). Keep the full
+    // listing around too: a record whose own sourceType is stale needs its
+    // children to be identified (see resolveChannelSourceType).
+    const existingChannelListing = Array.isArray(existing.channels) ? existing.channels : [];
+    existingChannelListing.forEach((channel) => {
       const id = String(channel?.id || '').trim();
       if (id) {
         channelsById.set(id, channel);
@@ -1150,6 +1272,21 @@ async function downloadEmotes(options = {}) {
         successfulChannelFetches++;
       }
       totalResolvedEmotes += resolvedEmoteCount;
+
+      // Never let a 7TV/Twitch resolve overwrite a Discord or Telegram record.
+      // A stale snowflake in `channelIds` resolves to a 404 error result with no
+      // `channelId`, so `storageChannelId` falls back to the snowflake and this
+      // write used to replace the guild parent with a twitch-shaped record —
+      // that is how the Discord entries lost their discordGuildId/GuildName.
+      // The record's own sourceType can itself be stale, so resolve via children.
+      const existingRecord = channelsById.get(storageChannelId);
+      if (existingRecord && resolveChannelSourceType(existingRecord, existingChannelListing) !== 'twitch') {
+        warnDownload('skipped-non-twitch-overwrite', {
+          channelId: storageChannelId,
+          existingSourceType: resolveChannelSourceType(existingRecord, existingChannelListing)
+        });
+        return;
+      }
 
       channelsById.set(storageChannelId, {
         id: storageChannelId,
@@ -3709,6 +3846,13 @@ async function batchRefreshDiscordServers(serverIds) {
     return results;
   }
 
+  // One record per server: a guild's parent + Emojis set + Stickers set all
+  // resolve to the same id, and importing it three times is pure waste.
+  serverIds = Array.from(new Set(serverIds.map((id) => String(id || '').trim()).filter(Boolean)));
+  if (serverIds.length === 0) {
+    return results;
+  }
+
   await updateDiscordImportProgress({
     inProgress: true,
     current: 0,
@@ -4106,6 +4250,16 @@ async function handleChannelIdsChanged(oldChannelIds = [], newChannelIds = []) {
   }
 
   if (newChannelIds.length === 0 && oldChannelIds.length > 0) {
+    // An empty channelIds only means "everything is gone" when the listing is
+    // gone too. Discord/Telegram sources (and 7TV sets) do not live in
+    // channelIds, so a list that empties while channels remain — e.g. deleting
+    // the last Discord server, or the startup source-type heal — is not a full
+    // clear and must never wipe the library.
+    const { channels } = await chrome.storage.local.get(['channels']);
+    if (Array.isArray(channels) && channels.length > 0) {
+      return;
+    }
+
     try {
       await emoteDB.clearAll();
       await chrome.storage.local.remove([
@@ -4217,6 +4371,9 @@ chrome.runtime.onInstalled.addListener((details) => {
     setupContextMenusForUrl(tabs[0]?.url);
   });
   resetDownloadState();
+  healMisclassifiedChannelRecords().catch((error) => {
+    console.warn('[Mojify] Channel source-type heal failed:', error?.message || error);
+  });
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -4226,6 +4383,9 @@ chrome.runtime.onStartup.addListener(() => {
     setupContextMenusForUrl(tabs[0]?.url);
   });
   resetDownloadState();
+  healMisclassifiedChannelRecords().catch((error) => {
+    console.warn('[Mojify] Channel source-type heal failed:', error?.message || error);
+  });
 });
 
 async function getContextMenuTargetTab(tab) {
@@ -4848,7 +5008,7 @@ function handleRuntimeMessage(request, sender, sendResponse) {
         const channels = storage.channels || [];
         const byPlatform = { twitch: [], discord: [], telegram: [] };
         for (const ch of channels) {
-          const st = ch?.sourceType || 'twitch';
+          const st = resolveChannelSourceType(ch, channels);
           if (!byPlatform[st]) byPlatform[st] = [];
           byPlatform[st].push({
             id: ch.id,

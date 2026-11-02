@@ -666,6 +666,31 @@ document.addEventListener('DOMContentLoaded', () => {
     return channel?.sourceType || 'twitch';
   }
 
+  // Older 7TV download runs overwrote Discord/Telegram parents with
+  // `sourceType: 'twitch'` (the heal in background.js fixes the stored copy, but
+  // a popup can render from a pre-heal snapshot). The children still name the
+  // real platform, so resolve through them before trusting the record.
+  function resolveChannelSourceType(channel, channelList = channels) {
+    const own = getChannelSourceType(channel);
+    if (own !== 'twitch' || !channel) return own;
+    if (channel.discordGuildId || channel.discordGuildName) return 'discord';
+    if (channel.telegramStickerSetName) return 'telegram';
+
+    const ownKeys = [channel.id, channel.platformChannelId]
+      .map((value) => normalizeChannelIdentifier(value))
+      .filter(Boolean);
+    if (ownKeys.length === 0) return own;
+
+    const child = (channelList || []).find((candidate) => {
+      if (!candidate || candidate === channel) return false;
+      if (getChannelSourceType(candidate) === 'twitch') return false;
+      const parentKey = normalizeChannelIdentifier(candidate.parentChannelId || candidate.platformChannelId);
+      return Boolean(parentKey) && ownKeys.includes(parentKey);
+    });
+
+    return child ? getChannelSourceType(child) : own;
+  }
+
   function getChannelDisplayName(channel) {
     return channel?.username || channel?.baseUsername || channel?.id || 'Unknown channel';
   }
@@ -2602,9 +2627,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (storageData.emoteMapping && Object.keys(storageData.emoteMapping).length > 0) {
         allEmotes = storageData.emoteMapping;
-        channels = dedupeChannelsById(storageData.channels || []).map((channel) => ({
+        const storedChannels = dedupeChannelsById(storageData.channels || []);
+        // Stamp the resolved type onto each record so every downstream read
+        // (grid filter, counts, tree, delete-group) sees the real platform —
+        // background's heal owns the stored copy, this is display-side only.
+        channels = storedChannels.map((channel) => ({
           ...channel,
-          sourceType: getChannelSourceType(channel)
+          sourceType: resolveChannelSourceType(channel, storedChannels)
         }));
         if ((storageData.channels || []).length !== channels.length) {
           chrome.storage.local.set({ channels });
@@ -4499,8 +4528,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const allTelegramSets = [];
     const allDiscordServers = [];
 
-    for (const channel of (Array.isArray(channels) ? channels : Object.values(channels))) {
-      const source = getRefreshSourceForChannel(channel);
+    const channelListing = Array.isArray(channels) ? channels : Object.values(channels || {});
+    for (const channel of channelListing) {
+      const source = getRefreshSourceForChannel(channel, channelListing);
       if (!source) continue;
       if (source.site === 'twitch' && source.type === 'channel') {
         allTwitchChannels.push(source);
@@ -4514,15 +4544,36 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (includeTwitch && allTwitchChannels.length === 0 && allSevenTvSets.length === 0 && channelIds.length > 0) {
-      channelIds.filter(Boolean).forEach((id) => {
-        allTwitchChannels.push({ type: 'twitch-channel', channelId: String(id).trim() });
+      // Guild snowflakes leaked into channelIds alongside the real Twitch ids —
+      // they belong to Discord/Telegram records and 404 on the 7TV API.
+      const nonTwitchOwnedIds = new Set();
+      channelListing.forEach((channel) => {
+        if (resolveChannelSourceType(channel, channelListing) === 'twitch') return;
+        [channel.id, channel.platformChannelId].forEach((value) => {
+          const id = cleanString(value);
+          if (id) nonTwitchOwnedIds.add(id);
+        });
       });
+
+      channelIds.filter(Boolean)
+        .filter((id) => !nonTwitchOwnedIds.has(cleanString(id)))
+        .forEach((id) => {
+          allTwitchChannels.push({ type: 'twitch-channel', channelId: String(id).trim() });
+        });
     }
 
     const twitchChannels = includeTwitch ? allTwitchChannels : [];
     const sevenTvSets = includeTwitch ? allSevenTvSets : [];
-    const telegramSets = includeTelegram ? allTelegramSets : [];
-    const discordServers = includeDiscord ? allDiscordServers : [];
+    const telegramSets = includeTelegram
+      ? Array.from(new Map(allTelegramSets.filter((s) => s.setName).map((s) => [s.setName, s])).values())
+      : [];
+    // Every record of a Discord server (parent + Emojis set + Stickers set)
+    // resolves to the same server id, so refresh would import it three times.
+    const discordServers = includeDiscord
+      ? Array.from(
+          new Map(allDiscordServers.filter((s) => s.serverId).map((s) => [s.serverId, s])).values()
+        )
+      : [];
 
     const autoRefreshCount = twitchChannels.length + sevenTvSets.length + telegramSets.length;
 
@@ -4690,8 +4741,8 @@ document.addEventListener('DOMContentLoaded', () => {
     updateStorageInfo();
   }
 
-  function getRefreshSourceForChannel(channel) {
-    const sourceType = getChannelSourceType(channel);
+  function getRefreshSourceForChannel(channel, channelList = channels) {
+    const sourceType = resolveChannelSourceType(channel, channelList);
 
     if (sourceType === 'telegram') {
       const setName = cleanTelegramSetName(
@@ -4801,7 +4852,10 @@ document.addEventListener('DOMContentLoaded', () => {
       );
       // Discord server parents carry sourceType 'twitch' in storage, so the
       // children decide which source group a branch lives in.
-      const nodeSource = (node) => getChannelSourceType(node.children[0] || node.record);
+      const nodeSource = (node) => resolveChannelSourceType(node.children[0] || node.record, [
+        ...node.children,
+        ...(node.record ? [node.record] : [])
+      ]);
 
       const sourceGroups = new Map();
       treeNodes.forEach((node) => {
@@ -5131,7 +5185,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const channelIds = dedupeChannelIds(result.channelIds || []);
       const triggerToStorageKey = result.triggerToStorageKey || {};
 
-      const targetChannels = channels.filter((c) => getChannelSourceType(c) === sourceType);
+      const targetChannels = channels.filter((c) => resolveChannelSourceType(c, channels) === sourceType);
       const targetChannelIds = new Set(targetChannels.map((c) => normalizeChannelIdentifier(c.id)));
       const targetRawIds = targetChannels.map(c => c.id).filter(Boolean);
 
@@ -5180,12 +5234,20 @@ document.addEventListener('DOMContentLoaded', () => {
         delete triggerToStorageKey[emoteKey];
       });
 
+      // Deleting Discord/Telegram must also drop their ids from channelIds —
+      // a leftover guild snowflake gets fed to the 7TV API on the next refresh.
+      const cleanedChannelIds = channelIds.filter((id) => !targetRawIds.some(
+        (rawId) => normalizeChannelIdentifier(rawId) === normalizeChannelIdentifier(id)
+      ));
+
       chrome.storage.local.set({
         channels: cleanedChannels,
+        channelIds: cleanedChannelIds,
         emoteMapping,
         emoteImageData,
         triggerToStorageKey
       }, async () => {
+        channelIdsInput.value = cleanedChannelIds.join('\n');
         try {
           // Delete blobs by channel IDs (reliable) + trigger keys (fallback)
           const targetChannelIdValues = targetChannels.map(c => c.id).filter(Boolean);
@@ -6694,7 +6756,24 @@ async function applySourceBackupSources(restoreSources, { verb = 'Restoring' } =
     }
   }
 
-  const mergedChannelIds = dedupeChannelIds([...(stored.channelIds || []), ...resolvedTwitchIds]);
+  // A stored `channelIds` list can carry Discord/Telegram ids from older runs.
+  // They are not Twitch sources and must not be merged back into the Twitch
+  // list (or fed to the 7TV API) on every refresh — drop them for good here.
+  const { channels: storedChannelsForIds } = await new Promise((resolve) => {
+    chrome.storage.local.get(['channels'], resolve);
+  });
+  const channelListing = Array.isArray(storedChannelsForIds) ? storedChannelsForIds : [];
+  const nonTwitchOwnedIds = new Set();
+  channelListing.forEach((channel) => {
+    if (resolveChannelSourceType(channel, channelListing) === 'twitch') return;
+    [channel.id, channel.platformChannelId].forEach((value) => {
+      const id = cleanString(value);
+      if (id) nonTwitchOwnedIds.add(id);
+    });
+  });
+
+  const mergedChannelIds = dedupeChannelIds([...(stored.channelIds || []), ...resolvedTwitchIds])
+    .filter((id) => !nonTwitchOwnedIds.has(cleanString(id)));
   const storedDiscordServers = mergeDiscordSourceLinks(
     stored.mojifySourceBackupDiscordServers || [],
     restoreSources.discordServers

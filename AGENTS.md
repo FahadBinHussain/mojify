@@ -372,6 +372,60 @@ DOM probe printed right before the capture matches the expected version).
 `document.hasFocus()` can read true while `visibilityState` is still `'hidden'`
 for a beat after activation — re-probe rather than assuming.
 
+## Discord records can carry a stale `sourceType` (fixed 2026-11-02, v1.3.1)
+
+Reported: refreshing Discord showed
+`7TV lookup failed: 1369768442663800993: HTTP error! status: 404`.
+
+A Discord server is stored as three records — parent (`id` = guild snowflake,
+`discordGuildId`/`discordGuildName`), `discord:<id>:emojis`, and
+`discord:<id>:stickers` — and only the two set records kept
+`sourceType: 'discord'`. Two compounding causes:
+
+1. `downloadEmotes()` writes every resolved source back as
+   `sourceType: 'twitch'` (the `channelsById.set(storageChannelId, …)` in the
+   `channelResults.forEach`). A stale guild snowflake in `channelIds` resolves
+   to a 404 error result with no `channelId`, so `storageChannelId` fell back
+   to the snowflake and the write replaced the guild **parent** with a
+   twitch-shaped record — dropping `discordGuildId`/`discordGuildName` and
+   replacing `username` with the raw id. `channelIds` itself got the snowflakes
+   from the same runs (they were merged in by the refresh/restore funnel).
+2. `getRefreshSourceForChannel` trusted `sourceType`, so the parent classified
+   as Twitch → `get7TVEmotes(<snowflake>)` → `7tv.io/v3/users/twitch/<id>` → 404.
+
+Fix shape — keep all four parts if this is ever revisited:
+
+- `resolveChannelSourceType(channel, listing)` (both files, same name): a
+  record whose own type is `twitch` but which has `discordGuildId` /
+  `discordGuildName` / `telegramStickerSetName`, or has a non-Twitch child
+  pointing at it via `parentChannelId`/`platformChannelId`, is that platform.
+  Ids alone can't decide — a Discord guild id is a bare snowflake, exactly like
+  a Twitch id.
+- `healMisclassifiedChannelRecords()` (background, runs on `onInstalled` and
+  `onStartup`): rewrites the parents, backfills guild name/id, and drops
+  non-Twitch-owned ids from `channelIds`. Idempotent — second run is a no-op.
+  Safe to re-run; it never touches real Twitch/7TV records.
+- `downloadEmotes()` refuses to overwrite an existing non-Twitch record, and
+  filters non-Twitch-owned ids out of the Twitch auto-download list.
+- `applySourceBackupSources()` (the funnel for refresh-all, refresh-source,
+  refresh-channel, and restore) filters those ids out of the merged
+  `channelIds` so the leak can't be re-amplified.
+
+Do not "simplify" this back to a bare `sourceType` read. Also note the popup
+must pass its fresh listing explicitly (`getRefreshSourceForChannel(channel,
+channelList)`) — resolving against the module-scope `channels` throws
+`channels is not defined` when the listing came straight from storage.
+
+Related trap found in the same pass: `handleChannelIdsChanged` wiped the whole
+library (IndexedDB + `channels` + `emoteMapping`) whenever `channelIds` became
+empty. Discord/Telegram/7TV sets do not live in `channelIds`, so deleting the
+last Discord server — or this heal shrinking the list — triggered a full wipe.
+It now requires the channel listing to be empty as well.
+
+Also deduped: a guild's three records all resolve to one server id, so Refresh
+All used to import each server three times (`batchRefreshDiscordServers` now
+dedupes server-side too, and Telegram sets dedupe by `setName`).
+
 ## Git identity
 
 The repo's local `user.email` was the `your-email@example.com` placeholder

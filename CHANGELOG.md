@@ -30,6 +30,9 @@ The format is inspired by Keep a Changelog, and this project follows practical s
 - Emote count no longer falls back to the stale `emoteMapping` listing, and the Emotes grid no longer renders a blank card when IndexedDB media is missing: it now shows how many items are listed versus present, with a "run Refresh All" instruction.
 - Media downloads send cookies (`credentials: 'include'`): `cdn.7tv.app` stalls on cookie-less GETs from the extension, which produced the "Timed out after 30000ms" failures during Refresh All.
 - Master restore no longer writes media into a database nothing reads: the `EmoteExtensionDB` wrapper in `options.js` is gone, and a restore now re-downloads media through the normal background pipeline instead of silently losing it.
+- Refreshing Discord no longer looks servers up on 7TV (`7TV lookup failed: <guild id>: HTTP error! status: 404`): the 7TV download pipeline used to overwrite a Discord server's parent record with a `sourceType: 'twitch'` one, and the guild id leaked into `channelIds` where the Twitch refresh fed it to the 7TV API. Stored records are now healed from their children on startup, the download path refuses to overwrite non-Twitch records, and Discord/Telegram ids are filtered out of every Twitch source list (refresh-all, refresh-source, refresh-channel, restore).
+- Deleting all Discord or Telegram sources no longer wipes the whole library: an empty `channelIds` was treated as a full clear, but those platforms never live in that list. The cleanup now only runs when the channel listing is empty too.
+- Refresh All now refreshes each Discord server once — the parent, Emojis set, and Stickers set records all resolve to the same server and used to be imported three times.
 
 ### Known Limitations
 
