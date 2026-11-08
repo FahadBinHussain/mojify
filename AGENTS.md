@@ -509,3 +509,11 @@ The repo's local `user.email` was the `your-email@example.com` placeholder
 before any agent touched it (workaround: pass `-c user.email=...` per
 command). Other repos in `Downloads/` use `fahadbinhussain001@gmail.com`
 consistent with the GitHub account `FahadBinHussain`.
+
+## Storage persistence & eviction prevention (v1.3.5)
+
+Chromium marks all extension IndexedDB databases (`MojifyEmotes`) as "best-effort" (temporary) by default. Under low host disk space or quota pressure, Chromium's Quota Manager evicts best-effort IndexedDB data to free storage.
+
+To prevent eviction:
+1. `extension/manifest.json` declares the `"unlimitedStorage"` permission, which exempts the extension origin from Chromium's storage quota and low-space eviction policies.
+2. `extension/background.js` and `extension/options.js` call `navigator.storage.persist()`, explicitly locking the origin storage mode to `persistent`.

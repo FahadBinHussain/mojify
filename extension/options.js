@@ -230,6 +230,9 @@ function saveApiKeys() {
    DOM wiring
    ═══════════════════════════════════════════════ */
 document.addEventListener('DOMContentLoaded', () => {
+  if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
+  }
   loadApiKeys();
 
   // Save API keys

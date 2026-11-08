@@ -121,7 +121,24 @@ const emoteDB = {
   dbName: 'MojifyEmotes',
   version: 5,
 
+  async ensurePersistence() {
+    try {
+      if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+        const isPersisted = await navigator.storage.persisted();
+        if (!isPersisted) {
+          const granted = await navigator.storage.persist();
+          console.log(`[IndexedDB] Persistent storage requested, result: ${granted}`);
+        } else {
+          console.log('[IndexedDB] Persistent storage already active');
+        }
+      }
+    } catch (e) {
+      console.warn('[IndexedDB] Could not ensure persistent storage:', e);
+    }
+  },
+
   async init() {
+    await this.ensurePersistence();
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(this.dbName, this.version);
 
@@ -494,6 +511,8 @@ const emoteDB = {
 };
 
 
+
+emoteDB.ensurePersistence();
 
 function extract7TVEmotes(emoteList = []) {
   const emotes = {};
