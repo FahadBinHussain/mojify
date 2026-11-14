@@ -27,6 +27,7 @@ The format is inspired by Keep a Changelog, and this project follows practical s
 ### Fixed
 
 - Prevent emote eviction during low host disk space: added `unlimitedStorage` permission in `manifest.json` and explicit `navigator.storage.persist()` calls in `background.js` and `options.js` so IndexedDB media blobs are not purged as best-effort storage by Chromium's quota manager.
+- Restore no longer wipes the recents screen: `restoreBackup` merges the backup's `recentItems` into the live list (live first, deduped by `dedupeKey`, capped at 150) instead of overwriting it, so a backup exported with empty recents keeps the current history. The emote library still restores fully from the backup — only the recents history is merged.
 
 - Typing `:name:` no longer deletes the text without inserting the emote: the background insert resolved trigger keys (`:pepe:`) directly against IndexedDB, whose keys are storage keys (`7tv:...`), so the lookup always missed. It now resolves through `triggerToStorageKey` like the rest of the extension (fixes auto-replace on every platform, not just Instagram).
 - Source provider chips (All/Twitch/Discord/Telegram/Giphy/Klipy/Pixabay) no longer vanish when switching to the Giphy, Klipy, or Pixabay tab — only sort, scope, and local stats hide there now.

@@ -70,6 +70,38 @@ async function copyBackupToClipboard() {
   }
 }
 
+// recents are per-profile usage history, not restorable config: a backup
+// exported when recents were empty must not wipe the live list (#2).
+// merge = live entries first, then backup entries not already present,
+// capped at the popup's limit. keep the limit and the dedupeKey shape in
+// sync with RECENT_ITEMS_LIMIT / addRecentItem() in popup.js.
+const RECENT_ITEMS_LIMIT = 150;
+
+function recentDedupeKey(item) {
+  if (!item || !item.type) return '';
+  if (item.dedupeKey) return item.dedupeKey;
+  return item.type === 'emote'
+    ? `emote:${item.key}`
+    : `remote:${item.mediaUrl}:${item.whatsappUrl || ''}`;
+}
+
+async function mergeRecentItems(backupItems) {
+  const live = await new Promise((resolve) =>
+    chrome.storage.local.get(['recentItems'], resolve)
+  );
+  const liveItems = Array.isArray(live.recentItems) ? live.recentItems : [];
+  const incoming = Array.isArray(backupItems) ? backupItems : [];
+  const seen = new Set(liveItems.map(recentDedupeKey));
+  const merged = [...liveItems];
+  for (const item of incoming) {
+    const key = recentDedupeKey(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+  return merged.slice(0, RECENT_ITEMS_LIMIT);
+}
+
 async function restoreBackup(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid backup JSON');
 
@@ -93,6 +125,8 @@ async function restoreBackup(raw) {
     delete store.lastRestoreTime;
     delete store.manualRefresh;
     delete store.downloadInProgress;
+    // recents are usage history, not config — merge, never overwrite (#2)
+    store.recentItems = await mergeRecentItems(store.recentItems);
     await new Promise((resolve) => chrome.storage.local.set(store, resolve));
   }
 

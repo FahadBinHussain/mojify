@@ -517,3 +517,30 @@ Chromium marks all extension IndexedDB databases (`MojifyEmotes`) as "best-effor
 To prevent eviction:
 1. `extension/manifest.json` declares the `"unlimitedStorage"` permission, which exempts the extension origin from Chromium's storage quota and low-space eviction policies.
 2. `extension/background.js` and `extension/options.js` call `navigator.storage.persist()`, explicitly locking the origin storage mode to `persistent`.
+
+## Restore merges recents, it never overwrites them (v1.3.7)
+
+`restoreBackup` (`extension/options.js`) writes the backup's whole
+`chrome.storage.local` snapshot with one `set()`. That is correct for the
+library (`channels`, `emoteMapping`, `triggerToStorageKey`) — a restore is
+supposed to replace those — but `recentItems` is per-profile usage history,
+not config. A backup exported when recents were empty carried
+`recentItems: []`, and restoring it wiped the live recents screen. Both
+restore entries hit it (paste & restore and upload JSON share
+`restoreBackup`).
+
+The fix: before the `set()`, `mergeRecentItems()` reads the live list and
+merges — live entries first, then backup entries not already present
+(matched by `dedupeKey`, derived the same way as `addRecentItem()` in
+`popup.js` for entries that lack one), capped at 150. A fresh profile still
+gets the backup's recents, since the live list is empty there. Keep
+`RECENT_ITEMS_LIMIT` and the dedupeKey shape in `options.js` in sync with
+`popup.js`.
+
+Audit done with this fix (same stale-overwrite hazard, other keys):
+`favoriteEmotes` has it too — favorites added after the backup export get
+wiped the same way (follow-up issue). `emoteSortMode` /
+`sendEmoteNameWithMedia` are settings, backup winning is intended.
+`failedEmotes` / `downloadProgress` are transient and the background
+overwrites them on the next run, so a stale restore is harmless. The
+re-download gate flags were already deleted on restore.
