@@ -19,6 +19,7 @@ The format is inspired by Keep a Changelog, and this project follows practical s
 
 ### Changed
 
+- Copy now leads with the gui deck, not typing: the readme tagline, the feature table (deck first), the manifest description and the repo description all say the same thing — type `:emote:` or search the deck and click to insert, no memorizing names. The old framing ("replaces trigger words") made it sound like typing was the only way in.
 - Emotes workspace is positioned as a command deck with provider tabs, sorting, and scoped browsing.
 - README now documents source support, insertion targets, privacy model, and release workflow.
 - Backup is now v3.0: it stores the full emote listing (channels, per-emote source URLs, `emoteMapping`, `triggerToStorageKey`) instead of the empty `indexedDBEmotes` section. Media blobs (~1.8 GB) are not embedded — a restore re-downloads them from the stored source URLs, and the options page now says so.

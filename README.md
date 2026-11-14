@@ -5,7 +5,7 @@
 <h1 align="center">Mojify</h1>
 
 <p align="center">
-  bring twitch/7tv emotes to any website — channel sync, media providers, popup deck<br>
+  twitch/7tv emotes on any website — type `:emote:` or pick from a searchable gui deck, no memorizing names<br>
   <b>mv3 browser extension</b> · <b>local-first library</b> · <b>adapter-based insertion</b>
 </p>
 
@@ -20,9 +20,9 @@
 
 <table align="center">
   <tr>
+    <td align="center" width="33%"><b>🔍 searchable gui deck</b><br>search, browse, recents, favorites,<br>provider tabs and set filters</td>
     <td align="center" width="33%"><b>📺 twitch + 7tv sync</b><br>add channels once — mojify pulls<br>their active 7tv emote sets</td>
     <td align="center" width="33%"><b>🎮 discord + telegram import</b><br>grab server emoji/stickers or a<br>public sticker set by link</td>
-    <td align="center" width="33%"><b>🔍 fast popup deck</b><br>search, recents, favorites,<br>provider tabs and set filters</td>
   </tr>
   <tr>
     <td align="center"><b>⌨️ :emote: minibar</b><br>type a trigger near any composer<br>and get inline suggestions</td>
@@ -30,6 +30,12 @@
     <td align="center"><b>💾 local-first</b><br>blobs cached in indexeddb with<br>backup/restore, no tracking backend</td>
   </tr>
 </table>
+
+<p align="center">
+  two ways to send: type <code>:name:</code> in any chat box and pick from inline
+  suggestions — or open the mojify popup, search your library and click to
+  insert. you never have to remember an emote's name.
+</p>
 
 ## preview
 
@@ -40,8 +46,8 @@
       <video src="mojify-messenger-60.mp4" alt="Mojify insertion preview" width="100%" autoplay loop muted playsinline></video>
     </td>
     <td width="50%">
-      <b>smart suggestions</b><br>
-      <video src="mojify-deck-60.mp4" alt="Mojify suggestion preview" width="100%" autoplay loop muted playsinline></video>
+      <b>popup deck</b><br>
+      <video src="mojify-deck-60.mp4" alt="Mojify popup deck preview" width="100%" autoplay loop muted playsinline></video>
     </td>
   </tr>
 </table>
