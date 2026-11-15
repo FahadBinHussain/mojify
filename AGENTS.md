@@ -538,8 +538,10 @@ gets the backup's recents, since the live list is empty there. Keep
 `popup.js`.
 
 Audit done with this fix (same stale-overwrite hazard, other keys):
-`favoriteEmotes` has it too — favorites added after the backup export get
-wiped the same way (follow-up issue). `emoteSortMode` /
+`favoriteEmotes` had it too — favorites added after the backup export got
+wiped the same way. Fixed in v1.3.8 (#3) with the same shape:
+`mergeFavoriteEmotes()` unions live + backup keys, live first, no cap
+(favorites have none in `popup.js`). `emoteSortMode` /
 `sendEmoteNameWithMedia` are settings, backup winning is intended.
 `failedEmotes` / `downloadProgress` are transient and the background
 overwrites them on the next run, so a stale restore is harmless. The

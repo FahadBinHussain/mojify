@@ -102,6 +102,19 @@ async function mergeRecentItems(backupItems) {
   return merged.slice(0, RECENT_ITEMS_LIMIT);
 }
 
+// favorites are per-profile user state too, same hazard as recents (#3):
+// a backup exported before an emote was favorited must not unfavorite it.
+// union of live + backup keys, live first. no cap — favorites have none
+// in popup.js (a Set, no limit), so none is invented here.
+async function mergeFavoriteEmotes(backupFavs) {
+  const live = await new Promise((resolve) =>
+    chrome.storage.local.get(['favoriteEmotes'], resolve)
+  );
+  const liveFavs = Array.isArray(live.favoriteEmotes) ? live.favoriteEmotes : [];
+  const incoming = Array.isArray(backupFavs) ? backupFavs : [];
+  return [...new Set([...liveFavs, ...incoming])];
+}
+
 async function restoreBackup(raw) {
   if (!raw || typeof raw !== 'object') throw new Error('Invalid backup JSON');
 
@@ -127,6 +140,8 @@ async function restoreBackup(raw) {
     delete store.downloadInProgress;
     // recents are usage history, not config — merge, never overwrite (#2)
     store.recentItems = await mergeRecentItems(store.recentItems);
+    // favorites are user state, not config — merge, never overwrite (#3)
+    store.favoriteEmotes = await mergeFavoriteEmotes(store.favoriteEmotes);
     await new Promise((resolve) => chrome.storage.local.set(store, resolve));
   }
 
