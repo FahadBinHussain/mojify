@@ -592,6 +592,8 @@ Three fixes, keep all of them:
   cannot save its session in this browser and signing in again will not
   stick. The old "open that server once" / "not signed in" messages only
   appear when storage exists.
+  (CORRECTED in v1.3.11 — see the next section. The storage premise was
+  wrong: Discord itself removes the apis, so the check proved nothing.)
 - The whole `extractDiscordGuildFromTab` call is raced against a 20s
   timeout in `importDiscordServerEmojis`, so a tab that freezes mid-import
   surfaces an error. The timeout MUST live in the service worker: an
@@ -604,3 +606,48 @@ stub must invoke the callback. Verified 12/12 in
 `~/workspace/mojify-board/repro-discord-errors.js` (probe live/frozen,
 storage both ways, frozen import fails fast, extract 401 branches with and
 without storage, 200 happy path, `/login` redirect both ways).
+
+## Discord refresh correction: the storage check was wrong (v1.3.11)
+
+The v1.3.10 storage branch blamed extensions for "blocking Discord's
+storage". That premise was wrong, proven the same day:
+
+- A clean headless Edge with a fresh profile and ZERO extensions still
+  shows `typeof localStorage === 'undefined'` on discord.com, while
+  example.com in the same profile works fine. It is Discord, not any
+  extension, profile setting, flag, or policy.
+- The apis exist at document_start and disappear ~2.3s in, when the
+  client boots — Discord's own client strips them from the main world
+  (anti-token-theft). An isolated world in the same tab still has
+  working storage (set/get/remove round-trip OK).
+- uBO's logger showed no scriptlet or block on discord.com; Vencord's
+  bundle only reads localStorage (3 refs, no deletion); Violentmonkey
+  has no discord userscript and no @inject-into; Mojify runs isolated
+  only. No other extension runs MAIN-world code on discord.com.
+- The session is not stored as a localStorage `token` key at all (128
+  keys listed, no `token`, yet fresh tabs boot logged in) — Discord
+  keeps it elsewhere. So "no token in localStorage" is normal, not a
+  diagnosis.
+
+What changed in 1.3.11: `isDiscordStorageMissing` is deleted. The
+401/no-token branch now says "Discord has no session — sign in to
+Discord in this browser"; the `/login` redirect still says "not signed
+in". The frozen-tab probe and the 20s worker timeout are unchanged —
+those findings stand.
+
+Probe lessons, keep them:
+
+- `#app-mount` exists on the login page too — it does NOT prove
+  logged-in. The real signals are the login form
+  (`input[name=email]` present = logged out) and the `/channels/` path.
+- A fresh tab that lands on `/login` is not proof the session is gone:
+  a stale session (old tab frozen for hours) made early probes land on
+  `/login`, then 4/4 fresh tabs booted logged-in after the old tab woke
+  and the store refreshed. Re-test before concluding.
+- Never print a Discord token or password, and never read localStorage
+  VALUES through the isolated world — key names only.
+
+Verified 11/11 in `~/workspace/mojify-board/repro-discord-errors.js`
+(probe live/frozen, storage check removed, frozen import fails fast,
+401 no-session error names no extension, 200 happy path, `/login`
+redirect names no extension).

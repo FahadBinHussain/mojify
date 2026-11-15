@@ -3204,22 +3204,6 @@ async function probeDiscordTabAlive(tabId, timeoutMs = 3000) {
   }
 }
 
-async function isDiscordStorageMissing(tabId) {
-  // localStorage/sessionStorage can be entirely absent on discord.com (an
-  // extension or rule hiding the storage apis): then no session can persist
-  // and every fresh tab lands on /login. Both undefined = blocked; either
-  // present = storage works.
-  try {
-    const [result] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => typeof localStorage === 'undefined' && typeof sessionStorage === 'undefined'
-    });
-    return result?.result === true;
-  } catch {
-    return false;
-  }
-}
-
 async function extractDiscordGuildFromTab(tabId, { expectedGuildId = '', expectedGuildName = '' } = {}) {
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
@@ -3529,10 +3513,12 @@ async function extractDiscordGuildFromTab(tabId, { expectedGuildId = '', expecte
             if (fallbackGuild) {
               return fallbackGuild;
             }
-            if (typeof localStorage === 'undefined' && typeof sessionStorage === 'undefined') {
-              return { error: `Discord cannot save its session in this browser — something (for example an extension) blocks Discord's storage, so signing in again will not stick. Turn off extensions for discord.com one by one until a fresh Discord tab stays logged in, then refresh "${expectedGuildName || guildId}" again.` };
-            }
-            return { error: `Could not read "${expectedGuildName || guildId}" from Discord — the session token was unavailable and the page had no guild data yet. Open that server in a Discord tab once, then refresh again.` };
+            // No token and no guild data in the page: this tab has no usable
+            // Discord session. (Missing localStorage/sessionStorage here
+            // means nothing — Discord's own client removes those apis from
+            // the main world at boot on every tab, so their absence is
+            // normal and is NOT evidence of an extension blocking storage.)
+            return { error: `Discord has no session for "${expectedGuildName || guildId}" — sign in to Discord in this browser, then refresh again.` };
           }
         }
 
@@ -3965,7 +3951,7 @@ async function waitForTabLoaded(tabId, timeoutMs = 15000) {
 //     its session token, so there is no reason to open a second tab. Opening a
 //     FRESH tab for the target guild used to fail: a brand-new tab has not
 //     booted Discord's client yet, so the token read came back empty and the
-//     API answered 401 — reported as "the session token was unavailable".
+//     API answered 401 — reported as "Discord has no session".
 //  3. no Discord tab at all → open one in the background and wait for boot.
 async function resolveDiscordGuildTab(serverId, serverName = '') {
   const label = serverName || serverId;
@@ -4015,11 +4001,7 @@ async function resolveDiscordGuildTab(serverId, serverName = '') {
     lastUrl = String(currentTab.url || '');
 
     if (/discord(?:app)?\.com\/(login|register)/i.test(lastUrl)) {
-      const storageMissing = await isDiscordStorageMissing(tab.id);
       try { chrome.tabs.remove(tab.id); } catch {}
-      if (storageMissing) {
-        throw new Error(`Discord cannot save its session in this browser — something (for example an extension) blocks Discord's storage, so the fresh tab opened logged out and signing in will not stick. Turn off extensions for discord.com one by one until a fresh Discord tab stays logged in, then refresh "${label}" again`);
-      }
       throw new Error(`Discord is not signed in — sign in to Discord in this browser, then refresh "${label}" again`);
     }
 
