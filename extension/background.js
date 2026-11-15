@@ -3179,6 +3179,47 @@ async function publishTelegramImportLibrarySnapshot({
   });
 }
 
+async function probeDiscordTabAlive(tabId, timeoutMs = 3000) {
+  // A frozen tab (Edge Memory Saver / sleeping tabs) still answers sync js
+  // but its task queue is suspended: setTimeout and fetch callbacks never
+  // fire. Probe with a setTimeout(0) round-trip raced against a worker-side
+  // timeout — without the race the import below would hang forever.
+  // The isolated world is fine here: timers share the page's event loop
+  // across worlds, so a frozen page fails the probe in any world.
+  let timer = null;
+  try {
+    const probe = chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => new Promise((resolve) => setTimeout(() => resolve('alive'), 0))
+    }).catch(() => null);
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(() => resolve(null), timeoutMs);
+    });
+    const results = await Promise.race([probe, timeout]);
+    return Array.isArray(results) && results[0]?.result === 'alive';
+  } catch {
+    return false;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function isDiscordStorageMissing(tabId) {
+  // localStorage/sessionStorage can be entirely absent on discord.com (an
+  // extension or rule hiding the storage apis): then no session can persist
+  // and every fresh tab lands on /login. Both undefined = blocked; either
+  // present = storage works.
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => typeof localStorage === 'undefined' && typeof sessionStorage === 'undefined'
+    });
+    return result?.result === true;
+  } catch {
+    return false;
+  }
+}
+
 async function extractDiscordGuildFromTab(tabId, { expectedGuildId = '', expectedGuildName = '' } = {}) {
   const [result] = await chrome.scripting.executeScript({
     target: { tabId },
@@ -3488,6 +3529,9 @@ async function extractDiscordGuildFromTab(tabId, { expectedGuildId = '', expecte
             if (fallbackGuild) {
               return fallbackGuild;
             }
+            if (typeof localStorage === 'undefined' && typeof sessionStorage === 'undefined') {
+              return { error: `Discord cannot save its session in this browser — something (for example an extension) blocks Discord's storage, so signing in again will not stick. Turn off extensions for discord.com one by one until a fresh Discord tab stays logged in, then refresh "${expectedGuildName || guildId}" again.` };
+            }
             return { error: `Could not read "${expectedGuildName || guildId}" from Discord — the session token was unavailable and the page had no guild data yet. Open that server in a Discord tab once, then refresh again.` };
           }
         }
@@ -3588,10 +3632,27 @@ async function importDiscordServerEmojis(tabId, { expectedGuildId = '', expected
       throw new Error(`The Discord tab is not on a Discord page (${tabUrl || 'no url'}) — open Discord in this browser and try again`);
     }
 
-    const guildData = await extractDiscordGuildFromTab(tabId, {
+    // A frozen tab answers sync js but never runs its fetch, so probe
+    // liveness first instead of hanging. The race below covers a tab that
+    // freezes mid-import — its timer lives in the service worker, where it
+    // still fires (an in-page AbortController timer would freeze with the tab).
+    const tabAlive = await probeDiscordTabAlive(tabId);
+    if (!tabAlive) {
+      throw new Error('Your Discord tab is asleep — click it once to wake it up, then refresh again');
+    }
+
+    const extractPromise = extractDiscordGuildFromTab(tabId, {
       expectedGuildId: expectedGuildId || '',
       expectedGuildName: expectedGuildName || ''
     });
+    // Swallow a late rejection if the race below times out first.
+    extractPromise.catch(() => {});
+    let extractTimeout = null;
+    const extractTimeoutPromise = new Promise((_, reject) => {
+      extractTimeout = setTimeout(() => reject(new Error('Discord did not answer in time — the tab may have gone back to sleep; click it once, then refresh again')), 20000);
+    });
+    const guildData = await Promise.race([extractPromise, extractTimeoutPromise])
+      .finally(() => { if (extractTimeout) clearTimeout(extractTimeout); });
     guildId = String(guildData.guildId || '').trim();
     guildName = guildData.guildName || 'Discord Server';
     const guildEmojis = Array.isArray(guildData.emojis) ? guildData.emojis.filter((emoji) => emoji?.id) : [];
@@ -3954,7 +4015,11 @@ async function resolveDiscordGuildTab(serverId, serverName = '') {
     lastUrl = String(currentTab.url || '');
 
     if (/discord(?:app)?\.com\/(login|register)/i.test(lastUrl)) {
+      const storageMissing = await isDiscordStorageMissing(tab.id);
       try { chrome.tabs.remove(tab.id); } catch {}
+      if (storageMissing) {
+        throw new Error(`Discord cannot save its session in this browser — something (for example an extension) blocks Discord's storage, so the fresh tab opened logged out and signing in will not stick. Turn off extensions for discord.com one by one until a fresh Discord tab stays logged in, then refresh "${label}" again`);
+      }
       throw new Error(`Discord is not signed in — sign in to Discord in this browser, then refresh "${label}" again`);
     }
 

@@ -559,3 +559,48 @@ The helper now focuses whichever search input belongs to the visible tab
 (recents or emotes), it runs at the end of `init()`, and the recents-tab
 switch calls it too. Keep new tabs' search inputs in the helper's tab check,
 or they will silently open unfocused the same way.
+
+## Discord refresh names the real failure: frozen tab vs blocked storage (v1.3.10)
+
+The open Discord tab looked logged in while every fresh tab showed logged
+out, and refresh just said "logged out". Measured on the user's real Edge
+2026-11-15, the two halves have different causes:
+
+- The open tab's session lives only in memory — its token sits in the js
+  heap, and the guild api call with the webpack token returns 200 once the
+  tab is awake. A fresh tab has no memory yet: it must read the session from
+  localStorage, but `localStorage` and `sessionStorage` are both `undefined`
+  on discord.com in that browser (`window.prototype` has no accessors at
+  all; other sites are fine), so every fresh tab lands on `/login` and
+  signing in again cannot stick — there is nowhere to save the token.
+  (Cleared as suspects: Mojify itself, Vencord, Violentmonkey, Edge content
+  settings and policies. Prime remaining suspect is a uBlock Origin
+  scriptlet or list rule — unproven.)
+- The open tab was frozen (Edge Memory Saver): sync js worked, but
+  `setTimeout` and `fetch` callbacks never fired until the tab was woken.
+
+Three fixes, keep all of them:
+
+- `probeDiscordTabAlive` runs a `setTimeout(0)` round-trip in the tab,
+  raced against a worker-side timeout, before the import. A frozen tab
+  reports "your Discord tab is asleep — click it once to wake it up" instead
+  of hanging. The isolated world is fine for the probe: timers share the
+  page's event loop across worlds.
+- `isDiscordStorageMissing` checks both storage apis in the tab. It runs
+  where the 401/no-token error is produced and on the `/login` redirect in
+  `resolveDiscordGuildTab`: when storage is missing the error says Discord
+  cannot save its session in this browser and signing in again will not
+  stick. The old "open that server once" / "not signed in" messages only
+  appear when storage exists.
+- The whole `extractDiscordGuildFromTab` call is raced against a 20s
+  timeout in `importDiscordServerEmojis`, so a tab that freezes mid-import
+  surfaces an error. The timeout MUST live in the service worker: an
+  in-page `AbortController` timer freezes with the tab and can never fire.
+
+Harness note: `chrome.tabs.create` in `resolveDiscordGuildTab` is awaited
+callback-style (`new Promise((resolve) => chrome.tabs.create(..., resolve))`),
+so a test stub that only returns a promise hangs the call silently — the
+stub must invoke the callback. Verified 12/12 in
+`~/workspace/mojify-board/repro-discord-errors.js` (probe live/frozen,
+storage both ways, frozen import fails fast, extract 401 branches with and
+without storage, 200 happy path, `/login` redirect both ways).
