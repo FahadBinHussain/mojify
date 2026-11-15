@@ -431,11 +431,20 @@ document.addEventListener('DOMContentLoaded', () => {
     return style.display !== 'none' && style.visibility !== 'hidden' && element.offsetParent !== null;
   }
 
+  // focus whichever search input belongs to the visible tab — the recents
+  // search on the recents tab, the emotes search on the emotes tab (#4).
+  // the popup opens on recents, so without this the first thing the user
+  // has to do after opening it is click the search bar.
   function focusSearchInputIfVisible() {
-    if (!isElementVisible(searchInput)) return;
+    const target = isTabActive('recent')
+      ? recentSearchInput
+      : isTabActive('emotes')
+        ? searchInput
+        : null;
+    if (!target || !isElementVisible(target)) return;
 
     try {
-      searchInput.focus({ preventScroll: true });
+      target.focus({ preventScroll: true });
     } catch (error) {
       console.warn('[Mojify] Failed to focus popup search input:', error);
     }
@@ -1675,6 +1684,10 @@ document.addEventListener('DOMContentLoaded', () => {
           requestAnimationFrame(focusSearchInputIfVisible);
           ensureEmoteLibraryLoaded({ renderGrid: true }).catch(() => {});
           return;
+        }
+
+        if (tabName === 'recent') {
+          requestAnimationFrame(focusSearchInputIfVisible);
         }
 
         if (tabName === 'settings') {
@@ -6055,6 +6068,10 @@ document.addEventListener('DOMContentLoaded', () => {
         showPlatformWarning(currentPlatform, currentUrl);
       }
     }));
+
+    // the popup opens on recents — focus its search bar so typing works
+    // immediately, no click needed (#4). same rAF pattern as the tab switch.
+    requestAnimationFrame(focusSearchInputIfVisible);
   }
 
   runPopupTask('api keys page button', initApiKeysPageButton);

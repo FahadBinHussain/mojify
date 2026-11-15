@@ -546,3 +546,16 @@ wiped the same way. Fixed in v1.3.8 (#3) with the same shape:
 `failedEmotes` / `downloadProgress` are transient and the background
 overwrites them on the next run, so a stale restore is harmless. The
 re-download gate flags were already deleted on restore.
+
+## Search bar focuses on popup open (v1.3.9)
+
+The popup opens on the recents tab, but nothing focused `#search-recent`,
+so the first keystroke after opening did nothing until the user clicked the
+search bar. The emotes tab already had the pattern: `focusSearchInputIfVisible`
+ran on the emotes-tab switch (via `requestAnimationFrame`), but it only knew
+about `#search-emotes` and nothing called it at startup.
+
+The helper now focuses whichever search input belongs to the visible tab
+(recents or emotes), it runs at the end of `init()`, and the recents-tab
+switch calls it too. Keep new tabs' search inputs in the helper's tab check,
+or they will silently open unfocused the same way.
