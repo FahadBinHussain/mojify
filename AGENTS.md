@@ -651,3 +651,35 @@ Verified 11/11 in `~/workspace/mojify-board/repro-discord-errors.js`
 (probe live/frozen, storage check removed, frozen import fails fast,
 401 no-session error names no extension, 200 happy path, `/login`
 redirect names no extension).
+
+## Scope drawer: server names for parent-less groups (v1.3.12)
+
+Discord servers store their parent record with EMPTY emotes
+(`importDiscordServerEmojis` puts every emote in the Emojis/Stickers set
+records). `getVisibleChannelsForSource` drops channels with no emote keys
+in `emoteDataMap`, so the parent never reaches the drawer, the sets group
+with `parent: null`, and `renderChannelFilterBar` only rendered the
+parent header when `group.parent` existed — the drawer showed bare
+"Emojis"/"Stickers" rows with no server name. The fix renders the header
+for parent-less groups with children: `createScopeParentHeader` already
+falls back to the first child (`group.parent || group.children[0]`) and
+the set records carry the guild name (`baseUsername`, `discordGuildName`),
+so no data change was needed. The same fix covers the 7TV edge case (a
+set group whose parent has no visible emotes — 7TV sets also carry
+`baseUsername`).
+
+Two related fixes in the same commit: discord set rows showed the
+generic "n emotes | saved" meta because the discord branch only fired on
+`isDiscordMediaScope`, which nothing sets (`shouldRenderDiscordMediaTree`
+returns false) — the check now also accepts `sourceType === 'discord'`.
+And the scope tree CSS is compact (34px rows, 9px radius, transparent
+borders, dividers between server groups) instead of a stack of chunky
+cards.
+
+Harness note: the scope functions live inside popup.js's
+`DOMContentLoaded` callback, so `repro-scope-tree.js` slices them out by
+source position (2-space-indented `function NAME(` declarations) and
+evals them with a minimal DOM stub. Verified 16/16 (discord headers +
+metas, twitch regression, 7tv orphan set). Live check: open
+`chrome-extension://<id>/popup.html` in a tab, Discord chip, open the
+drawer — every Emojis/Stickers row must sit under its server name.

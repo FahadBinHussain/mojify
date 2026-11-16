@@ -1272,13 +1272,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const emoteTotal = [group.activeSet, ...group.children]
       .filter(Boolean)
       .reduce((total, channel) => total + getScopeEmoteCount(channel), 0);
-    const isDiscordGroup = getChannelSourceType(group.parent || group.children[0]) === 'discord';
+    const sourceType = getChannelSourceType(group.parent || group.children[0]);
+    const isDiscordGroup = sourceType === 'discord';
     const scopeUnit = isDiscordGroup ? 'type' : 'set';
     const itemUnit = isDiscordGroup ? 'items' : 'emotes';
+    const sourceIcons = { twitch: 'fab fa-twitch', discord: 'fab fa-discord', telegram: 'fab fa-telegram' };
     const header = document.createElement('div');
     header.className = 'scope-parent-header';
     header.innerHTML = `
-      <span class="scope-parent-title">${escapeHtml(parentName)}</span>
+      <span class="scope-parent-main">
+        <i class="${sourceIcons[sourceType] || 'fas fa-folder'} scope-parent-icon"></i>
+        <span class="scope-parent-title">${escapeHtml(parentName)}</span>
+      </span>
       <span class="scope-parent-meta">${setCount} ${setCount === 1 ? scopeUnit : `${scopeUnit}s`} | ${emoteTotal} ${itemUnit}</span>
     `;
     return header;
@@ -1380,6 +1385,14 @@ document.addEventListener('DOMContentLoaded', () => {
             type: 'parent'
           }));
         }
+      } else if (group.children.length > 0) {
+        // No visible parent: the parent record has no emotes of its own
+        // (discord servers store every emote in their sets, so the parent
+        // is filtered out before grouping) and only the sets reach the
+        // drawer. The header falls back to the first child's name, which
+        // is the server/channel name — without this the sets render bare,
+        // with nothing saying which server they belong to.
+        wrapper.appendChild(createScopeParentHeader(group));
       }
 
       if (group.activeSet) {
@@ -1393,7 +1406,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       group.children.forEach((child) => {
-        const isDiscordChild = Boolean(child.isDiscordMediaScope);
+        // isDiscordMediaScope is only set by createDiscordMediaScopeChildren,
+        // which is disabled — real discord set records carry sourceType
+        // instead, so check that too or discord rows get the generic
+        // "n emotes | saved" meta.
+        const isDiscordChild = Boolean(child.isDiscordMediaScope) || getChannelSourceType(child) === 'discord';
         const childUnit = isDiscordChild ? 'items' : 'emotes';
         wrapper.appendChild(createScopeRow({
           label: getScopeSetName(child),

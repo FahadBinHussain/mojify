@@ -737,13 +737,18 @@ img {
 
 .scope-tree {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .scope-group {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   padding-top: 2px;
+}
+
+.scope-group + .scope-group {
+  border-top: 1px solid rgba(148, 163, 194, 0.08);
+  padding-top: 8px;
 }
 
 .scope-parent-header {
@@ -751,9 +756,22 @@ img {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  min-height: 30px;
+  min-height: 28px;
   padding: 4px 4px 2px;
   color: var(--text-secondary);
+}
+
+.scope-parent-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.scope-parent-icon {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: 11px;
 }
 
 .scope-parent-title,
@@ -784,11 +802,11 @@ img {
   justify-content: space-between;
   gap: 10px;
   width: 100%;
-  min-height: 42px;
-  padding: 8px 10px;
-  border: 1px solid rgba(148, 163, 194, 0.1);
-  border-radius: 13px;
-  background: rgba(17, 31, 51, 0.62);
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: rgba(17, 31, 51, 0.35);
   color: var(--text-primary);
   text-align: left;
   transition: border-color var(--transition), background var(--transition), transform var(--transition);
@@ -824,9 +842,9 @@ img {
 }
 
 .scope-row-meta {
-  margin-top: 2px;
+  margin-top: 1px;
   color: var(--text-tertiary);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -837,8 +855,8 @@ img {
 }
 
 .scope-row-child {
-  margin-left: 18px;
-  width: calc(100% - 18px);
+  margin-left: 16px;
+  width: calc(100% - 16px);
 }
 
 .scope-row-active-set {
@@ -849,10 +867,10 @@ img {
 .scope-row-child::before {
   content: "";
   position: absolute;
-  left: -9px;
-  top: -8px;
-  width: 17px;
-  height: 28px;
+  left: -8px;
+  top: -7px;
+  width: 15px;
+  height: 24px;
   border-left: 1px solid rgba(56, 189, 248, 0.38);
   border-bottom: 1px solid rgba(56, 189, 248, 0.38);
   border-bottom-left-radius: 8px;
