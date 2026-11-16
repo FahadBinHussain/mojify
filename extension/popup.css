@@ -144,7 +144,7 @@ img {
 /* ── Header ─────────────────────────────────── */
 .header {
   position: relative;
-  padding: 8px 14px;
+  padding: 6px 14px;
   background: var(--surface-1);
   border-bottom: 1px solid var(--border);
   overflow: hidden;
@@ -250,7 +250,7 @@ img {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 36px;
+  min-height: 32px;
   color: var(--text-tertiary);
   transition: color var(--transition), background-color var(--transition);
   border-radius: var(--radius-sm) var(--radius-sm) 0 0;
@@ -298,7 +298,7 @@ img {
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 10px 10px 16px;
+  padding: 8px 10px 8px;
 }
 
 .tab-pane.active {
@@ -491,7 +491,7 @@ img {
 
 .workspace-deck {
   position: relative;
-  padding: 10px 12px;
+  padding: 8px 12px;
   overflow: visible;
   background:
     radial-gradient(circle at 12% 0%, rgba(56, 189, 248, 0.08), transparent 34%),
@@ -526,7 +526,7 @@ img {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 6px;
   flex-wrap: nowrap;
   overflow: hidden;
 }
@@ -725,8 +725,8 @@ img {
 .channel-filter-bar.scope-drawer {
   display: block;
   margin-top: 10px;
-  padding: 10px;
-  max-height: 238px;
+  padding: 8px;
+  max-height: 360px;
   overflow-y: auto;
   border: 1px solid rgba(56, 189, 248, 0.18);
   border-radius: 18px;
@@ -748,7 +748,7 @@ img {
 
 .scope-group + .scope-group {
   border-top: 1px solid rgba(148, 163, 194, 0.08);
-  padding-top: 8px;
+  padding-top: 6px;
 }
 
 .scope-parent-header {
@@ -756,8 +756,8 @@ img {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  min-height: 28px;
-  padding: 4px 4px 2px;
+  min-height: 24px;
+  padding: 2px 4px;
   color: var(--text-secondary);
 }
 
@@ -802,8 +802,8 @@ img {
   justify-content: space-between;
   gap: 10px;
   width: 100%;
-  min-height: 34px;
-  padding: 6px 10px;
+  min-height: 28px;
+  padding: 4px 10px;
   border: 1px solid transparent;
   border-radius: 9px;
   background: rgba(17, 31, 51, 0.35);
@@ -825,6 +825,10 @@ img {
 }
 
 .scope-row-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
   min-width: 0;
 }
 
@@ -837,12 +841,14 @@ img {
 }
 
 .scope-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
   font-size: 12px;
   font-weight: 800;
 }
 
 .scope-row-meta {
-  margin-top: 1px;
+  flex-shrink: 0;
   color: var(--text-tertiary);
   font-size: 9px;
   font-weight: 700;
@@ -1397,7 +1403,7 @@ button:disabled {
 .channel-emotes {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 5px;
+  gap: 4px;
 }
 
 .channel-section.collapsed .channel-emotes {
@@ -1407,7 +1413,7 @@ button:disabled {
 .emote-item {
   position: relative;
   min-width: 0;
-  padding: 5px;
+  padding: 4px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface-1);
@@ -1431,7 +1437,7 @@ button:disabled {
   align-items: center;
   justify-content: center;
   width: 100%;
-  height: 48px;
+  height: 38px;
   padding: 4px;
   border-radius: var(--radius-sm);
   background: transparent;

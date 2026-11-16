@@ -683,3 +683,42 @@ evals them with a minimal DOM stub. Verified 16/16 (discord headers +
 metas, twitch regression, 7tv orphan set). Live check: open
 `chrome-extension://<id>/popup.html` in a tab, Discord chip, open the
 drawer — every Emojis/Stickers row must sit under its server name.
+
+## Compact layout: the popup is already at max size, so stack tighter (v1.3.13)
+
+The popup is 800x600 and that IS the browser maximum for extension
+popups (Chrome/Edge cap) — it cannot grow. When the user asked for a
+bigger popup, the answer was compaction, not a bigger window. He also
+rejected the two alternatives offered (drawer as overlay, full-tab
+pop-out), so the fix is pure CSS tightening.
+
+Measure first, then compact precisely that much — live numbers with
+real data (3 Discord servers, 775 items, 30 per page), before the fix:
+
+- Default view (drawer closed): pane 518px tall, content 590px —
+  72px overflow, the "little scroll" the user felt.
+- Drawer open: drawer content 486px against a 238px cap — 250px of
+  internal scroll; pane overflow 320px.
+
+What changed: header padding 8->6, tab buttons 36->32px, pane padding
+10/16->8/8, deck padding 10->8, toolbar margin 8->6, emote preview
+48->38px, card padding 5->4, grid gap 5->4. The drawer rows went
+single-line (`.scope-row-main` is now a flex row: title left, meta
+right, no second line) and the drawer cap went 238->360px so the full
+tree fits. After: closed pane scrollH == clientH (526 == 526, exactly
+0 overflow), drawer scrollH == clientH (336 == 336, 0 internal
+scroll), all three servers visible in one screenshot.
+
+Two things to remember:
+
+- The drawer-open pane STILL scrolls (drawer 336 + results 398 cannot
+  both fit in a 526px pane) — that is expected, not a bug: the drawer
+  is a picker, results are browsed after it closes. Do not "fix" it by
+  shrinking the drawer back down; the drawer showing every server
+  without its own scrollbar is the point.
+- Budget from live measurement, not from CSS reading: the first pass
+  landed 2px short (528 vs 526) because the search box measured 42px
+  against a 36px min-height and no rule explains the extra 6px. The
+  padding shave (5->4px on `.emote-item`, -10px over 5 rows) closed
+  it. Always re-measure after a compaction pass; never trust the
+  arithmetic alone.
