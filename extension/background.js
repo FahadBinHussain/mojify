@@ -3115,12 +3115,25 @@ async function fetchTelegramStickerBlob(botToken, sticker = {}) {
         conversionMethod: converted.conversionMethod || ''
       };
     } catch (error) {
-      console.warn('[Telegram Import] Native TGS conversion failed; skipping animated sticker:', error?.message || error);
+      const conversionError = error?.message || 'Native TGS conversion failed';
+      console.warn('[Telegram Import] Native TGS conversion failed; trying static preview:', conversionError);
+      try {
+        const preview = await fetchTelegramThumbnailFallback(botToken, sticker, {
+          filePath,
+          reason: 'animated',
+          conversionError
+        });
+        if (!preview.skipped) {
+          return preview;
+        }
+      } catch (fallbackError) {
+        console.warn('[Telegram Import] Animated sticker preview also failed:', fallbackError?.message || fallbackError);
+      }
       return {
         skipped: true,
         filePath,
         reason: 'animated',
-        conversionError: error?.message || 'Native TGS conversion failed'
+        conversionError
       };
     }
   }
@@ -4127,6 +4140,7 @@ async function importTelegramStickerSet(stickerSetInput) {
   let skippedCount = 0;
   let skippedAnimatedCount = 0;
   let skippedUnsupportedCount = 0;
+  let firstConversionError = '';
 
   try {
     await updateTelegramImportProgress({
@@ -4203,6 +4217,9 @@ async function importTelegramStickerSet(stickerSetInput) {
           skippedCount += 1;
           if (fileResult.reason === 'animated') {
             skippedAnimatedCount += 1;
+            if (!firstConversionError && fileResult.conversionError) {
+              firstConversionError = String(fileResult.conversionError);
+            }
           } else {
             skippedUnsupportedCount += 1;
           }
@@ -4310,9 +4327,17 @@ async function importTelegramStickerSet(stickerSetInput) {
     }
 
     if (importedCount === 0) {
-      const skipReason = skippedAnimatedCount > 0 && skippedAnimatedCount === skippedCount
-        ? 'This pack only has animated TGS stickers, but Mojify could not convert them with the native helper.'
-        : 'No supported Telegram stickers were imported from this set.';
+      let skipReason = 'No supported Telegram stickers were imported from this set.';
+      if (skippedAnimatedCount > 0 && skippedAnimatedCount === skippedCount) {
+        skipReason = 'This pack only has animated TGS stickers, but Mojify could not convert them with the native helper.';
+        if (firstConversionError) {
+          if (/native messaging host not found/i.test(firstConversionError)) {
+            skipReason += ' The native helper is not installed — run native/telegram-tgs-host/install-native-host.ps1, then import again.';
+          } else {
+            skipReason += ` (${firstConversionError})`;
+          }
+        }
+      }
       throw new Error(skipReason);
     }
 

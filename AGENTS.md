@@ -722,3 +722,44 @@ Two things to remember:
   padding shave (5->4px on `.emote-item`, -10px over 5 rows) closed
   it. Always re-measure after a compaction pass; never trust the
   arithmetic alone.
+
+## Telegram TGS: a missing native host must degrade, not fail (v1.3.14)
+
+`Rndomxts_by_fStikBot` (animated custom-emoji pack) imported 0 items
+with "could not convert them with the native helper". Root cause: the
+native host `com.mojify.tgs_host` was never installed on the laptop —
+no registry keys under Chrome/Edge `NativeMessagingHosts`, even though
+the host files sit in the clone and node 24 + ffmpeg 9 are both on
+PATH. `connectNative` fails, every sticker skips.
+
+Two code gaps made a missing host a total failure:
+
+- The TGS catch path in `fetchTelegramStickerBlob` returned
+  `{skipped: true, reason: 'animated'}` without trying the thumbnail
+  fallback (`fetchTelegramThumbnailFallback`) that the non-TGS path
+  already uses. Now it tries the static preview first and only skips
+  when there is no thumbnail either.
+- The per-sticker `conversionError` was dropped in the import loop's
+  skipped branch, so the final toast could not name the reason. Now
+  the first conversion error is kept, and when the import ends with 0
+  items and all skipped animated, a host-not-found error says the
+  helper is not installed and points at
+  `native/telegram-tgs-host/install-native-host.ps1`.
+
+Harness note: `~/workspace/mojify-board/repro-tgs-fallback.js` loads
+the real background.js in a vm (same pattern as
+repro-discord-errors.js) with stubbed fetch, `chrome.runtime.
+connectNative` (host missing = disconnect with lastError "Specified
+native messaging host not found", host present = chunk + complete),
+Blob and FileReader. Verified 14/14: preview fallback with and
+without thumbnail, conversion happy path, full import both ways, and
+the error naming the installer.
+
+Installer note: `install-native-host.ps1 -Browser Both` builds a C#
+`.exe` launcher with Add-Type; on this laptop that build fails
+("assembly types 'ConsoleApplication' ... not currently supported")
+and it falls back to the `.cmd` shim — the registration still works
+and the self-test (`node mojify-native-host.js --self-test`) renders
+60 frames to lossless WebM. The `.cmd` fallback is an accepted path,
+not a broken install — verify with the self-test and a real import
+instead of re-running the installer.
